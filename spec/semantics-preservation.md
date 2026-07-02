@@ -1,10 +1,10 @@
-# ST → SafeASM 语义保持转换说明
+# SafeST → SafeASM 语义保持转换说明
 
 > **文档版本**：v1.1  
 > **状态**：正式发布  
 > **生效日期**：2026-06-30  
-> **对应 Coq 文件**：`vstac/spec/compiler_correctness.v`（核心定理声明）  
-> **对应实现文件**：`vstac/src/codegen.v`（代码生成器实现+证明）  
+> **对应 Coq 文件**：`compiler_correctness.v`（核心定理声明）  
+> **对应实现文件**：`codegen.v`（代码生成器实现+证明）  
 > **目的**：让不熟悉 Coq 形式化方法的开发人员也能清晰理解 ST 语言的每种构造如何映射到 SafeASM 指令，以及为什么这种映射是正确的（语义保持）。  
 
 ---
@@ -15,9 +15,9 @@
 
 | 版本 | 日期 | 变更说明 | 作者 |
 |------|------|---------|------|
-| v0.1 | 草案 | 初始草案 | — |
-| v1.0 | 2026-06-29 | 正式发布。为每个 ST 构造补充完整的编译映射 + 语义保持例图；新增逻辑求值、CASE、WHILE、REPEAT、EXIT、数组访问、类型转换的逐构造证明示例；新增抽象关系 R 的完整定义；新增编译器逐阶段证明对应表。 | — |
-| **v1.1** | **2026-06-30** | **新增质量传播的语义保持示例；新增 LINT/LREAL 64 位类型映射示例；更新抽象关系 R 增加质量一致性条件；更新证明对应表增加质量相关条目** | — |
+| v0.1 | 草案 | 初始草案 | JIANG Wei |
+| v1.0 | 2026-06-29 | 正式发布。为每个 ST 构造补充完整的编译映射 + 语义保持例图；新增逻辑求值、CASE、WHILE、REPEAT、EXIT、数组访问、类型转换的逐构造证明示例；新增抽象关系 R 的完整定义；新增编译器逐阶段证明对应表。 | JIANG Wei |
+| **v1.1** | **2026-07-02** | **全面更新：2.1 表达式映射表扩充 64 位运算/浮点/类型转换/Q 类型操作/质量检查函数；2.2 语句映射表新增 Q 类型赋值/T→QT 隐式转换/质量检查分支；新增 2.4 质量传播映射表（含 worst() 函数）；新增 3.3 影子质量内存布局（SEG_QUALITY）；4. 扫描周期增加质量影子区同步步骤；6.2 类型兼容映射表扩展至 Q* 全集；7.1 抽象关系 R 补充质量一致性条件；7.3 安全保持定理扩展质量安全约束；新增例 12 (64 位类型运算)；新增 8. 证明对应表（含质量条目）** | JIANG Wei |
 
 ### 0.2 符号约定
 
@@ -45,7 +45,7 @@ step_st   : ST 小步执行一步
 
 ---
 
-## 2. 逐构造映射表 (ST → SafeASM)
+## 2. 逐构造映射表 (SafeST → SafeASM)
 
 这是开发人员最需要关心的核心文档。每种 ST 构造的编译映射都附带**语义保持理由**。
 
@@ -53,25 +53,54 @@ step_st   : ST 小步执行一步
 
 | ST 构造 | SafeASM 指令序列 | 语义保持理由 |
 |---------|-----------------|-------------|
-| **字面量** `42` | `I32_CONST 42` | 直接值映射，无歧义 |
+| **32 位整数字面量** `42` | `I32_CONST 42` | 直接值映射，无歧义 |
+| **64 位整数字面量** `L#100000` | `I64_CONST 100000` | 64 位直接值映射 |
 | **布尔字面量** `TRUE` | `I32_CONST 1` | TRUE=1 映射 |
+| **32 位浮点字面量** `3.14` | `F32_CONST 3.14` | 直接值映射 |
+| **64 位浮点字面量** `LREAL#3.14` | `F64_CONST 3.14` | 64 位浮点直接值映射 |
+| **时间字面量** `T#5s` | `I64_CONST 5000000000` | 纳秒编码为 64 位整数 |
 | **变量引用** `x` | `LOCAL_GET idx` | 编译期变量偏移已确定，运行期一致 |
 | **数组访问** `arr[i]` | `[arr_base] [i] I32_ADD SAFE_BOUNDS_CHECK I32_LOAD` | 基址+偏移+边界检查 |
-| **一元负号** `-x` | `[x] I32_CONST 0 SWAP I32_SUB` | 0 - x = -x |
+| **一元负号** `-x` (32位) | `[x] I32_CONST 0 SWAP I32_SUB` | 0 - x = -x |
+| **一元负号** `-x` (64位) | `[x] I64_CONST 0 SWAP I64_SUB` | 0 - x = -x，64 位版本 |
 | **逻辑非** `NOT x` | `[x] I32_EQZ` | NOT x == (x = 0) |
-| **二元运算** `a + b` | `[a] [b] I32_ADD` | 值栈模型与表达式树同构 |
+| **绝对值** `ABS x` | `[x] DUP I32_CONST 0 I32_LT_S BR_IF neg [x] BR end neg: [x] I32_NEG end:` | 条件取反 |
+| **32 位二元运算** `a + b` | `[a] [b] I32_ADD` | 值栈模型与表达式树同构 |
+| **64 位二元运算** `a + b` (LINT) | `[a] [b] I64_ADD` | I64 值栈运算，同构映射 |
+| **32 位乘除** `a * b`, `a / b` | `[a] [b] I32_MUL` / `I32_DIV_S` | 值栈运算 |
+| **64 位乘除** `a * b`, `a / b` | `[a] [b] I64_MUL` / `I64_DIV_S` | I64 值栈运算 |
+| **32 位取模** `a MOD b` | `[a] [b] I32_REM_S` | 值栈运算 |
+| **64 位取模** `a MOD b` | `[a] [b] I64_REM_S` | I64 值栈运算 |
 | **三元运算** `a * b + c` | `[a] [b] I32_MUL [c] I32_ADD` | 后序遍历，与 AST 一致 |
-| **比较运算** `a > b` | `[a] [b] I32_GT_S` | 比较结果 0/1 直接入栈 |
+| **32 位比较** `a > b` | `[a] [b] I32_GT_S` | 比较结果 0/1 直接入栈 |
+| **64 位比较** `a > b` | `[a] [b] I64_GT_S` | I64 比较结果 0/1 入栈 |
+| **浮点运算** `a + b` (REAL) | `[a] [b] F32_ADD` | 浮点栈运算 |
+| **64 位浮点运算** `a + b` (LREAL) | `[a] [b] F64_ADD` | 双精度浮点栈运算 |
+| **浮点比较** `a > b` (REAL) | `[a] [b] F32_GT` | 浮点比较结果 0/1 入栈 |
+| **64 位浮点比较** `a > b` (LREAL) | `[a] [b] F64_GT` | 双精度比较结果 0/1 入栈 |
 | **逻辑 AND** `a AND b` | `[a] BR_IF 0 [b]` | a=false 时跳过 b 的计算 |
 | **逻辑 OR** `a OR b` | `[a] BR_IF 1 [b]` | a=true 时跳过 b 的计算 |
 | **XOR** `a XOR b` | `[a] [b] I32_XOR` | 直接位运算 |
+| **i32 → i64 扩展** `LINT(x)` | `[x] I64_EXTEND_I32_S` | 符号扩展保持数值一致 |
+| **i64 → i32 截断** `DINT(x)` | `[x] I32_WRAP_I64` | 截断低 32 位 |
+| **i32 → f32 转换** `REAL(x)` | `[x] F32_CONVERT_I32_S` | IEEE 754 转换 |
+| **i32 → f64 转换** `LREAL(x)` | `[x] F64_CONVERT_I32_S` | 32 位整数 → 双精度浮点 |
+| **f32 → i32 截断** `DINT(x)` | `[x] I32_TRUNC_F32_S` | 浮点截断 |
+| **f64 → i32 截断** `DINT(x)` | `[x] I32_TRUNC_F64_S` | 双精度浮点截断 |
+| **质量读取** `Q_STATUS(x)` | `I32_CONST Q_BASE+x_idx I32_LOAD8_U` | 从影子质量区加载 1 字节质量码 |
+| **质量检查** `Q_GOOD(x)` | `[Q_STATUS(x)] I32_CONST 0 I32_EQ` | GOOD=0 比较 |
+| **质量检查** `Q_BAD(x)` | `[Q_STATUS(x)] I32_CONST 2 I32_EQ` | BAD=2 比较 |
+| **值+质量构造** `Q_WITH(v, q)` | `[v] [q]` | 值栈同时保留值和质量 |
 
 ### 2.2 语句映射
 
 | ST 构造 | SafeASM 指令序列 | 语义保持理由 |
 |---------|-----------------|-------------|
-| **赋值** `x := e` | `[e] LOCAL_SET idx` | 先计算 e 的值压栈，再存入 x |
+| **赋值（普通类型）** `x := e` | `[e] LOCAL_SET idx` | 先计算 e 的值压栈，再存入 x |
 | **数组赋值** `a[i] := e` | `[base] [i] I32_ADD [e] I32_STORE` | 计算地址 → 存入值 |
+| **Q 类型赋值** `qX := qE` | `[qE] LOCAL_SET qX_val_idx` + `质量传播(见 2.4)` | 值赋值 + 质量传播代码 |
+| **T → QT 隐式转换** `qX := pY` | `[pY] LOCAL_SET qX_val_idx` + `I32_CONST Q_BASE+qX_idx I32_CONST 0 I32_STORE8` | 质量自动设为 GOOD |
+| **质量检查分支** `IF Q_GOOD(x) THEN ...` | `[Q_STATUS(x)] I32_CONST 0 I32_EQ BR_IF end_if` | 质量 GOOD 为执行条件 |
 | **IF-THEN** | `[cond] BR_IF end [then_body] end:` | cond=false 跳过 then 块 |
 | **IF-THEN-ELSE** | `[cond] BR_IF else [then] BR end else: [else] end:` | 控制流分叉精确对应 |
 | **CASE** | 级联 `BR_IF` 或 `BR_TABLE` | 每个分支对应一个基本块 |
@@ -110,6 +139,31 @@ end_br:
 
 **语义保持**：ST 的逻辑语义与 BR_IF 跳转完全等价 ✅
 
+### 2.4 质量传播映射表（v1.1）
+
+编译器为每个 Q 类型变量自动生成**影子质量区**的读写代码。质量传播规则如下：
+
+| ST 构造 | 质量传播规则 | SafeASM 指令模板 | 语义保持理由 |
+|---------|-------------|------------------|-------------|
+| **字面量** `42` | 质量 = GOOD | `I32_CONST Q_BASE+dst_idx I32_CONST 0 I32_STORE8` | 常量始终可信 Q1 |
+| **变量引用** `x` | 质量 = x.quality | `I32_CONST Q_BASE+x_idx I32_LOAD8_U` | 透传，Q2 |
+| **一元运算** `-x`, `NOT x`, `ABS x` | 质量 = operand.quality | `[读 x 质量] I32_CONST Q_BASE+dst_idx I32_STORE8` | 透传，Q3 |
+| **二元运算** `a + b` | quality = worst(a.q, b.q) | `[读 a 质量] [读 b 质量] I32_GT_U` (取大值) | worst=max，Q4 |
+| **比较运算** `a > b` | quality = worst(a.q, b.q) | 同二元运算 | 比较依赖双方质量，Q5 |
+| **逻辑 AND** `a AND b` | quality = worst(已计算操作数的 q) | 条件执行中追踪质量 | 短路不影响质量，Q6 |
+| **T → QT 赋值** `qX := pY` | qX.quality = GOOD | `I32_CONST Q_BASE+qX_idx I32_CONST 0 I32_STORE8` | 普通变量总是 GOOD，Q9 |
+| **QT → QT 赋值** `qX := qY` | qX.quality = qY.quality | `[读 qY 质量] I32_CONST Q_BASE+qX_idx I32_STORE8` | 质量透传，Q7 |
+| **函数/FB 调用** | 结果质量 = worst(所有输入质量的 worst) | 编译器为返回值生成质量计算 | 依赖所有输入，Q8 |
+| **Q_WITH(v, q)** | 结果质量 = q | `[q] I32_CONST Q_BASE+dst_idx I32_STORE8` | 显式指定，Q10 |
+
+**质量传播的 worst() 函数**在 SafeASM 层展开为 `I32_GT_U`（取数值上的最大值）：
+
+```
+worst(a, b) = I32_GT_U   ── 因为编码: GOOD(0) < UNCERTAIN(1) < BAD(2) < NOT_CONNECTED(3)
+```
+
+**语义保持核心**：质量传播代码由编译器自动插入，VM 无需感知质量语义。每条质量传播指令序列的 WCET 可静态计算（固定指令数、无分支），满足安全约束。
+
 ---
 
 ## 3. 内存布局映射
@@ -144,6 +198,8 @@ END_FUNCTION_BLOCK
 (临时变量/函数调用栈)                    动态分配
                                         ← CONST_BASE
 (常量池)                                固定偏移
+                                        ← Q_BASE (v1.1)
+(影子质量区 — 每个变量 1 字节质量码)       Q_BASE + var_idx
 ```
 
 ### 3.2 偏移计算规则（编译期确定，运行期固定）
@@ -154,9 +210,50 @@ END_FUNCTION_BLOCK
 全局变量偏移(v) = GLOBAL_BASE + global_layout(v_index)
 FB 字段偏移(inst, field) = FB_BASE + fb_base(inst) + field_offset(field)
 局部变量偏移(f, idx) = STACK_BASE + frame_ptr(f) + idx × 4
+质量码偏移(v) = Q_BASE + var_idx(v)          ← v1.1 新增
 ```
 
 **关键保证**：所有偏移在**编译期确定**，运行期固定。SafeASM 线性内存布局由 Memory Section 中的 `memory_segments` 描述。
+
+### 3.3 影子质量内存布局（v1.1）
+
+每个 Q 类型变量在影子质量区中占用 **1 字节**质量码。影子质量区是 SafeASM 线性内存的独立段 `SEG_QUALITY`。
+
+```
+      主数据区 (值)                   影子质量区 (质量码)
+  ┌─────────────────┐          ┌──────────────────────────┐
+  │ var_0  (4 字节)  │          │ Q_BASE + 0: var_0.q     │ 1 字节
+  │ var_1  (8 字节)  │          │ Q_BASE + 1: var_1.q     │ 1 字节
+  │ var_2  (4 字节)  │          │ Q_BASE + 2: var_2.q     │ 1 字节
+  │ ...              │          │ ...                      │
+  │ var_N  (4 字节)  │          │ Q_BASE + N: var_N.q     │ 1 字节
+  └─────────────────┘          └──────────────────────────┘
+
+  质量码编码:
+    0x00 = GOOD (GOOD)
+    0x01 = UNCERTAIN (UNCERTAIN)
+    0x02 = BAD (BAD)
+    0x03 = NOT_CONNECTED (NOT_CONNECTED)
+
+  质量区大小 = 变量总数 × 1 字节
+  Q_BASE = IO_INPUT_BASE + IO_OUTPUT_BASE + GLOBAL_BASE + FB_BASE + STACK_BASE + CONST_BASE
+          （即紧接在所有数据段之后）
+```
+
+**Q 类型变量的内存占用**（值与质量分离存储）：
+
+| Q 类型 | 值在主数据区 | 质量在影子区 | 总内存占位 |
+|--------|-------------|-------------|-----------|
+| QBOOL | 1 B (对齐到 4 B) | 1 B | 5 B |
+| QBYTE | 1 B (对齐到 4 B) | 1 B | 5 B |
+| QINT | 4 B | 1 B | 5 B |
+| QDINT | 4 B | 1 B | 5 B |
+| QREAL | 4 B | 1 B | 5 B |
+| QLINT | 8 B | 1 B | 9 B |
+| QLREAL | 8 B | 1 B | 9 B |
+| QTIME | 8 B | 1 B | 9 B |
+
+**语义保持**：质量码与值一一对应，同步读写。值赋值操作之后紧跟质量传播代码，保证两者在 SafeASM 执行模型中始终一致。
 
 ---
 
@@ -164,17 +261,27 @@ FB 字段偏移(inst, field) = FB_BASE + fb_base(inst) + field_offset(field)
 
 ```
 ST 扫描周期                         SafeASM 扫描周期
-┌─────────────────┐               ┌──────────────────────────┐
-│ 1. 读输入        │  ← I/O映射── │ 1. VM 将 I/O 输入拷贝到    │
-│                  │              │    SafeASM 线性内存输入区  │
-│ 2. 执行逻辑      │  ────►      │ 2. CALL entry_function   │
-│                  │              │    (执行编译后的字节码)    │
-│ 3. 写输出        │  ────►      │ 3. VM 将 SafeASM 线性内存  │
-│                  │              │    输出区写回 I/O 输出     │
-└─────────────────┘               └──────────────────────────┘
+┌─────────────────┐               ┌──────────────────────────────────┐
+│ 1. 读输入        │  ← I/O映射── │ 1. VM 将 I/O 输入拷贝到          │
+│                  │              │    SafeASM 线性内存输入区         │
+│                  │              │ 1b. VM 将 I/O 输入质量拷贝到     │
+│                  │              │     影子质量区 (v1.1)            │
+│ 2. 执行逻辑      │  ────►      │ 2. CALL entry_function           │
+│                  │              │    (执行编译后的字节码，          │
+│                  │              │     含质量传播代码)              │
+│ 3. 写输出        │  ────►      │ 3. VM 将 SafeASM 线性内存         │
+│                  │              │    输出区写回 I/O 输出            │
+│                  │              │ 3b. VM 将影子质量区输出变量质量  │
+│                  │              │    写回 I/O 质量 (v1.1)          │
+└─────────────────┘               └──────────────────────────────────┘
 ```
 
-**关键保证**：一个 ST 扫描周期 = 一次 SafeASM `CALL entry_function` 调用，输入输出状态完全对齐。
+**关键保证**：
+- 一个 ST 扫描周期 = 一次 SafeASM `CALL entry_function` 调用
+- I/O 输入质量在步骤 1b 中与值同步拷贝到影子质量区
+- I/O 输出质量在步骤 3b 中写回物理通道
+- 编译器生成的质量传播代码在步骤 2 中自动维护中间变量质量链
+- 输入输出质量与值始终同步对齐 ✅
 
 ---
 
@@ -576,7 +683,64 @@ ST:  c := DINT(d)    -- d: REAL, c: DINT
        Coq 证明: 转换结果一致 ✅
 ```
 
-### 例 12：FB 调用
+### 例 12 (v1.1 新增)：64 位类型运算 (LINT/LREAL)
+
+```
+ST:  acc : LINT;        -- 64 位累加器
+     acc := acc + L#1000000;
+
+     │
+     ▼  编译为 SafeASM:
+      LOCAL_GET acc_idx       ; 加载 acc (64 位)
+      I64_CONST 1000000       ; 加载 64 位常量
+      I64_ADD                 ; 64 位加法
+      LOCAL_SET acc_idx       ; 存回 acc
+
+     │
+     ▼  ST 语义: acc = [[acc]] + 1000000
+     ▼  ASM 语义: I64_ADD 使用 64 位值栈运算
+         值栈操作与 32 位版本同构，仅操作码和值宽度不同 ✅
+         WCET: 4 条指令，固定无分支 ✅
+
+ST:  pid_out : LREAL;       -- 64 位 PID 输出
+     pid_out := Kp * error + Ki * integral;
+
+     │
+     ▼  编译为 SafeASM:
+      LOCAL_GET Kp_idx       ; 加载 Kp (LREAL)
+      LOCAL_GET error_idx    ; 加载 error (LREAL)
+      F64_MUL               ; Kp * error
+      LOCAL_GET Ki_idx       ; 加载 Ki (LREAL)
+      LOCAL_GET integral_idx ; 加载 integral (LREAL)
+      F64_MUL               ; Ki * integral
+      F64_ADD               ; Kp*error + Ki*integral
+      LOCAL_SET pid_out_idx ; 存回 pid_out
+
+     │
+     ▼  语义保持:
+         ST 语义: pid_out = Kp × error + Ki × integral
+         ASM 语义: F64_MUL/F64_ADD 精确对应算术运算
+         双精度浮点运算符合 IEEE 754 标准 ✅
+         WCET: 7 条指令，无分支 ✅
+
+ST:  high : LINT;
+     low  : DINT;
+     high := LINT(low);     -- DINT → LINT 符号扩展
+
+     │
+     ▼  编译为 SafeASM:
+      LOCAL_GET low_idx      ; 加载 low (I32)
+      I64_EXTEND_I32_S      ; 符号扩展到 I64
+      LOCAL_SET high_idx    ; 存回 high
+
+     │
+     ▼  语义保持:
+         ST: high = 符号扩展(low)
+         ASM: I64_EXTEND_I32_S 将 I32 符号扩展为 I64
+         数值在 64 位表示中保持一致 ✅
+```
+
+### 例 13：FB 调用
 
 ```
 ST:  TON_inst(IN := start, PT := T#5s);
@@ -637,7 +801,7 @@ ST:  TON_inst(IN := start, PT := T#5s);
      所有偏移在编译期计算，运行期固定 ✅
 ```
 
-### 例 13：嵌套控制流
+### 例 14：嵌套控制流
 
 ```
 ST:  IF a > b THEN
@@ -706,7 +870,7 @@ ST:  IF a > b THEN
      嵌套深度在编译期已知，BR 的 depth 参数确保跳转目标正确 ✅
 ```
 
-### 例 14：质量传播 —— 二元运算
+### 例 15：质量传播 —— 二元运算
 
 ```
 ST:  qR := qA + qB;    -- qA, qB, qR 均为 QINT
@@ -740,7 +904,7 @@ ST:  qR := qA + qB;    -- qA, qB, qR 均为 QINT
        WCET: 12 条指令 (5 值 + 7 质量)，固定无分支 ✅
 ```
 
-### 例 15：质量检查条件
+### 例 16：质量检查条件
 
 ```
 ST:  IF Q_GOOD(qA) THEN
@@ -779,7 +943,7 @@ ST:  IF Q_GOOD(qA) THEN
        WCET = max(路径1, 路径2) = 12 条指令 ✅ (可静态计算)
 ```
 
-### 例 16：质量传播的 T → QT 隐式转换
+### 例 17：质量传播的 T → QT 隐式转换
 
 ```
 ST:  qX : QINT;
@@ -802,7 +966,7 @@ ST:  qX : QINT;
        质量 GOOD 是对"普通变量值可信"的正确表达 ✅
 ```
 
-### 例 17：质量传播的转换链完整性
+### 例 18：质量传播的转换链完整性
 
 ```
 ST:  VAR_INPUT  AI1 : QREAL; END_VAR
@@ -900,22 +1064,28 @@ R(st_state σ, runtime_state τ) 定义为以下四个条件的合取:
 
 ST 类型到 SafeASM 值类型的映射（编译期确定，运行期固定）：
 
-| ST 类型 | SafeASM 值类型 | 映射说明 |
-|---------|---------------|---------|
-| BOOL | I32 | TRUE=1, FALSE=0 |
-| BYTE | I32 | 直接映射 |
-| WORD | I32 | 直接映射 |
-| DWORD | I32 | 直接映射 |
-| SINT | I32 | 符号扩展 |
-| INT | I32 | 直接映射 |
-| DINT | I32 | 直接映射 |
-| **LINT** | **I64** | **64 位符号整数 (v1.1)** |
-| REAL | F32 | IEEE 754 单精度 |
-| **LREAL** | **F64** | **IEEE 754 双精度 (v1.1)** |
-| TIME | I64 | 纳秒计数 |
-| **QUALITY** | **I32** | **质量码 (低 2 位有效) (v1.1)** |
-| **Q* (QINT/QREAL 等)** | **I32/F32/...** | **值类型同基础类型 + 影子质量区 1 字节 (v1.1)** |
-| ARRAY[...] | I32/... | 元素类型对应 |
+| ST 类型 | SafeASM 值类型 | 影子质量区 | 映射说明 |
+|---------|---------------|-----------|---------|
+| BOOL | I32 | 无 | TRUE=1, FALSE=0 |
+| BYTE | I32 | 无 | 直接映射 |
+| WORD | I32 | 无 | 直接映射 |
+| DWORD | I32 | 无 | 直接映射 |
+| SINT | I32 | 无 | 符号扩展 |
+| INT | I32 | 无 | 直接映射 |
+| DINT | I32 | 无 | 直接映射 |
+| **LINT** | **I64** | **无** | **64 位符号整数 (v1.1)** |
+| REAL | F32 | 无 | IEEE 754 单精度 |
+| **LREAL** | **F64** | **无** | **IEEE 754 双精度 (v1.1)** |
+| TIME | I64 | 无 | 纳秒计数 |
+| **QUALITY** | **I32** | **无** | **质量码 (低 2 位有效) (v1.1)** |
+| **QBOOL/QBYTE** | **I32** | **1 B** | **值 + 质量 (v1.1)** |
+| **QINT/QDINT** | **I32** | **1 B** | **值 + 质量 (v1.1)** |
+| **QREAL** | **F32** | **1 B** | **值 + 质量 (v1.1)** |
+| **QLINT** | **I64** | **1 B** | **64 位值 + 质量 (v1.1)** |
+| **QLREAL** | **F64** | **1 B** | **64 位浮点值 + 质量 (v1.1)** |
+| **QTIME** | **I64** | **1 B** | **时间值 + 质量 (v1.1)** |
+| **QARRAY[...]** | **同元素类型** | **连续 1B/元素** | **数组每个元素独立质量 (v1.1)** |
+| ARRAY[...] | 元素类型对应 | 无 | 元素类型对应 |
 
 ### 6.3 抽象关系图
 
@@ -958,12 +1128,18 @@ R(st_state, asm_state) 定义为:
   1. 每个 ST 变量的值 = SafeASM 内存中对应偏移处的值
      例: st.x = 42 → mem[GLOBAL_BASE + x_offset] = 42
      
-  2. 当前执行位置对应
+  2. 每个 Q 类型变量的质量码 = SafeASM 影子质量区对应偏移处的值 (v1.1)
+     例: st.qX.quality = GOOD → mem[Q_BASE + qX_idx] = 0x00
+     
+  3. 当前执行位置对应
      例: ST 执行到第 5 行 → ASM 的 pc 指向第 5 行对应的指令
      
-  3. 变量类型兼容
+  4. 变量类型兼容
      ST 的 INT = ASM 的 I32
      ST 的 REAL = ASM 的 F32
+     ST 的 LINT = ASM 的 I64     (v1.1)
+     ST 的 LREAL = ASM 的 F64    (v1.1)
+     ST 的 QINT = ASM 的 I32 + 影子区 1 B  (v1.1)
      ...
 ```
 
@@ -999,6 +1175,40 @@ R(st_state, asm_state) 定义为:
     ✓ 所有内存访问在声明范围内
     ✓ 周期指令数有限
     ✓ 函数无递归调用
+    ✓ 质量传播代码的 WCET 可静态计算  (v1.1)
+    ✓ 影子质量区访问不超出 SEG_QUALITY 边界  (v1.1)
+```
+
+---
+
+## 8. 编译器逐阶段证明对应表 (Proof Correspondence Table)
+
+下表将每种 ST 构造的语义保持责任映射到具体的 Coq 文件和定理：
+
+| 阶段 | Coq 文件 | 证明内容 | 对应 spec 章节 | 进度 |
+|------|---------|---------|---------------|------|
+| 1.1 | `typechecker.v` | 类型安全 `type_safety` (progress + preservation) | §2.2 子集定义 | ❌ 待实现 |
+| 1.2 | `desugar.v` | 脱糖语义保持 `desugar_semantics_preservation` | §2.3 逻辑求值 | ❌ 待实现 |
+| 1.3 | `codegen.v` | 表达式编译仿真 `compile_expr_correct` | §2.1 表达式映射 | ⚠️ 骨架 |
+| 1.3 | `codegen.v` | 语句编译仿真 `compile_stmt_correct` | §2.2 语句映射 | ❌ 待实现 |
+| 1.3 | `codegen.v` | **64 位运算仿真** | **§2.1 I64/F64 运算** | ❌ **v1.1 新增** |
+| 1.3 | `codegen.v` | **质量传播仿真** | **§2.4 质量传播映射** | ❌ **v1.1 新增** |
+| 1.3 | `codegen.v` | **影子质量区访问正确性** | **§3.3 影子内存** | ❌ **v1.1 新增** |
+| 1.3 | `codegen.v` | **T↔QT 隐式转换仿真** | **§2.2 Q 类型赋值** | ❌ **v1.1 新增** |
+| 1.3 | `compiler_correctness.v` | 语义保持 `semantics_preservation` | §7.2 核心定理 | ⚠️ 已声明/admit |
+| 1.3 | `compiler_correctness.v` | **质量保持扩展 `quality_preservation`** | **§6.1 条件 2** | ❌ **v1.1 新增** |
+| 1.3 | `compiler_correctness.v` | 整体语义保持 `total_semantics_preservation` | §7.2 闭包版本 | ⚠️ 已声明/admit |
+| 1.3 | `compiler_correctness.v` | 编译确定性 `compile_determinism` | — | ✅ 已证明 |
+| 1.3 | `compiler_correctness.v` | 安全保持 `safety_preservation` | §7.3 安全约束 | ⚠️ 占位证明 |
+| 1.3 | `compiler_correctness.v` | **影子区访问安全 `quality_mem_safety`** | **§7.3 质量安全** | ❌ **v1.1 新增** |
+| 1.4 | `analysis.v` | WCET/循环上限静态分析 | — | ❌ 待实现 |
+| 1.5 | `encoder.v` | 编码/解码可逆性 `encode_decode_identity` | safeasm-spec §编码 | ❌ 待实现 |
+
+**进度说明**：
+- ✅ = 已完成并证明
+- ⚠️ = 已声明但暂缺证明（admit）
+- ❌ = 待实现
+- **粗体** = v1.1 新增的质量相关证明条目
     
   通俗理解: 编译器不仅是正确的，还是安全的。
   它保证输出的 SafeASM 代码满足安全约束。
