@@ -25,14 +25,17 @@ Inductive st_value : Type :=
   | ST_V_BOOL : bool -> st_value
   | ST_V_BYTE : Z -> st_value | ST_V_WORD : Z -> st_value | ST_V_DWORD : Z -> st_value
   | ST_V_SINT : Z -> st_value | ST_V_INT : Z -> st_value | ST_V_DINT : Z -> st_value
-  | ST_V_REAL : float -> st_value
-  | ST_V_TIME : Z -> st_value
+ | ST_V_REAL : float -> st_value
+ | ST_V_TIME : Z -> st_value
+  | ST_V_LINT : Z -> st_value               (* 64 位有符号整数, v1.1 *)
+  | ST_V_LREAL : float -> st_value          (* 64 位浮点, v1.1 *)
 .
 
 (* ST 运行时状态
    包含所有变量的当前值、当前执行位置、调用栈 *)
 Record st_state : Type := {
   st_vars     : list (ident * st_value);   (* 所有变量的当前值 *)
+  st_quality  : list (ident * Z);           (* 质量码映射: 0=GOOD,1=UNCERTAIN,2=BAD,3=NOT_CONNECTED, v1.1 *)
   st_pou_idx  : Z;                          (* 当前执行的 POU 索引 *)
   st_stmt_idx : Z;                          (* 当前语句索引 *)
   st_call_stack : list Z;                   (* 调用栈 *)
@@ -101,7 +104,36 @@ Fixpoint lookup_var (vars : list (ident * st_value)) (x : ident) {struct vars} :
       else lookup_var rest x
   end.
 
+(* 质量查找 (v1.1) *)
+Fixpoint lookup_quality (quals : list (ident * Z)) (x : ident) {struct quals} : Z :=
+  match quals with
+  | nil => 0  (* 默认 GOOD *)
+  | (y, q) :: rest =>
+      if ident_eq x y then q else lookup_quality rest x
+  end.
+
+(* 质量更新 (v1.1) *)
+Definition update_quality (s : st_state) (x : ident) (q : Z) : st_state :=
+  {| st_vars := s.(st_vars);
+     st_quality := (x, q) :: s.(st_quality);
+     st_pou_idx := s.(st_pou_idx);
+     st_stmt_idx := s.(st_stmt_idx);
+     st_call_stack := s.(st_call_stack);
+     st_cycle_cnt := s.(st_cycle_cnt) + 1;
+  |}.
+
+(* worst() 函数: 质量序 GOOD(0) < UNCERTAIN(1) < BAD(2) < NOT_CONNECTED(3) *)
+Definition worst_quality (q1 q2 : Z) : Z := Z.max q1 q2.
+
+(* 判断 st_value 是否为 64 位 (v1.1) *)
+Definition is_64bit_value (v : st_value) : bool :=
+  match v with
+  | ST_V_LINT _ | ST_V_LREAL _ => true
+  | _ => false
+  end.
+
 (* ST 表达式求值 *)
+
 Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
   match e with
   | E_LIT l =>
@@ -110,6 +142,8 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
       | L_REAL f   => Some (ST_V_REAL f)
       | L_BOOL b   => Some (ST_V_BOOL b)
       | L_TIME t   => Some (ST_V_TIME t)
+      | L_LINT n   => Some (ST_V_LINT n)     (* v1.1 *)
+      | L_LREAL f  => Some (ST_V_LREAL f)    (* v1.1 *)
       end
 
   | E_VAR x => lookup_var s.(st_vars) x
@@ -131,12 +165,16 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
           | U_NEG, ST_V_INT n    => Some (ST_V_INT (- n))
           | U_NEG, ST_V_SINT n   => Some (ST_V_SINT (- n))
           | U_NEG, ST_V_DINT n   => Some (ST_V_DINT (- n))
+          | U_NEG, ST_V_LINT n   => Some (ST_V_LINT (- n))    (* v1.1 *)
           | U_NEG, ST_V_REAL f   => Some (ST_V_REAL f)
+          | U_NEG, ST_V_LREAL f  => Some (ST_V_LREAL f)  (* v1.1 *)
           | U_NOT, ST_V_BOOL b   => Some (ST_V_BOOL (negb b))
           | U_ABS, ST_V_INT n    => Some (ST_V_INT (Z.abs n))
           | U_ABS, ST_V_SINT n   => Some (ST_V_SINT (Z.abs n))
           | U_ABS, ST_V_DINT n   => Some (ST_V_DINT (Z.abs n))
+          | U_ABS, ST_V_LINT n   => Some (ST_V_LINT (Z.abs n))   (* v1.1 *)
           | U_ABS, ST_V_REAL f   => Some (ST_V_REAL f)
+          | U_ABS, ST_V_LREAL f  => Some (ST_V_LREAL f)          (* v1.1 *)
           | _, _ => None
           end
       | None => None
@@ -148,12 +186,28 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
           Some (ST_V_INT (eval_binop_int op n1 n2))
       | Some (ST_V_DINT n1), Some (ST_V_DINT n2) =>
           Some (ST_V_DINT (eval_binop_int op n1 n2))
+      | Some (ST_V_LINT n1), Some (ST_V_LINT n2) =>          (* v1.1 *)
+          Some (ST_V_LINT (eval_binop_int op n1 n2))
       | Some (ST_V_REAL f1), Some (ST_V_REAL f2) =>
           Some (ST_V_REAL (eval_binop_float op f1 f2))
+      | Some (ST_V_LREAL f1), Some (ST_V_LREAL f2) =>        (* v1.1 *)
+          Some (ST_V_LREAL (eval_binop_float op f1 f2))
       | Some (ST_V_INT n1), Some (ST_V_DINT n2) =>
           Some (ST_V_DINT (eval_binop_int op n1 n2))
       | Some (ST_V_DINT n1), Some (ST_V_INT n2) =>
           Some (ST_V_DINT (eval_binop_int op n1 n2))
+      | Some (ST_V_DINT n1), Some (ST_V_LINT n2) =>          (* v1.1: DINT → LINT *)
+          Some (ST_V_LINT (eval_binop_int op n1 n2))
+      | Some (ST_V_LINT n1), Some (ST_V_DINT n2) =>          (* v1.1 *)
+          Some (ST_V_LINT (eval_binop_int op n1 n2))
+      | Some (ST_V_INT n1), Some (ST_V_LINT n2) =>           (* v1.1: INT → LINT *)
+          Some (ST_V_LINT (eval_binop_int op n1 n2))
+      | Some (ST_V_LINT n1), Some (ST_V_INT n2) =>           (* v1.1 *)
+          Some (ST_V_LINT (eval_binop_int op n1 n2))
+      | Some (ST_V_REAL f1), Some (ST_V_LREAL f2) =>         (* v1.1: REAL → LREAL *)
+          Some (ST_V_LREAL (eval_binop_float op f1 f2))
+      | Some (ST_V_LREAL f1), Some (ST_V_REAL f2) =>         (* v1.1 *)
+          Some (ST_V_LREAL (eval_binop_float op f1 f2))
       | _, _ => None
       end
 
@@ -163,10 +217,22 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
           Some (ST_V_BOOL (eval_compare_int op n1 n2))
       | Some (ST_V_DINT n1), Some (ST_V_DINT n2) =>
           Some (ST_V_BOOL (eval_compare_int op n1 n2))
+      | Some (ST_V_LINT n1), Some (ST_V_LINT n2) =>          (* v1.1 *)
+          Some (ST_V_BOOL (eval_compare_int op n1 n2))
       | Some (ST_V_REAL f1), Some (ST_V_REAL f2) =>
+          Some (ST_V_BOOL (eval_compare_float op f1 f2))
+      | Some (ST_V_LREAL f1), Some (ST_V_LREAL f2) =>        (* v1.1 *)
           Some (ST_V_BOOL (eval_compare_float op f1 f2))
       | Some (ST_V_BOOL b1), Some (ST_V_BOOL b2) =>
           Some (ST_V_BOOL (eval_compare_bool op b1 b2))
+      | Some (ST_V_DINT n1), Some (ST_V_LINT n2) =>          (* v1.1: 混合比较 *)
+          Some (ST_V_BOOL (eval_compare_int op n1 n2))
+      | Some (ST_V_LINT n1), Some (ST_V_DINT n2) =>          (* v1.1 *)
+          Some (ST_V_BOOL (eval_compare_int op n1 n2))
+      | Some (ST_V_REAL f1), Some (ST_V_LREAL f2) =>         (* v1.1: 混合比较 *)
+          Some (ST_V_BOOL (eval_compare_float op f1 f2))
+      | Some (ST_V_LREAL f1), Some (ST_V_REAL f2) =>         (* v1.1 *)
+          Some (ST_V_BOOL (eval_compare_float op f1 f2))
       | _, _ => None
       end
 
@@ -194,11 +260,48 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
   | E_FUNC_CALL f args =>
       (* 简化：函数调用返回默认值 *)
       Some (ST_V_INT 0)
+
+  | E_QUALITY_OP op args =>
+      match op with
+      | Q_STATUS =>
+          (* Q_STATUS(x): 从质量表中查找 *)
+          match args with
+          | [x] =>
+              match x with
+              | E_VAR id => Some (ST_V_INT (lookup_quality s.(st_quality) id))
+              | _ => Some (ST_V_INT 0)  (* 默认 GOOD *)
+              end
+          | _ => None
+          end
+      | Q_VALUE =>
+          (* Q_VALUE(x): 直接返回值（非 Q 变量时返回自身） *)
+          match args with
+          | [x] => Some (ST_V_INT 0)  (* 简化：返回默认值 *)
+          | _ => None
+          end
+      | Q_GOOD =>
+          match args with
+          | [E_VAR id] => Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 0))
+          | _ => Some (ST_V_BOOL true)
+          end
+      | Q_BAD =>
+          match args with
+          | [E_VAR id] => Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 2))
+          | _ => Some (ST_V_BOOL false)
+          end
+      | Q_UNCERTAIN =>
+          match args with
+          | [E_VAR id] => Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 1))
+          | _ => Some (ST_V_BOOL false)
+          end
+      | _ => Some (ST_V_INT 0)  (* Q_SET, Q_WITH, Q_FORCE: 简化 *)
+      end
   end.
 
 (* ST 状态更新 *)
 Definition update_var (s : st_state) (x : ident) (v : st_value) : st_state :=
   {| st_vars := (x, v) :: s.(st_vars);
+     st_quality := s.(st_quality);
      st_pou_idx := s.(st_pou_idx);
      st_stmt_idx := s.(st_stmt_idx);
      st_call_stack := s.(st_call_stack);
@@ -243,6 +346,7 @@ Definition lookup_fb (p : st_program) (inst : ident) : option st_pou :=
 (* 函数调用栈帧操作 *)
 Definition push_call_frame (s : st_state) (f : ident) (args : list st_expr) (body : list st_stmt) : st_state :=
   {| st_vars := s.(st_vars);
+     st_quality := s.(st_quality);
      st_pou_idx := s.(st_pou_idx);
      st_stmt_idx := 0;
      st_call_stack := s.(st_pou_idx) :: s.(st_call_stack);
@@ -254,6 +358,7 @@ Definition pop_call_frame (s : st_state) (ret_val : st_value) : st_state :=
   | nil => s
   | caller_pou :: rest =>
       {| st_vars := s.(st_vars);
+         st_quality := s.(st_quality);
          st_pou_idx := caller_pou;
          st_stmt_idx := s.(st_stmt_idx);
          st_call_stack := rest;
@@ -389,7 +494,16 @@ Fixpoint st_type_to_sasm (t : st_type) : sasm_value_type :=
   | T_WORD | T_INT             => I32
   | T_DWORD | T_DINT           => I32
   | T_REAL                     => F32
+  | T_LREAL                    => F64           (* v1.1 *)
   | T_TIME                     => I64
+  | T_LINT                     => I64           (* v1.1 *)
+  | T_QUALITY                  => I32           (* v1.1 *)
+  | T_QBOOL | T_QBYTE | T_QWORD | T_QDWORD
+  | T_QSINT | T_QINT | T_QDINT => I32          (* v1.1 *)
+  | T_QLINT                    => I64           (* v1.1 *)
+  | T_QREAL                    => F32           (* v1.1 *)
+  | T_QLREAL                   => F64           (* v1.1 *)
+  | T_QTIME                    => I64           (* v1.1 *)
   | T_ARRAY elem _ _           => st_type_to_sasm elem
   end.
 
@@ -405,6 +519,8 @@ Definition st_val_to_sasm (v : st_value) : sasm_value :=
   | ST_V_DINT z    => V_I32 z
   | ST_V_REAL f    => V_F32 f
   | ST_V_TIME z    => V_I64 z
+  | ST_V_LINT z    => V_I64 z          (* v1.1 *)
+  | ST_V_LREAL f   => V_F64 f          (* v1.1 *)
   end.
 
 (* 从 SafeASM 内存读取值 *)
