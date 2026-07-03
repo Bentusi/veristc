@@ -225,7 +225,7 @@ FB 字段偏移(inst, field) = FB_BASE + fb_base(inst) + field_offset(field)
   │ var_0  (4 字节)  │          │ Q_BASE + 0: var_0.q     │ 1 字节
   │ var_1  (8 字节)  │          │ Q_BASE + 1: var_1.q     │ 1 字节
   │ var_2  (4 字节)  │          │ Q_BASE + 2: var_2.q     │ 1 字节
-  │ ...              │          │ ...                      │
+  │ ...             │          │ ...                      │
   │ var_N  (4 字节)  │          │ Q_BASE + N: var_N.q     │ 1 字节
   └─────────────────┘          └──────────────────────────┘
 

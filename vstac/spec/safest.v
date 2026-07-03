@@ -33,9 +33,17 @@ Inductive token : Type :=
   | TK_CONSTANT | TK_RETAIN
   | TK_TRUE | TK_FALSE
   | TK_AND | TK_OR | TK_XOR | TK_NOT
-  | TK_MOD | TK_ABS
-  (* 字面量 *)
-  | TK_INT_LIT : Z -> token              (* 整数常量 *)
+ | TK_MOD | TK_ABS
+ (* 质量类型关键字 (v1.1) *)
+ | TK_QUALITY | TK_GOOD | TK_BAD | TK_UNCERTAIN | TK_NOT_CONNECTED
+ | TK_QBOOL | TK_QBYTE | TK_QWORD | TK_QDWORD
+ | TK_QSINT | TK_QINT | TK_QDINT | TK_QLINT
+ | TK_QREAL | TK_QLREAL | TK_QTIME
+ (* 质量操作内置函数名 (v1.1) *)
+ | TK_Q_STATUS | TK_Q_SET | TK_Q_VALUE | TK_Q_WITH | TK_Q_FORCE
+ | TK_Q_GOOD | TK_Q_BAD | TK_Q_UNCERTAIN | TK_Q_NONE | TK_Q_DISABLE
+ (* 字面量 *)
+ | TK_INT_LIT : Z -> token              (* 整数常量 *)
   | TK_REAL_LIT : float -> token         (* 浮点常量 *)
   | TK_TIME_LIT : Z -> token             (* TIME 常量，纳秒 *)
   | TK_BOOL_LIT : bool -> token          (* 布尔常量 *)
@@ -77,12 +85,27 @@ Inductive st_type : Type :=
   | T_BYTE                       (* BYTE *)
   | T_WORD                       (* WORD *)
   | T_DWORD                      (* DWORD *)
-  | T_SINT                       (* SINT *)
-  | T_INT                        (* INT *)
-  | T_DINT                       (* DINT *)
-  | T_REAL                       (* REAL *)
-  | T_TIME                       (* TIME *)
-  | T_ARRAY : st_type -> Z -> Z -> st_type   (* 静态数组: 元素类型 × 下界 × 上界 *)
+ | T_SINT                       (* SINT *)
+ | T_INT                        (* INT *)
+ | T_DINT                       (* DINT *)
+ | T_LINT                       (* LINT — 64 位有符号整数, v1.1 *)
+ | T_REAL                       (* REAL *)
+ | T_LREAL                      (* LREAL — 64 位浮点, v1.1 *)
+ | T_TIME                       (* TIME *)
+ | T_QUALITY                    (* QUALITY — 信号质量码, v1.1 *)
+ (* 带质量位的 Q 类型 (v1.1) *)
+ | T_QBOOL                      (* QBOOL *)
+ | T_QBYTE                      (* QBYTE *)
+ | T_QWORD                      (* QWORD *)
+ | T_QDWORD                     (* QDWORD *)
+ | T_QSINT                      (* QSINT *)
+ | T_QINT                       (* QINT *)
+ | T_QDINT                      (* QDINT *)
+ | T_QLINT                      (* QLINT — 64 位带质量整数, v1.1 *)
+ | T_QREAL                      (* QREAL *)
+ | T_QLREAL                     (* QLREAL — 64 位带质量浮点, v1.1 *)
+ | T_QTIME                      (* QTIME *)
+ | T_ARRAY : st_type -> Z -> Z -> st_type   (* 静态数组: 元素类型 × 下界 × 上界 *)
 .
 
 (* 类型的位宽（用于内存布局计算） *)
@@ -95,8 +118,23 @@ Fixpoint type_width (t : st_type) : Z :=
   | T_SINT   => 8
   | T_INT    => 16
   | T_DINT   => 32
+  | T_LINT   => 64               (* v1.1 *)
   | T_REAL   => 32
+  | T_LREAL  => 64               (* v1.1 *)
   | T_TIME   => 64
+  | T_QUALITY => 8               (* v1.1: 1 字节质量码 *)
+  (* Q 类型: 值宽度与基础类型相同 *)
+  | T_QBOOL  => 1
+  | T_QBYTE  => 8
+  | T_QWORD  => 16
+  | T_QDWORD => 32
+  | T_QSINT  => 8
+  | T_QINT   => 16
+  | T_QDINT  => 32
+  | T_QLINT  => 64               (* v1.1 *)
+  | T_QREAL  => 32
+  | T_QLREAL => 64               (* v1.1 *)
+  | T_QTIME  => 64
   | T_ARRAY elem low high => (high - low + 1) * type_width elem
   end.
 
@@ -110,7 +148,13 @@ Inductive type_compatible : st_type -> st_type -> Prop :=
   (* 位串提升: BYTE → WORD → DWORD *)
   | Comp_byte_word : type_compatible T_BYTE T_WORD
   | Comp_byte_dword : type_compatible T_BYTE T_DWORD
-  | Comp_word_dword : type_compatible T_WORD T_DWORD
+ | Comp_word_dword : type_compatible T_WORD T_DWORD
+ (* LINT 扩展 (v1.1) *)
+ | Comp_sint_lint : type_compatible T_SINT T_LINT
+ | Comp_int_lint : type_compatible T_INT T_LINT
+ | Comp_dint_lint : type_compatible T_DINT T_LINT
+ (* LREAL 扩展 (v1.1) *)
+ | Comp_real_lreal : type_compatible T_REAL T_LREAL
 .
 
 (* 提升到公共类型 *)
@@ -127,7 +171,21 @@ Inductive promote_type : st_type -> st_type -> st_type -> Prop :=
   | Promote_dint_int : promote_type T_DINT T_INT T_DINT
   | Promote_word_byte : promote_type T_WORD T_BYTE T_WORD
   | Promote_dword_byte : promote_type T_DWORD T_BYTE T_DWORD
-  | Promote_dword_word : promote_type T_DWORD T_WORD T_DWORD
+ | Promote_dword_word : promote_type T_DWORD T_WORD T_DWORD
+ (* LINT 扩展 (v1.1) *)
+ | Promote_sint_lint : promote_type T_SINT T_LINT T_LINT
+ | Promote_int_lint : promote_type T_INT T_LINT T_LINT
+ | Promote_dint_lint : promote_type T_DINT T_LINT T_LINT
+ | Promote_lint_sint : promote_type T_LINT T_SINT T_LINT
+ | Promote_lint_int : promote_type T_LINT T_INT T_LINT
+ | Promote_lint_dint : promote_type T_LINT T_DINT T_LINT
+ | Promote_lint_lint : promote_type T_LINT T_LINT T_LINT
+ (* LREAL 扩展 (v1.1) *)
+ | Promote_real_lreal : promote_type T_REAL T_LREAL T_LREAL
+ | Promote_lreal_real : promote_type T_LREAL T_REAL T_LREAL
+ | Promote_lreal_lreal : promote_type T_LREAL T_LREAL T_LREAL
+ (* QUALITY 扩展 (v1.1) *)
+ | Promote_quality : promote_type T_QUALITY T_QUALITY T_QUALITY
 .
 
 (* ================================================================
@@ -138,7 +196,9 @@ Inductive st_literal : Type :=
   | L_BOOL : bool -> st_literal
   | L_INT : Z -> st_literal                (* 整数字面量，范围对应具体类型 *)
   | L_REAL : float -> st_literal           (* 实数字面量 *)
-  | L_TIME : Z -> st_literal               (* 时间字面量，单位纳秒 *)
+ | L_TIME : Z -> st_literal               (* 时间字面量，单位纳秒 *)
+ | L_LINT : Z -> st_literal               (* 64 位整数，L# 前缀, v1.1 *)
+ | L_LREAL : float -> st_literal          (* 64 位浮点字面量, v1.1 *)
 .
 
 (* 字面量的类型推断 *)
@@ -148,6 +208,8 @@ Definition literal_type (l : st_literal) : option st_type :=
   | L_INT _  => Some T_DINT    (* 默认整数类型 *)
   | L_REAL _ => Some T_REAL
   | L_TIME _ => Some T_TIME
+  | L_LINT _ => Some T_LINT
+  | L_LREAL _ => Some T_LREAL
   end.
 
 (* ================================================================
@@ -177,6 +239,18 @@ Inductive compare_op : Type :=
   | C_GE      (* >= *)
 .
 
+(* 质量操作算子 (v1.1) *)
+Inductive quality_op : Type :=
+  | Q_STATUS     (* Q_STATUS(x) → QUALITY *)
+  | Q_VALUE      (* Q_VALUE(x) → 基础类型值 *)
+  | Q_GOOD       (* Q_GOOD(x) → BOOL *)
+  | Q_BAD        (* Q_BAD(x) → BOOL *)
+  | Q_UNCERTAIN  (* Q_UNCERTAIN(x) → BOOL *)
+  | Q_SET        (* Q_SET(x, q) → QUALITY *)
+  | Q_WITH       (* Q_WITH(v, q) → Q 类型 *)
+  | Q_FORCE      (* Q_FORCE(x, v, q) → Q 类型 *)
+.
+
 Inductive st_expr : Type :=
   | E_LIT : st_literal -> st_expr                            (* 字面量 *)
   | E_VAR : ident -> st_expr                                 (* 变量引用 *)
@@ -188,6 +262,7 @@ Inductive st_expr : Type :=
   | E_OR : st_expr -> st_expr -> st_expr                       (* 逻辑 OR（逻辑求值） *)
   | E_XOR : st_expr -> st_expr -> st_expr                      (* 逻辑 XOR *)
   | E_FUNC_CALL : ident -> list st_expr -> st_expr             (* 函数调用 *)
+  | E_QUALITY_OP : quality_op -> list st_expr -> st_expr       (* 质量操作, v1.1 *)
 .
 
 (* ================================================================
@@ -290,22 +365,50 @@ Definition lookup_function (ctx : type_env) (f : ident) : option (list st_type *
 (* 一元运算符的有效类型 *)
 Definition is_valid_unary (op : unary_op) (ty : st_type) : Prop :=
   match op with
-  | U_NEG => ty = T_SINT \/ ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
+  | U_NEG => ty = T_SINT \/ ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/
+            ty = T_REAL \/ ty = T_LREAL
   | U_NOT => ty = T_BOOL
-  | U_ABS => ty = T_SINT \/ ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
+  | U_ABS => ty = T_SINT \/ ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/
+            ty = T_REAL \/ ty = T_LREAL
   end.
 
 (* 二元运算符的有效类型 *)
 Definition is_valid_binary (op : binary_op) (ty : st_type) : Prop :=
   match op with
-  | B_ADD => ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
-  | B_SUB => ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
-  | B_MUL => ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
-  | B_DIV => ty = T_INT \/ ty = T_DINT \/ ty = T_REAL
-  | B_MOD => ty = T_INT \/ ty = T_DINT
+  | B_ADD => ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/ ty = T_REAL \/ ty = T_LREAL
+  | B_SUB => ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/ ty = T_REAL \/ ty = T_LREAL
+  | B_MUL => ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/ ty = T_REAL \/ ty = T_LREAL
+  | B_DIV => ty = T_INT \/ ty = T_DINT \/ ty = T_LINT \/ ty = T_REAL \/ ty = T_LREAL
+  | B_MOD => ty = T_INT \/ ty = T_DINT \/ ty = T_LINT
   end.
 
 (* 类型检查关系: Γ ⊢ expr : type *)
+(* 质量类型判断 (v1.1) *)
+Definition is_quality_type (ty : st_type) : bool :=
+  match ty with
+  | T_QBOOL | T_QBYTE | T_QWORD | T_QDWORD
+  | T_QSINT | T_QINT | T_QDINT | T_QLINT
+  | T_QREAL | T_QLREAL | T_QTIME => true
+  | _ => false
+  end.
+
+(* 去除质量位：QINT → INT, QREAL → REAL 等 (v1.1) *)
+Definition strip_quality (ty : st_type) : st_type :=
+  match ty with
+  | T_QBOOL => T_BOOL
+  | T_QBYTE => T_BYTE
+  | T_QWORD => T_WORD
+  | T_QDWORD => T_DWORD
+  | T_QSINT => T_SINT
+  | T_QINT => T_INT
+  | T_QDINT => T_DINT
+  | T_QLINT => T_LINT
+  | T_QREAL => T_REAL
+  | T_QLREAL => T_LREAL
+  | T_QTIME => T_TIME
+  | ty => ty
+  end.
+
 Inductive has_type : type_env -> st_expr -> st_type -> Prop :=
   | T_Literal : forall ctx l ty,
       literal_type l = Some ty ->
@@ -348,6 +451,35 @@ Inductive has_type : type_env -> st_expr -> st_type -> Prop :=
       lookup_function ctx f = Some (param_types, return_type) ->
       Forall2 (fun arg ty => has_type ctx arg ty) args param_types ->
       has_type ctx (E_FUNC_CALL f args) return_type
+  | T_QStatus : forall ctx e ty,
+      has_type ctx e ty ->
+      is_quality_type ty = true ->
+      has_type ctx (E_QUALITY_OP Q_STATUS [e]) T_QUALITY
+  | T_QValue : forall ctx e ty,
+      has_type ctx e ty ->
+      is_quality_type ty = true ->
+      has_type ctx (E_QUALITY_OP Q_VALUE [e]) (strip_quality ty)
+  | T_QCheck : forall ctx e ty op,
+      has_type ctx e ty ->
+      is_quality_type ty = true ->
+      (op = Q_GOOD \/ op = Q_BAD \/ op = Q_UNCERTAIN) ->
+      has_type ctx (E_QUALITY_OP op [e]) T_BOOL
+  | T_QSet : forall ctx e1 e2 ty1,
+      has_type ctx e1 ty1 ->
+      is_quality_type ty1 = true ->
+      has_type ctx e2 T_QUALITY ->
+      has_type ctx (E_QUALITY_OP Q_SET [e1; e2]) T_QUALITY
+  | T_QWith : forall ctx e1 e2 ty1,
+      has_type ctx e1 ty1 ->
+      has_type ctx e2 T_QUALITY ->
+      (is_quality_type ty1 = true \/ ty1 = T_QUALITY) ->
+      has_type ctx (E_QUALITY_OP Q_WITH [e1; e2]) ty1
+  | T_QForce : forall ctx e1 e2 e3 ty1,
+      has_type ctx e1 ty1 ->
+      is_quality_type ty1 = true ->
+      has_type ctx e2 (strip_quality ty1) ->
+      has_type ctx e3 T_QUALITY ->
+      has_type ctx (E_QUALITY_OP Q_FORCE [e1; e2; e3]) ty1
 .
 
 (* ================================================================
