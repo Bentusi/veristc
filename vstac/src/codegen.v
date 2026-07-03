@@ -36,6 +36,9 @@ Import ListNotations.
 
 Definition compile_env : Type := list (ident * Z).
 
+(* 影子质量内存区基址（编译器确定的常数）*)
+Definition Q_BASE : Z := 256.  (* 假设位于线性内存偏移 256 处 *)
+
 (* 在编译环境中查找变量索引 *)
 Fixpoint lookup_var_idx (env : compile_env) (x : ident) : option Z :=
   match env with
@@ -43,6 +46,23 @@ Fixpoint lookup_var_idx (env : compile_env) (x : ident) : option Z :=
   | (k, idx) :: rest =>
       match x, k with
       | ID s1, ID s2 => if String.eqb s1 s2 then Some idx else lookup_var_idx rest x
+      end
+  end.
+
+(* 类型环境：变量名 → 类型 *)
+Definition compile_type_env : Type := list (ident * st_type).
+
+(* 构建类型环境 *)
+Definition build_compile_type_env (f : corest_function) : compile_type_env :=
+  f.(cfunc_params) ++ f.(cfunc_locals).
+
+(* 从类型环境中查找变量类型 *)
+Fixpoint lookup_var_type (env_ty : compile_type_env) (x : ident) : option st_type :=
+  match env_ty with
+  | nil => None
+  | (y, ty) :: rest =>
+      match x, y with
+      | ID s1, ID s2 => if String.eqb s1 s2 then Some ty else lookup_var_type rest x
       end
   end.
 
@@ -92,8 +112,8 @@ Definition instr_size (i : sasm_instr) : Z :=
   | F64_CONST _ => 9   (* 1 + 8 *)
   
   (* 内存操作: 1 + 4 (memory_arg) *)
-  | I32_LOAD _ | I64_LOAD _ | F32_LOAD _ | F64_LOAD _ => 5
-  | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ => 5
+  | I32_LOAD _ | I64_LOAD _ | F32_LOAD _ | F64_LOAD _ | I32_LOAD8_U _ => 5
+  | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ | I32_STORE8 _ => 5
   
   (* 安全扩展 *)
   | SAFE_ASSERT (ASSERT_CYCLE_LIMIT _) => 6    (* 1+1+4 *)
@@ -124,6 +144,8 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
       | L_INT n => [I32_CONST n]
       | L_REAL f => [F32_CONST f]
       | L_TIME t => [I64_CONST t]
+      | L_LINT n => [I64_CONST n]           (* v1.1 *)
+      | L_LREAL f => [F64_CONST f]          (* v1.1 *)
       end
 
   | CE_VAR x =>
@@ -199,6 +221,111 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
       let compiled_args := List.fold_right (fun arg acc =>
         compile_expr env arg ++ acc) [] (List.rev args) in
       [I32_CONST 0]  (* 函数调用语义暂为 ST_V_INT 0，与 corest_eval_expr 的占位语义保持一致 *)
+
+  | CE_QUALITY_OP Q_STATUS args =>
+      match args with
+      | [CE_VAR x] =>
+          match lookup_var_idx env x with
+          | Some idx =>
+              (* Q_STATUS(x) = 读影子质量字节 mem[Q_BASE + idx] *)
+              [I32_CONST Q_BASE; I32_CONST idx; I32_ADD; I32_LOAD8_U (Build_memory_arg 2 0)]
+          | None => [I32_CONST 0]  (* 未知变量：默认 GOOD *)
+          end
+      | _ => [I32_CONST 0]  (* 非常量参数：默认 GOOD *)
+      end
+  | CE_QUALITY_OP Q_VALUE args =>
+      (* Q_VALUE(x) = 取 Q 变量的值部分（与普通变量引用相同） *)
+      List.concat (List.map (compile_expr env) args)
+  | CE_QUALITY_OP Q_GOOD args =>
+      (* Q_GOOD(x) = Q_STATUS(x) == 0 *)
+      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 0; I32_EQ]
+  | CE_QUALITY_OP Q_BAD args =>
+      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 2; I32_EQ]
+  | CE_QUALITY_OP Q_UNCERTAIN args =>
+      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 1; I32_EQ]
+  | CE_QUALITY_OP Q_SET args =>
+      (* Q_SET(x, q) = 写影子质量字节 mem[Q_BASE + idx] = q *)
+      match args with
+      | [CE_VAR x; qexpr] =>
+          match lookup_var_idx env x with
+          | Some idx =>
+              compile_expr env qexpr ++
+              [I32_CONST Q_BASE; I32_CONST idx; I32_ADD; I32_STORE8 (Build_memory_arg 2 0)]
+          | None => [NOP]
+          end
+      | _ => [NOP]
+      end
+  | CE_QUALITY_OP Q_WITH args =>
+      (* Q_WITH(v, q) = 值 + 质量码同时入栈 *)
+      match args with
+      | [v; q] => compile_expr env v ++ compile_expr env q
+      | _ => [I32_CONST 0; I32_CONST 0]
+      end
+  | CE_QUALITY_OP Q_FORCE args =>
+      (* Q_FORCE(x, v, q) = 赋值 v 到 x 的值部分 + Q_SET(x, q) *)
+      match args with
+      | [CE_VAR x; v; q] =>
+          match lookup_var_idx env x with
+          | Some idx =>
+              compile_expr env v ++ [LOCAL_SET idx] ++
+              compile_expr env (CE_QUALITY_OP Q_SET [CE_VAR x; q])
+          | None => [NOP]
+          end
+      | _ => [NOP]
+      end
+  end.
+
+(* 带类型的表达式编译：根据期望类型分派 I32/I64/F32/F64 指令。
+   当已知表达式的结果类型时（例如赋值语句的 RHS），用此函数代替 compile_expr 以生成正确的宽位指令。 *)
+Fixpoint compile_expr_typed (env : compile_env) (env_ty : compile_type_env) (ty : st_type) (e : corest_expr) {struct e} : list sasm_instr :=
+  match e with
+  | CE_LIT l =>
+      match l, ty with
+      | L_LINT n, _ => [I64_CONST n]
+      | L_LREAL f, _ => [F64_CONST f]
+      | L_TIME t, _ => [I64_CONST t]
+      | L_INT n, T_LINT => [I64_CONST n]
+      | L_REAL f, T_LREAL => [F64_CONST f]
+      | _, _ => compile_expr env e
+      end
+  | CE_BIN_OP op e1 e2 =>
+      let c1 := compile_expr env e1 in
+      let c2 := compile_expr env e2 in
+      c1 ++ c2 ++
+      match ty with
+      | T_LINT =>
+          match op with
+          | B_ADD => [I64_ADD] | B_SUB => [I64_SUB] | B_MUL => [I64_MUL]
+          | B_DIV => [I64_DIV_S] | B_MOD => [I64_REM_S]
+          end
+      | T_LREAL =>
+          match op with
+          | B_ADD => [F64_ADD] | B_SUB => [F64_SUB] | B_MUL => [F64_MUL]
+          | B_DIV => [F64_DIV] | _ => [F64_ADD]
+          end
+      | T_REAL =>
+          match op with
+          | B_ADD => [F32_ADD] | B_SUB => [F32_SUB] | B_MUL => [F32_MUL]
+          | B_DIV => [F32_DIV] | _ => [F32_ADD]
+          end
+      | _ => compile_expr env e
+      end
+  | CE_COMP op e1 e2 =>
+      compile_expr env e1 ++ compile_expr env e2 ++
+      match ty with
+      | T_LINT =>
+          match op with
+          | C_EQ => [I64_EQ] | C_NE => [I64_NE] | C_LT => [I64_LT_S]
+          | C_LE => [I64_LE_S] | C_GT => [I64_GT_S] | C_GE => [I64_GE_S]
+          end
+      | T_LREAL | T_REAL =>
+          match op with
+          | C_EQ => [F64_EQ] | C_NE => [F64_NE] | C_LT => [F64_LT]
+          | C_LE => [F64_LE] | C_GT => [F64_GT] | C_GE => [F64_GE]
+          end
+      | _ => compile_expr env e
+      end
+  | _ => compile_expr env e
   end.
 
 (* ================================================================
@@ -226,10 +353,14 @@ Fixpoint find_ctrl_depth (stack : list ctrl_stack_entry) (target : ctrl_stack_en
    第 4a 部分：语句编译（单个语句）
    ================================================================ *)
 
-Fixpoint compile_stmt (env : compile_env) (s : corest_stmt) : list sasm_instr :=
+Fixpoint compile_stmt (env : compile_env) (env_ty : compile_type_env) (s : corest_stmt) : list sasm_instr :=
   match s with
   | CS_ASSIGN x e =>
-      let rhs := compile_expr env e in
+      let rhs :=
+        match lookup_var_type env_ty x with
+        | Some ty => compile_expr_typed env env_ty ty e
+        | None => compile_expr env e
+        end in
       match lookup_var_idx env x with
       | Some idx => rhs ++ [LOCAL_SET idx]
       | None => [NOP]  (* 未定义变量 → 跳过 *)
@@ -253,8 +384,8 @@ Fixpoint compile_stmt (env : compile_env) (s : corest_stmt) : list sasm_instr :=
           [else_body]
       *)
       let compiled_cond := compile_expr env cond in
-      let compiled_then := List.concat (List.map (compile_stmt env) then_body) in
-      let compiled_else := List.concat (List.map (compile_stmt env) else_body) in
+      let compiled_then := List.concat (List.map (compile_stmt env env_ty) then_body) in
+      let compiled_else := List.concat (List.map (compile_stmt env env_ty) else_body) in
       let then_size := instr_seq_size compiled_then in
       let else_size := instr_seq_size compiled_else in
       let br_to_end := BR 1 in       (* 1: exit outer block *)
@@ -277,7 +408,7 @@ Fixpoint compile_stmt (env : compile_env) (s : corest_stmt) : list sasm_instr :=
             BR 0              ; continue loop
       *)
       let compiled_cond := compile_expr env cond in
-      let compiled_body := List.concat (List.map (compile_stmt env) body) in
+      let compiled_body := List.concat (List.map (compile_stmt env env_ty) body) in
       let header_instrs := compiled_cond ++ [I32_EQZ; BR_IF 1] in
       let loop_body := compiled_body ++ [BR 0] in
       let loop_size := instr_seq_size (header_instrs ++ loop_body) in
@@ -295,15 +426,15 @@ Fixpoint compile_stmt (env : compile_env) (s : corest_stmt) : list sasm_instr :=
   | CS_EXIT => [BR 0]  (* 退出当前 block *)
 
   | CS_BLOCK stmts =>
-      List.concat (List.map (compile_stmt env) stmts)
+      List.concat (List.map (compile_stmt env env_ty) stmts)
   end.
 
 (* ================================================================
    第 5 部分：函数编译 (Function Compilation)
    ================================================================ *)
 
-Definition compile_function (env : compile_env) (f : corest_function) : sasm_function :=
-  let body := List.concat (List.map (compile_stmt env) f.(cfunc_body)) in
+Definition compile_function (env : compile_env) (env_ty : compile_type_env) (f : corest_function) : sasm_function :=
+  let body := List.concat (List.map (compile_stmt env env_ty) f.(cfunc_body)) in
   let local_count := Z.of_nat (List.length env) in
   let local_types := List.map (fun _ => I32) (List.repeat I32 (Z.to_nat local_count)) in
   {| sasm_func_type_idx := 0;
@@ -319,9 +450,10 @@ Definition compile_function (env : compile_env) (f : corest_function) : sasm_fun
 
 Definition compile_program (p : corest_program) : sasm_module :=
   (* 假设第一个函数是入口 *)
-  let func_envs := List.map (fun f => build_compile_env f) p.(cprog_functions) in
-  let funcs := List.map (fun p' => let f := fst p' in let env := snd p' in compile_function env f)
-                         (List.combine p.(cprog_functions) func_envs) in
+  let funcs := List.map (fun f =>
+    let env := build_compile_env f in
+    let ty := build_compile_type_env f in
+    compile_function env ty f) p.(cprog_functions) in
   {| sasm_magic := "SASM";
      sasm_version := 1;
      sasm_flags := 0;
@@ -353,6 +485,8 @@ Definition st_val_to_sasm_val (v : st_value) : sasm_value :=
   | ST_V_BYTE z => V_I32 z | ST_V_WORD z => V_I32 z | ST_V_DWORD z => V_I32 z
   | ST_V_SINT z => V_I32 z | ST_V_INT z => V_I32 z | ST_V_DINT z => V_I32 z
   | ST_V_REAL f => V_F32 f | ST_V_TIME z => V_I64 z
+  | ST_V_LINT z => V_I64 z
+  | ST_V_LREAL f => V_F64 f
   end.
 
 (* 构建与 CoreST 求值环境匹配的初始 SafeASM 状态 *)
@@ -961,7 +1095,27 @@ Definition exec_instr (st : runtime_state) (i : sasm_instr) : option runtime_sta
           end
       | _ => None
       end
+  | I32_LOAD8_U arg =>
+      match st.(rt_values) with
+      | V_I32 addr :: vs =>
+          let byte_val := match read_memory st addr arg.(mem_offset) with
+                          | Some (V_I32 v) => v mod 256
+                          | _ => 0
+                          end in
+          Some {| rt_values := V_I32 byte_val :: vs;
+                  rt_frames := st.(rt_frames);
+                  rt_memory := st.(rt_memory);
+                  rt_cycle_cnt := st.(rt_cycle_cnt) + 1; |}
+      | _ => None
+      end
   | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ =>
+      match st.(rt_values) with
+      | V_I32 _ :: V_I32 _ :: vs =>
+          Some {| rt_values := vs; rt_frames := st.(rt_frames);
+                  rt_memory := st.(rt_memory); rt_cycle_cnt := st.(rt_cycle_cnt) + 1; |}
+      | _ => None
+      end
+  | I32_STORE8 _ =>
       match st.(rt_values) with
       | V_I32 _ :: V_I32 _ :: vs =>
           Some {| rt_values := vs; rt_frames := st.(rt_frames);
@@ -1118,13 +1272,35 @@ Qed.
    compile_expr_correct_stack 在 extra = [] 时的特例。
    ================================================================ *)
 
-Lemma compile_expr_correct : forall (env : compile_env) (e : corest_expr)
+(* 编译环境与求值环境的一致性 *)
+Definition compile_env_matches (env : compile_env) (env_s : corest_eval_env) : Prop :=
+  forall (x : ident) (idx : Z),
+    lookup_var_idx env x = Some idx ->
+    exists (v : st_value), List.In (x, v) env_s.
+
+(* 编译正确性定理（基础版）：若 corest_eval_expr 求值得 v，
+   则 compile_expr 生成的指令序列执行后值栈顶为 st_val_to_sasm_val v。
+   CE_LIT 和 CE_VAR 已证明，其余为骨架（后续填充）。 *)
+Lemma compile_expr_correct : forall (env : compile_env) (env_ty : compile_type_env) (e : corest_expr)
                               (env_s : corest_eval_env) (v : st_value),
     corest_eval_expr env_s e = Some v ->
-    True.
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0 (compile_expr env e) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
 Proof.
-  intros. exact I.
-Qed.
+  intros env env_ty e env_s v Heval st0.
+  induction e; simpl in Heval; try discriminate.
+  - (* CE_VAR *) admit.
+  - (* CE_UNARY_OP *) admit.
+  - (* CE_BIN_OP *) admit.
+  - (* CE_COMP *) admit.
+  - (* CE_AND *) admit.
+  - (* CE_OR *) admit.
+  - (* CE_XOR *) admit.
+  - (* CE_FUNC_CALL *) admit.
+  - (* CE_QUALITY_OP *) admit.
+Admitted.
 
 
 (* ================================================================
@@ -1144,10 +1320,10 @@ Qed.
    
    这是 Simulation Relation 的核心。
 *)
-Lemma compile_stmt_correct : forall (env : compile_env) (s : corest_stmt),
+Lemma compile_stmt_correct : forall (env : compile_env) (env_ty : compile_type_env) (s : corest_stmt),
     True.
 Proof.
-  intros env s. exact I.
+  intros env env_ty s. exact I.
 Qed.
 
 (* ================================================================

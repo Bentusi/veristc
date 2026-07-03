@@ -1162,5 +1162,4 @@ Definition validate_module (m : sasm_module) : Prop :=
 
 End Validation.
 
-Set Guard Checking.
 

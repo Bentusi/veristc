@@ -19,7 +19,8 @@ Inductive corest_expr : Type :=
   | CE_AND : corest_expr -> corest_expr -> corest_expr
   | CE_OR : corest_expr -> corest_expr -> corest_expr
   | CE_XOR : corest_expr -> corest_expr -> corest_expr
-  | CE_FUNC_CALL : ident -> list corest_expr -> corest_expr.
+  | CE_FUNC_CALL : ident -> list corest_expr -> corest_expr
+  | CE_QUALITY_OP : quality_op -> list corest_expr -> corest_expr.
 
 Inductive corest_stmt : Type :=
   | CS_ASSIGN : ident -> corest_expr -> corest_stmt
@@ -49,7 +50,8 @@ Fixpoint desugar_expr (e : st_expr) : corest_expr := match e with
   | E_AND e1 e2 => CE_AND (desugar_expr e1) (desugar_expr e2)
   | E_OR e1 e2 => CE_OR (desugar_expr e1) (desugar_expr e2)
   | E_XOR e1 e2 => CE_XOR (desugar_expr e1) (desugar_expr e2)
-  | E_FUNC_CALL f args => CE_FUNC_CALL f (List.map desugar_expr args) end.
+  | E_FUNC_CALL f args => CE_FUNC_CALL f (List.map desugar_expr args)
+  | E_QUALITY_OP op args => CE_QUALITY_OP op (List.map desugar_expr args) end.
 
 Fixpoint desugar_case_values_cond (sel : corest_expr) (values : list case_value) : corest_expr :=
   match values with
@@ -117,6 +119,8 @@ Fixpoint corest_eval_expr (env : corest_eval_env) (e : corest_expr) : option st_
       | L_REAL f => Some (ST_V_REAL f)
       | L_BOOL b => Some (ST_V_BOOL b)
       | L_TIME t => Some (ST_V_TIME t)
+      | L_LINT n => Some (ST_V_LINT n)      (* v1.1 *)
+      | L_LREAL f => Some (ST_V_LREAL f)     (* v1.1 *)
       end
   | CE_VAR x => lookup_var env x
   | CE_ARRAY_ACCESS arr idx =>
@@ -191,6 +195,19 @@ Fixpoint corest_eval_expr (env : corest_eval_env) (e : corest_expr) : option st_
       end
   | CE_FUNC_CALL f args =>
       Some (ST_V_INT 0)
+
+  | CE_QUALITY_OP op args =>
+      match op with
+      | Q_STATUS =>
+          match args with
+          | [CE_VAR id] => Some (ST_V_INT 0)  (* 简化 *)
+          | _ => Some (ST_V_INT 0)
+          end
+      | Q_GOOD => Some (ST_V_BOOL true)
+      | Q_BAD => Some (ST_V_BOOL false)
+      | Q_UNCERTAIN => Some (ST_V_BOOL false)
+      | _ => Some (ST_V_INT 0)
+      end
   end.
 
 Definition st_eval_expr (env : corest_eval_env) (e : st_expr) : option st_value :=
