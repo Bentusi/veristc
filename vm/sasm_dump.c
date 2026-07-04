@@ -62,6 +62,63 @@ static const char *opcode_name(uint8_t op) {
     case OP_I32_XOR:     return "I32_XOR";
     case OP_SAFE_ASSERT: return "SAFE_ASSERT";
     case OP_SAFE_BOUNDS: return "SAFE_BOUNDS_CHECK";
+    case OP_I32_SHL:     return "I32_SHL";
+    case OP_I32_SHR_S:   return "I32_SHR_S";
+    case OP_I32_ROTL:    return "I32_ROTL";
+    case OP_I32_ROTR:    return "I32_ROTR";
+    case OP_I64_EQZ:     return "I64_EQZ";
+    case OP_I64_EQ:      return "I64_EQ";
+    case OP_I64_NE:      return "I64_NE";
+    case OP_I64_LT_S:    return "I64_LT_S";
+    case OP_I64_LE_S:    return "I64_LE_S";
+    case OP_I64_GT_S:    return "I64_GT_S";
+    case OP_I64_GE_S:    return "I64_GE_S";
+    case OP_I64_ADD:     return "I64_ADD";
+    case OP_I64_SUB:     return "I64_SUB";
+    case OP_I64_MUL:     return "I64_MUL";
+    case OP_I64_DIV_S:   return "I64_DIV_S";
+    case OP_I64_REM_S:   return "I64_REM_S";
+    case OP_I64_AND:     return "I64_AND";
+    case OP_I64_OR:      return "I64_OR";
+    case OP_I64_XOR:     return "I64_XOR";
+    case OP_I64_SHL:     return "I64_SHL";
+    case OP_I64_SHR_S:   return "I64_SHR_S";
+    case OP_F32_CONST:   return "F32_CONST";
+    case OP_F32_ADD:     return "F32_ADD";
+    case OP_F32_SUB:     return "F32_SUB";
+    case OP_F32_MUL:     return "F32_MUL";
+    case OP_F32_DIV:     return "F32_DIV";
+    case OP_F32_EQ:      return "F32_EQ";
+    case OP_F32_NE:      return "F32_NE";
+    case OP_F32_LT:      return "F32_LT";
+    case OP_F32_LE:      return "F32_LE";
+    case OP_F32_GT:      return "F32_GT";
+    case OP_F32_GE:      return "F32_GE";
+    case OP_F32_ABS:     return "F32_ABS";
+    case OP_F32_NEG:     return "F32_NEG";
+    case OP_F32_SQRT:    return "F32_SQRT";
+    case OP_F64_CONST:   return "F64_CONST";
+    case OP_F64_ADD:     return "F64_ADD";
+    case OP_F64_SUB:     return "F64_SUB";
+    case OP_F64_MUL:     return "F64_MUL";
+    case OP_F64_DIV:     return "F64_DIV";
+    case OP_F64_EQ:      return "F64_EQ";
+    case OP_F64_NE:      return "F64_NE";
+    case OP_F64_LT:      return "F64_LT";
+    case OP_F64_LE:      return "F64_LE";
+    case OP_F64_GT:      return "F64_GT";
+    case OP_F64_GE:      return "F64_GE";
+    case OP_F64_ABS:     return "F64_ABS";
+    case OP_F64_NEG:     return "F64_NEG";
+    case OP_F64_SQRT:    return "F64_SQRT";
+    case OP_I32_LOAD8_U: return "I32_LOAD8_U";
+    case OP_I32_STORE8:  return "I32_STORE8";
+    case OP_I32_WRAP_I64: return "I32_WRAP_I64";
+    case OP_I64_EXTEND_I32_S: return "I64_EXTEND_I32_S";
+    case OP_I32_TRUNC_F32_S:  return "I32_TRUNC_F32_S";
+    case OP_I32_TRUNC_F64_S:  return "I32_TRUNC_F64_S";
+    case OP_F32_CONVERT_I32_S: return "F32_CONVERT_I32_S";
+    case OP_F64_CONVERT_I32_S: return "F64_CONVERT_I32_S";
     default:             return "???";
     }
 }
@@ -72,6 +129,32 @@ static int op_has_u32_imm(uint8_t op) {
     case OP_BLOCK: case OP_LOOP: case OP_BR: case OP_BR_IF:
     case OP_CALL: case OP_LOCAL_GET: case OP_LOCAL_SET: case OP_LOCAL_TEE:
     case OP_I32_CONST:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* 指令是否带有 i64 立即数 (1 字节 opcode + 8 字节立即数) */
+static int op_has_i64_imm(uint8_t op) {
+    return (op == OP_I64_CONST);
+}
+
+/* 指令是否带有 f32 立即数 */
+static int op_has_f32_imm(uint8_t op) {
+    return (op == OP_F32_CONST);
+}
+
+/* 指令是否带有 f64 立即数 */
+static int op_has_f64_imm(uint8_t op) {
+    return (op == OP_F64_CONST);
+}
+
+/* 指令是否带有 memory_arg (align + offset, 4 bytes) */
+static int op_has_mem_arg(uint8_t op) {
+    switch (op) {
+    case OP_I32_LOAD: case OP_I32_STORE:
+    case OP_I32_LOAD8_U: case OP_I32_STORE8:
         return 1;
     default:
         return 0;
@@ -138,9 +221,26 @@ static void disasm_code(const uint8_t *body, uint32_t body_size, int indent) {
         
         if (op_has_u32_imm(op)) {
             uint32_t imm = r32(&p, &remaining);
-            /* 打印立即数十进制+十六进制 */
             printf("          %-20s %u (0x%X)\n", opcode_name(op), imm, imm);
-        } else if (op == OP_I32_LOAD || op == OP_I32_STORE) {
+        } else if (op_has_i64_imm(op)) {
+            uint32_t lo = r32(&p, &remaining);
+            uint32_t hi = r32(&p, &remaining);
+            uint64_t imm = (uint64_t)lo | ((uint64_t)hi << 32);
+            printf("     %-20s %llu (0x%llX)\n", opcode_name(op),
+                   (unsigned long long)imm, (unsigned long long)imm);
+        } else if (op_has_f32_imm(op)) {
+            uint32_t bits = r32(&p, &remaining);
+            float f;
+            memcpy(&f, &bits, sizeof(f));
+            printf("     %-20s %g\n", opcode_name(op), f);
+        } else if (op_has_f64_imm(op)) {
+            uint32_t lo = r32(&p, &remaining);
+            uint32_t hi = r32(&p, &remaining);
+            uint64_t bits = (uint64_t)lo | ((uint64_t)hi << 32);
+            double d;
+            memcpy(&d, &bits, sizeof(d));
+            printf("     %-20s %g\n", opcode_name(op), d);
+        } else if (op_has_mem_arg(op)) {
             uint16_t align  = r16(&p, &remaining);
             uint16_t offset2 = r16(&p, &remaining);
             printf("     %-20s align=%u offset=%u\n", opcode_name(op), align, offset2);

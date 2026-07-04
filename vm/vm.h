@@ -65,6 +65,76 @@ extern "C" {
 #define OP_SAFE_ASSERT   0xFC
 #define OP_SAFE_BOUNDS   0xFD
 
+/* ===== I32 位运算 (v1.1 补全) ===== */
+#define OP_I32_SHL       0x74
+#define OP_I32_SHR_S     0x75
+#define OP_I32_ROTL      0x76
+#define OP_I32_ROTR      0x77
+
+/* ===== I64 指令 (v1.1) ===== */
+#define OP_I64_EQZ       0x53
+#define OP_I64_EQ        0x54
+#define OP_I64_NE        0x55
+#define OP_I64_LT_S      0x56
+#define OP_I64_LE_S      0x57
+#define OP_I64_GT_S      0x58
+#define OP_I64_GE_S      0x59
+#define OP_I64_ADD       0x7C
+#define OP_I64_SUB       0x7D
+#define OP_I64_MUL       0x7E
+#define OP_I64_DIV_S     0x7F
+#define OP_I64_REM_S     0x80
+#define OP_I64_AND       0x81
+#define OP_I64_OR        0x82
+#define OP_I64_XOR       0x83
+#define OP_I64_SHL       0x84
+#define OP_I64_SHR_S     0x85
+
+/* ===== F32 指令 (v1.1) ===== */
+#define OP_F32_CONST     0x43
+#define OP_F32_ADD       0x92
+#define OP_F32_SUB       0x93
+#define OP_F32_MUL       0x94
+#define OP_F32_DIV       0x95
+#define OP_F32_EQ        0x9A
+#define OP_F32_NE        0x9B
+#define OP_F32_LT        0x9C
+#define OP_F32_LE        0x9D
+#define OP_F32_GT        0x9E
+#define OP_F32_GE        0x9F
+#define OP_F32_ABS       0xA0
+#define OP_F32_NEG       0xA1
+#define OP_F32_SQRT      0xA2
+
+/* ===== F64 指令 (v1.1) ===== */
+#define OP_F64_CONST     0x44
+#define OP_F64_ADD       0xA3
+#define OP_F64_SUB       0xA4
+#define OP_F64_MUL       0xA5
+#define OP_F64_DIV       0xA6
+#define OP_F64_EQ        0xAA
+#define OP_F64_NE        0xAB
+#define OP_F64_LT        0xAC
+#define OP_F64_LE        0xAD
+#define OP_F64_GT        0xAE
+#define OP_F64_GE        0xAF
+#define OP_F64_ABS       0xB0
+#define OP_F64_NEG       0xB1
+#define OP_F64_SQRT      0xB2
+
+/* ===== 字节内存操作 (v1.1) ===== */
+#define OP_I32_LOAD8_U   0x2C
+#define OP_I32_STORE8    0x3A
+
+/* ===== 类型转换 (v1.1) ===== */
+#define OP_I32_WRAP_I64         0xA7
+#define OP_I64_EXTEND_I32_S     0xA8   /* 注: 原 encoder.v 误用 0xAE 与 F64_GT 冲突, 修正为 0xA8 */
+#define OP_I32_TRUNC_F32_S      0xB3
+#define OP_I32_TRUNC_F64_S      0xB4
+#define OP_F32_CONVERT_I32_S    0xB7
+#define OP_F64_CONVERT_I32_S    0xBB
+
+
 /* Section 类型 */
 #define SEC_TYPE  0
 #define SEC_FUNC  1

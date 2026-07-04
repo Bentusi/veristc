@@ -47,12 +47,13 @@ Definition encode_sasm_instr (instr : sasm_instr) : list Z :=
   | F64_ADD => [0xA3] | F64_SUB => [0xA4] | F64_MUL => [0xA5] | F64_DIV => [0xA6]
   | F64_EQ => [0xAA] | F64_NE => [0xAB] | F64_LT => [0xAC] | F64_LE => [0xAD] | F64_GT => [0xAE] | F64_GE => [0xAF]
   | F64_ABS => [0xB0] | F64_NEG => [0xB1] | F64_SQRT => [0xB2]
-  | I32_WRAP_I64 => [0xA7] | I64_EXTEND_I32_S => [0xAE]
-  | I32_TRUNC_F32_S => [0xAF] | I32_TRUNC_F64_S => [0xB0]
+  | I32_WRAP_I64 => [0xA7] | I64_EXTEND_I32_S => [0xA8]
+  | I32_TRUNC_F32_S => [0xB3] | I32_TRUNC_F64_S => [0xB4]
   | F32_CONVERT_I32_S => [0xB7] | F64_CONVERT_I32_S => [0xBB]
   | I32_LOAD _ => 0x28 :: encode_u32 0 | I64_LOAD _ => 0x29 :: encode_u32 0
   | F32_LOAD _ => 0x2A :: encode_u32 0 | F64_LOAD _ => 0x2B :: encode_u32 0
   | I32_STORE _ => 0x36 :: encode_u32 0 | I64_STORE _ => 0x37 :: encode_u32 0
+  | I32_LOAD8_U _ => 0x2C :: encode_u32 0 | I32_STORE8 _ => 0x3A :: encode_u32 0
   | F32_STORE _ => 0x38 :: encode_u32 0 | F64_STORE _ => 0x39 :: encode_u32 0
   | SAFE_ASSERT _ => [0xFC; 0x00; 0x00; 0x00; 0x00; 0x00]
   | SAFE_BOUNDS_CHECK _ _ => 0xFD :: encode_u32 0 ++ encode_u32 0

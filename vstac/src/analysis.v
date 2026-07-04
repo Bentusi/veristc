@@ -161,7 +161,7 @@ with instr_count_expr (e : corest_expr) : Z :=
   | CE_BIN_OP _ e1 e2 | CE_COMP _ e1 e2
   | CE_AND e1 e2 | CE_OR e1 e2 | CE_XOR e1 e2 =>
       instr_count_expr e1 + instr_count_expr e2 + 1
-  | CE_FUNC_CALL _ args =>
+  | CE_FUNC_CALL _ args | CE_QUALITY_OP _ args =>
       5 + List.fold_right (fun a acc => instr_count_expr a + acc) 0 args
   end.
 

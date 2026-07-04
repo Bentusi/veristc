@@ -89,8 +89,8 @@ vm/hotstandby/%.o: vm/hotstandby/%.c vm/hotstandby/hotstandby.h vm/vm.h
 vm-test: $(VM_CORE_LIB) $(VM_IO_LIB) $(VM_TEST_BIN)
 	$(VM_TEST_BIN)
 
-$(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_LIB) $(VM_IO_LIB)
-	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core
+$(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_LIB) $(VM_IO_LIB) -lm
+	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
 
 # ================================================================
 # sasm_dump 工具
@@ -98,8 +98,8 @@ $(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_LIB) $(VM_IO_LIB)
 
 sasm-dump: $(VM_CORE_LIB) $(SASM_DUMP_BIN)
 
-$(SASM_DUMP_BIN): $(SASM_DUMP_SRC) $(VM_CORE_LIB)
-	$(CC) $(CFLAGS) -o $@ $< -Lvm -lvm_core
+$(SASM_DUMP_BIN): $(SASM_DUMP_SRC) $(VM_CORE_LIB) -lm
+	$(CC) $(CFLAGS) -o $@ $< -Lvm -lvm_core -lm
 
 # ================================================================
 # RT-Thread 适配层 (需要 RT-Thread SDK)

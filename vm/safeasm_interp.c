@@ -22,6 +22,7 @@
 
 #include "vm.h"
 #include <string.h>
+#include <math.h>
 
 /* ================================================================
    值栈操作
@@ -142,6 +143,60 @@ static bool check_mem_bounds(const VM *vm, uint32_t addr, uint32_t size) {
     }
     /* 如果没有配置访问范围，允许所有在 memory_size 内的访问 */
     return sa->mem_range_count == 0;
+}
+
+/* ================================================================
+   64 位值与浮点操作辅助
+   ================================================================ */
+
+/* F32: reinterpret int32_t as float (C11 safe via union) */
+typedef union { int32_t i; float f; } F32Bits;
+
+/* F64: combine/split via union */
+typedef union { int64_t i; double d; } F64Bits;
+
+/* Pop two i32 values (lo, hi) from value stack, return combined int64_t */
+static inline int64_t pop_i64(VM *vm) {
+    int32_t hi = pop_value(vm);
+    int32_t lo = pop_value(vm);
+    return ((int64_t)(uint32_t)lo) | ((int64_t)hi << 32);
+}
+
+/* Push int64_t value as two i32 values (lo, hi) onto value stack */
+static inline void push_i64(VM *vm, int64_t val) {
+    push_value(vm, (int32_t)(uint32_t)(val & 0xFFFFFFFF));
+    push_value(vm, (int32_t)(uint32_t)((val >> 32) & 0xFFFFFFFF));
+}
+
+/* Pop one int32_t from value stack and interpret as float32 */
+static inline float pop_f32(VM *vm) {
+    F32Bits u;
+    u.i = pop_value(vm);
+    return u.f;
+}
+
+/* Push float32 as int32_t bit pattern onto value stack */
+static inline void push_f32(VM *vm, float f) {
+    F32Bits u;
+    u.f = f;
+    push_value(vm, u.i);
+}
+
+/* Pop two i32 values (lo, hi) from value stack, return combined double64 */
+static inline double pop_f64(VM *vm) {
+    int32_t hi = pop_value(vm);
+    int32_t lo = pop_value(vm);
+    F64Bits bits;
+    bits.i = ((int64_t)(uint32_t)lo) | ((int64_t)hi << 32);
+    return bits.d;
+}
+
+/* Push double64 as two i32 values (lo, hi) onto value stack */
+static inline void push_f64(VM *vm, double d) {
+    F64Bits bits;
+    bits.d = d;
+    push_value(vm, (int32_t)(uint32_t)(bits.i & 0xFFFFFFFF));
+    push_value(vm, (int32_t)(uint32_t)((bits.i >> 32) & 0xFFFFFFFF));
 }
 
 /* ================================================================
@@ -428,6 +483,441 @@ int vm_execute_cycle(VM *vm) {
             push_value(vm, idx);  /* 将索引放回栈顶供后续 LOAD 使用 */
             break;
         }
+        
+        /* ===== I32 位运算 (v1.1 补全) ===== */
+        case OP_I32_SHL: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            push_value(vm, v1 << (v2 & 0x1F));
+            break;
+        }
+        
+        case OP_I32_SHR_S: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            push_value(vm, v1 >> (v2 & 0x1F));
+            break;
+        }
+        
+        case OP_I32_ROTL: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            uint32_t shift = (uint32_t)v2 & 0x1F;
+            uint32_t val = (uint32_t)v1;
+            push_value(vm, (int32_t)((val << shift) | (val >> (32 - shift))));
+            break;
+        }
+        
+        case OP_I32_ROTR: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            uint32_t shift = (uint32_t)v2 & 0x1F;
+            uint32_t val = (uint32_t)v1;
+            push_value(vm, (int32_t)((val >> shift) | (val << (32 - shift))));
+            break;
+        }
+        
+        /* ===== I64 常量 (v1.1) ===== */
+        case OP_I64_CONST: {
+            int64_t val = (int64_t)read_u32_code(frame, &pc) |
+                          ((int64_t)read_u32_code(frame, &pc) << 32);
+            push_i64(vm, val);
+            break;
+        }
+        
+        /* ===== I64 比较 (v1.1) ===== */
+        case OP_I64_EQZ: {
+            int64_t v = pop_i64(vm);
+            push_value(vm, v == 0 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_EQ: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 == v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_NE: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 != v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_LT_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 < v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_LE_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 <= v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_GT_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 > v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I64_GE_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_value(vm, v1 >= v2 ? 1 : 0);
+            break;
+        }
+        
+        /* ===== I64 算术 (v1.1) ===== */
+        case OP_I64_ADD: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 + v2);
+            break;
+        }
+        
+        case OP_I64_SUB: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 - v2);
+            break;
+        }
+        
+        case OP_I64_MUL: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 * v2);
+            break;
+        }
+        
+        case OP_I64_DIV_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
+            push_i64(vm, v1 / v2);
+            break;
+        }
+        
+        case OP_I64_REM_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
+            push_i64(vm, v1 % v2);
+            break;
+        }
+        
+        /* ===== I64 位运算 (v1.1) ===== */
+        case OP_I64_AND: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 & v2);
+            break;
+        }
+        
+        case OP_I64_OR: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 | v2);
+            break;
+        }
+        
+        case OP_I64_XOR: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 ^ v2);
+            break;
+        }
+        
+        case OP_I64_SHL: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 << (v2 & 0x3F));
+            break;
+        }
+        
+        case OP_I64_SHR_S: {
+            int64_t v2 = pop_i64(vm);
+            int64_t v1 = pop_i64(vm);
+            push_i64(vm, v1 >> (v2 & 0x3F));
+            break;
+        }
+        
+        /* ===== F32 常量 (v1.1) ===== */
+        case OP_F32_CONST: {
+            F32Bits u;
+            u.i = (int32_t)read_u32_code(frame, &pc);
+            push_f32(vm, u.f);
+            break;
+        }
+        
+        /* ===== F32 算术 (v1.1) ===== */
+        case OP_F32_ADD: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_f32(vm, v1 + v2);
+            break;
+        }
+        
+        case OP_F32_SUB: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_f32(vm, v1 - v2);
+            break;
+        }
+        
+        case OP_F32_MUL: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_f32(vm, v1 * v2);
+            break;
+        }
+        
+        case OP_F32_DIV: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_f32(vm, v1 / v2);
+            break;
+        }
+        
+        /* ===== F32 比较 (v1.1) ===== */
+        case OP_F32_EQ: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 == v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F32_NE: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 != v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F32_LT: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 < v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F32_LE: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 <= v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F32_GT: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 > v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F32_GE: {
+            float v2 = pop_f32(vm);
+            float v1 = pop_f32(vm);
+            push_value(vm, v1 >= v2 ? 1 : 0);
+            break;
+        }
+        
+        /* ===== F32 一元运算 (v1.1) ===== */
+        case OP_F32_ABS: {
+            float v = pop_f32(vm);
+            push_f32(vm, v < 0.0f ? -v : v);
+            break;
+        }
+        
+        case OP_F32_NEG: {
+            float v = pop_f32(vm);
+            push_f32(vm, -v);
+            break;
+        }
+        
+        case OP_F32_SQRT: {
+            float v = pop_f32(vm);
+            push_f32(vm, sqrtf(v));
+            break;
+        }
+        
+        /* ===== F64 常量 (v1.1) ===== */
+        case OP_F64_CONST: {
+            F64Bits bits;
+            bits.i = (int64_t)read_u32_code(frame, &pc) |
+                     ((int64_t)read_u32_code(frame, &pc) << 32);
+            push_f64(vm, bits.d);
+            break;
+        }
+        
+        /* ===== F64 算术 (v1.1) ===== */
+        case OP_F64_ADD: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_f64(vm, v1 + v2);
+            break;
+        }
+        
+        case OP_F64_SUB: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_f64(vm, v1 - v2);
+            break;
+        }
+        
+        case OP_F64_MUL: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_f64(vm, v1 * v2);
+            break;
+        }
+        
+        case OP_F64_DIV: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_f64(vm, v1 / v2);
+            break;
+        }
+        
+        /* ===== F64 比较 (v1.1) ===== */
+        case OP_F64_EQ: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 == v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F64_NE: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 != v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F64_LT: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 < v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F64_LE: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 <= v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F64_GT: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 > v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_F64_GE: {
+            double v2 = pop_f64(vm);
+            double v1 = pop_f64(vm);
+            push_value(vm, v1 >= v2 ? 1 : 0);
+            break;
+        }
+        
+        /* ===== F64 一元运算 (v1.1) ===== */
+        case OP_F64_ABS: {
+            double v = pop_f64(vm);
+            push_f64(vm, v < 0.0 ? -v : v);
+            break;
+        }
+        
+        case OP_F64_NEG: {
+            double v = pop_f64(vm);
+            push_f64(vm, -v);
+            break;
+        }
+        
+        case OP_F64_SQRT: {
+            double v = pop_f64(vm);
+            push_f64(vm, sqrt(v));
+            break;
+        }
+        
+        /* ===== 字节内存操作 (v1.1) ===== */
+        case OP_I32_LOAD8_U: {
+            uint16_t align  = read_u16_code(frame, &pc);
+            uint16_t offset = read_u16_code(frame, &pc);
+            (void)align;
+            
+            sasm_value addr = pop_value(vm);
+            uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
+            
+            if (!check_mem_bounds(vm, mem_addr, 1)) {
+                return VM_ERR_MEM_OUT_OF_BOUNDS;
+            }
+            
+            push_value(vm, (uint8_t)vm->memory[mem_addr]);
+            break;
+        }
+        
+        case OP_I32_STORE8: {
+            uint16_t align  = read_u16_code(frame, &pc);
+            uint16_t offset = read_u16_code(frame, &pc);
+            (void)align;
+            
+            sasm_value val  = pop_value(vm);
+            sasm_value addr = pop_value(vm);
+            uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
+            
+            if (!check_mem_bounds(vm, mem_addr, 1)) {
+                return VM_ERR_MEM_OUT_OF_BOUNDS;
+            }
+            
+            vm->memory[mem_addr] = (uint8_t)(val & 0xFF);
+            break;
+        }
+        
+        /* ===== 类型转换 (v1.1) ===== */
+        case OP_I32_WRAP_I64: {
+            int64_t v = pop_i64(vm);
+            push_value(vm, (int32_t)(uint32_t)(v & 0xFFFFFFFF));
+            break;
+        }
+        
+        case OP_I64_EXTEND_I32_S: {
+            sasm_value v = pop_value(vm);
+            push_i64(vm, (int64_t)v);
+            break;
+        }
+        
+        case OP_I32_TRUNC_F32_S: {
+            float v = pop_f32(vm);
+            push_value(vm, (int32_t)v);
+            break;
+        }
+        
+        case OP_I32_TRUNC_F64_S: {
+            double v = pop_f64(vm);
+            push_value(vm, (int32_t)v);
+            break;
+        }
+        
+        case OP_F32_CONVERT_I32_S: {
+            sasm_value v = pop_value(vm);
+            push_f32(vm, (float)v);
+            break;
+        }
+        
+        case OP_F64_CONVERT_I32_S: {
+            sasm_value v = pop_value(vm);
+            push_f64(vm, (double)v);
+            break;
+        }
+        
         
         default:
             vm->last_error = VM_ERR_INVALID_OPCODE;

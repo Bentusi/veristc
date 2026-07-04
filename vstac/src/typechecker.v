@@ -53,8 +53,22 @@ Fixpoint type_eqb (t1 t2 : st_type) : bool :=
   | T_SINT, T_SINT => true
   | T_INT, T_INT => true
   | T_DINT, T_DINT => true
+  | T_LINT, T_LINT => true
   | T_REAL, T_REAL => true
+  | T_LREAL, T_LREAL => true
   | T_TIME, T_TIME => true
+  | T_QUALITY, T_QUALITY => true
+  | T_QBOOL, T_QBOOL => true
+  | T_QBYTE, T_QBYTE => true
+  | T_QWORD, T_QWORD => true
+  | T_QDWORD, T_QDWORD => true
+  | T_QSINT, T_QSINT => true
+  | T_QINT, T_QINT => true
+  | T_QDINT, T_QDINT => true
+  | T_QLINT, T_QLINT => true
+  | T_QREAL, T_QREAL => true
+  | T_QLREAL, T_QLREAL => true
+  | T_QTIME, T_QTIME => true
   | T_ARRAY e1 l1 h1, T_ARRAY e2 l2 h2 =>
       type_eqb e1 e2 && (l1 =? l2) && (h1 =? h2)
   | _, _ => false
@@ -68,6 +82,9 @@ Definition type_compatible_dec (t1 t2 : st_type) : bool :=
   | T_INT, T_DINT => true
   | T_BYTE, T_WORD => true | T_BYTE, T_DWORD => true
   | T_WORD, T_DWORD => true
+  | T_SINT, T_LINT => true | T_INT, T_LINT => true
+  | T_DINT, T_LINT => true
+  | T_REAL, T_LREAL => true
   | _, _ => false
   end.
 
@@ -88,6 +105,14 @@ Definition promote_type_dec (t1 t2 : st_type) : option st_type :=
     | T_DWORD, T_BYTE => Some T_DWORD
     | T_WORD, T_DWORD => Some T_DWORD
     | T_DWORD, T_WORD => Some T_DWORD
+    | T_SINT, T_LINT => Some T_LINT
+    | T_LINT, T_SINT => Some T_LINT
+    | T_INT, T_LINT => Some T_LINT
+    | T_LINT, T_INT => Some T_LINT
+    | T_DINT, T_LINT => Some T_LINT
+    | T_LINT, T_DINT => Some T_LINT
+    | T_REAL, T_LREAL => Some T_LREAL
+    | T_LREAL, T_REAL => Some T_LREAL
     | _, _ => None
     end.
 
@@ -95,20 +120,22 @@ Definition promote_type_dec (t1 t2 : st_type) : option st_type :=
 Definition is_valid_unary_dec (op : unary_op) (ty : st_type) : bool :=
   match op with
   | U_NEG => type_eqb ty T_SINT || type_eqb ty T_INT ||
-             type_eqb ty T_DINT || type_eqb ty T_REAL
+             type_eqb ty T_DINT || type_eqb ty T_LINT ||
+             type_eqb ty T_REAL || type_eqb ty T_LREAL
   | U_NOT => type_eqb ty T_BOOL
   | U_ABS => type_eqb ty T_SINT || type_eqb ty T_INT ||
-             type_eqb ty T_DINT || type_eqb ty T_REAL
+             type_eqb ty T_DINT || type_eqb ty T_LINT ||
+             type_eqb ty T_REAL || type_eqb ty T_LREAL
   end.
 
 (* 可判定的二元运算符有效性 *)
 Definition is_valid_binary_dec (op : binary_op) (ty : st_type) : bool :=
   match op with
-  | B_ADD => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_REAL
-  | B_SUB => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_REAL
-  | B_MUL => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_REAL
-  | B_DIV => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_REAL
-  | B_MOD => type_eqb ty T_INT || type_eqb ty T_DINT
+  | B_ADD => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_LINT || type_eqb ty T_REAL || type_eqb ty T_LREAL
+  | B_SUB => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_LINT || type_eqb ty T_REAL || type_eqb ty T_LREAL
+  | B_MUL => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_LINT || type_eqb ty T_REAL || type_eqb ty T_LREAL
+  | B_DIV => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_LINT || type_eqb ty T_REAL || type_eqb ty T_LREAL
+  | B_MOD => type_eqb ty T_INT || type_eqb ty T_DINT || type_eqb ty T_LINT
   end.
 
 (* 可判定的比较类型兼容性 *)
@@ -277,6 +304,57 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
         (* 这里简化: 假设我们已经有函数签名信息 *)
         None  (* 需要 lookup_function_type 集成 *)
       else None
+  | E_QUALITY_OP Q_STATUS args =>
+      match args with
+      | [e] => match type_check_expr env e with
+              | Some ty => if is_quality_type ty then Some T_QUALITY else None
+              | None => None
+              end
+      | _ => None
+      end
+  | E_QUALITY_OP Q_VALUE args =>
+      match args with
+      | [e] => match type_check_expr env e with
+              | Some ty => if is_quality_type ty then Some (strip_quality ty) else None
+              | None => None
+              end
+      | _ => None
+      end
+  | E_QUALITY_OP (Q_GOOD | Q_BAD | Q_UNCERTAIN) args =>
+      match args with
+      | [e] => match type_check_expr env e with
+              | Some ty => if is_quality_type ty then Some T_BOOL else None
+              | None => None
+              end
+      | _ => None
+      end
+  | E_QUALITY_OP Q_SET args =>
+      match args with
+      | [e1; e2] => match type_check_expr env e1, type_check_expr env e2 with
+                   | Some ty1, Some T_QUALITY => if is_quality_type ty1 then Some T_QUALITY else None
+                   | _, _ => None
+                   end
+      | _ => None
+      end
+  | E_QUALITY_OP Q_WITH args =>
+      match args with
+      | [e1; e2] => match type_check_expr env e2 with
+                   | Some T_QUALITY => type_check_expr env e1
+                   | _ => None
+                   end
+      | _ => None
+      end
+  | E_QUALITY_OP Q_FORCE args =>
+      match args with
+      | [e1; e2; e3] => match type_check_expr env e1, type_check_expr env e2, type_check_expr env e3 with
+                       | Some ty1, Some val_ty, Some T_QUALITY =>
+                           if is_quality_type ty1 && type_eqb (strip_quality ty1) val_ty
+                           then Some ty1 else None
+                       | _, _, _ => None
+                       end
+      | _ => None
+      end
+  | E_QUALITY_OP _ _ => None
   end.
 
 (* ================================================================
@@ -430,27 +508,15 @@ Qed.
 Lemma type_eqb_refl : forall t, type_eqb t t = true.
 Proof.
   intro t; induction t; simpl; auto.
-  rewrite IHt. rewrite Z.eqb_refl. rewrite Z.eqb_refl. auto.
+  all: try (rewrite IHt; rewrite Z.eqb_refl; rewrite Z.eqb_refl; auto).
 Qed.
 
 Lemma promote_type_dec_complete : forall t1 t2 t3,
     promote_type t1 t2 t3 -> promote_type_dec t1 t2 = Some t3.
 Proof.
   intros t1 t2 t3 H.
-  induction H; unfold promote_type_dec.
-  - rewrite type_eqb_refl. reflexivity.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
-  - simpl; auto.
+  induction H; unfold promote_type_dec;
+  first [rewrite type_eqb_refl; reflexivity | simpl; auto].
 Qed.
 
 (* 引理: is_valid_unary_dec 与 is_valid_unary 的关系 *)
@@ -462,7 +528,7 @@ Proof.
     repeat match goal with
     | H : _ || _ = true |- _ => apply orb_true_iff in H; destruct H
     | H : type_eqb _ _ = true |- _ => apply type_eqb_sound in H; subst
-    end; auto.
+    end; auto 10.
 Qed.
 
 Lemma is_valid_unary_dec_complete : forall op ty,
@@ -485,7 +551,7 @@ Proof.
     repeat match goal with
     | H : _ || _ = true |- _ => apply orb_true_iff in H; destruct H
     | H : type_eqb _ _ = true |- _ => apply type_eqb_sound in H; subst
-    end; auto.
+    end; auto 10.
 Qed.
 
 Lemma is_valid_binary_dec_complete : forall op ty,
@@ -537,9 +603,9 @@ Proof.
   - (* E_ARRAY_ACCESS *)
     intro H. simpl in H.
     destruct (type_check_expr env e1) as [t1|] eqn:Harr; try discriminate.
-    destruct t1 as [| | | | | | | | | ? ? ?]; try discriminate.
+    destruct t1; try discriminate.
     destruct (type_check_expr env e2) as [r2|] eqn:Hidx; try discriminate.
-    destruct r2; [discriminate|discriminate|discriminate|discriminate|discriminate| |discriminate|discriminate|discriminate|discriminate].
+    destruct r2; try discriminate.
     injection H as H. subst.
     eapply T_ArrayAccess; [eapply IHe1; eauto | eapply IHe2; eauto].
   - (* E_UNARY_OP *)
