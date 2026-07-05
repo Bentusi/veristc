@@ -284,6 +284,290 @@ static void test_conditional(void) {
    主函数
    ================================================================ */
 
+
+/* ================================================================
+   测试 6: 位运算 (SHL / SHR_S / ROTL / ROTR)
+   ================================================================ */
+
+static void test_i32_shifts(void) {
+    printf("测试 6: I32 位运算 (SHL/SHR_S/ROTL/ROTR)...\n");
+    
+    /* SHL: 0x1234 << 4 = 0x12340 = 74560 */
+    /* SHR_S: 0x1234 >> 2 = 0x048D = 1165 */
+    /* ROTL: 0x80000001 << 1 | >> 31 = 0x00000003 = 3 */
+    const uint8_t bits_code[] = {
+        0x41, 0x34, 0x12, 0x00, 0x00,    /* I32_CONST 0x1234 */
+        0x41, 0x04, 0x00, 0x00, 0x00,    /* I32_CONST 4 */
+        0x74,                             /* I32_SHL */
+        /* now stack = [0x12340] */
+        0x41, 0x34, 0x12, 0x00, 0x00,    /* I32_CONST 0x1234 */
+        0x41, 0x02, 0x00, 0x00, 0x00,    /* I32_CONST 2 */
+        0x75,                             /* I32_SHR_S */
+        /* now stack = [0x12340, 0x48D] — top = 1165 */
+        0x1A,                             /* DROP: remove 1165 */
+        /* now stack = [0x12340] */
+        0x41, 0x01, 0x00, 0x00, 0x80,    /* I32_CONST 0x80000001 */
+        0x41, 0x01, 0x00, 0x00, 0x00,    /* I32_CONST 1 */
+        0x76,                             /* I32_ROTL */
+        /* now stack = [0x12340, 3] — top should be 3 (ROTL result) */
+        0x1A,                             /* DROP: remove ROTL result */
+        /* now stack = [0x12340] */
+        0x41, 0x03, 0x00, 0x00, 0x00,    /* I32_CONST 3 */
+        0x41, 0x01, 0x00, 0x00, 0x00,    /* I32_CONST 1 */
+        0x77,                             /* I32_ROTR: 3 ROTR 1 = 0x80000001 (as unsigned) */
+        /* now stack = [0x12340, 0x80000001] */
+        0x1A,                             /* DROP */
+        /* now stack = [0x12340] = 74560 */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule module;
+    memset(&module, 0, sizeof(module));
+    module.version = 1;
+    module.type_count = 1;
+    module.types[0].param_count = 0;
+    module.types[0].return_count = 1;
+    module.types[0].return_types[0] = VAL_I32;
+    module.func_count = 1;
+    module.funcs[0].type_idx = 0;
+    module.funcs[0].local_count = 0;
+    module.code_count = 1;
+    module.codes[0].func_idx = 0;
+    module.codes[0].body_size = sizeof(bits_code);
+    memcpy(module.codes[0].body, bits_code, sizeof(bits_code));
+    module.total_memory_size = 256;
+    module.safety.cycle_limit = 1000;
+    module.entry_function = 0;
+    
+    static VM vm;
+    assert(vm_init(&vm, &module, 256) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    sasm_value result = vm_get_result(&vm);
+    printf("   SHL 结果: %d (期望: 74560)\n", result);
+    assert(result == 74560);
+    printf("测试 6: 通过 ✅\n");
+}
+
+/* ================================================================
+   测试 7: 比较运算 (LE_S / GE_S)
+   ================================================================ */
+
+static void test_i32_comparisons(void) {
+    printf("测试 7: I32 比较运算 (LE_S/GE_S)...\n");
+    
+    const uint8_t cmp_code[] = {
+        0x41, 0x05, 0x00, 0x00, 0x00,    /* I32_CONST 5 */
+        0x41, 0x0A, 0x00, 0x00, 0x00,    /* I32_CONST 10 */
+        0x49,                             /* I32_LE_S: 5 <= 10 → 1 */
+        /* stack = [1] */
+        0x41, 0x0A, 0x00, 0x00, 0x00,    /* I32_CONST 10 */
+        0x41, 0x05, 0x00, 0x00, 0x00,    /* I32_CONST 5 */
+        0x49,                             /* I32_LE_S: 10 <= 5 → 0 */
+        /* stack = [1, 0] */
+        0x1A,                             /* DROP 0 */
+        /* stack = [1] */
+        0x41, 0x0A, 0x00, 0x00, 0x00,    /* I32_CONST 10 */
+        0x41, 0x05, 0x00, 0x00, 0x00,    /* I32_CONST 5 */
+        0x4B,                             /* I32_GE_S: 10 >= 5 → 1 */
+        /* stack = [1, 1] */
+        0x1A,                             /* DROP */
+        /* stack = [1] */
+        0x41, 0x05, 0x00, 0x00, 0x00,    /* I32_CONST 5 */
+        0x41, 0x0A, 0x00, 0x00, 0x00,    /* I32_CONST 10 */
+        0x4B,                             /* I32_GE_S: 5 >= 10 → 0 */
+        /* stack = [1, 0] */
+        0x1A,                             /* DROP 0, keep [1] */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule module;
+    memset(&module, 0, sizeof(module));
+    module.version = 1;
+    module.type_count = 1;
+    module.types[0].param_count = 0;
+    module.types[0].return_count = 1;
+    module.types[0].return_types[0] = VAL_I32;
+    module.func_count = 1;
+    module.funcs[0].type_idx = 0;
+    module.funcs[0].local_count = 0;
+    module.code_count = 1;
+    module.codes[0].func_idx = 0;
+    module.codes[0].body_size = sizeof(cmp_code);
+    memcpy(module.codes[0].body, cmp_code, sizeof(cmp_code));
+    module.total_memory_size = 256;
+    module.safety.cycle_limit = 1000;
+    module.entry_function = 0;
+    
+    static VM vm;
+    assert(vm_init(&vm, &module, 256) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    sasm_value result = vm_get_result(&vm);
+    printf("  结果: %d (期望: 1)\n", result);
+    assert(result == 1);
+    printf("测试 7: 通过 ✅\n");
+}
+
+/* ================================================================
+   测试 8: I64 常量 + 扩展 + 截断
+   ================================================================ */
+
+static void test_i64_const_and_conv(void) {
+    printf("测试 8: I64 常量 + 类型转换...\n");
+    
+    /* I64_CONST 42 → I32_WRAP_I64 → result = 42 */
+    const uint8_t i64_code[] = {
+        0x50, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* I64_CONST 42 */
+        0xA7,                             /* I32_WRAP_I64 */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule module;
+    memset(&module, 0, sizeof(module));
+    module.version = 1;
+    module.type_count = 1;
+    module.types[0].param_count = 0;
+    module.types[0].return_count = 1;
+    module.types[0].return_types[0] = VAL_I32;
+    module.func_count = 1;
+    module.funcs[0].type_idx = 0;
+    module.funcs[0].local_count = 0;
+    module.code_count = 1;
+    module.codes[0].func_idx = 0;
+    module.codes[0].body_size = sizeof(i64_code);
+    memcpy(module.codes[0].body, i64_code, sizeof(i64_code));
+    module.total_memory_size = 256;
+    module.safety.cycle_limit = 1000;
+    module.entry_function = 0;
+    
+    static VM vm;
+    assert(vm_init(&vm, &module, 256) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    sasm_value result = vm_get_result(&vm);
+    printf("  结果: %d (期望: 42)\n", result);
+    assert(result == 42);
+    
+    /* I32_CONST -1 → I64_EXTEND_I32_S → I32_WRAP_I64 → result = -1 */
+    const uint8_t extend_code[] = {
+        0x41, 0xFF, 0xFF, 0xFF, 0xFF,    /* I32_CONST -1 */
+        0xA8,                             /* I64_EXTEND_I32_S */
+        0xA7,                             /* I32_WRAP_I64 */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule mod2;
+    memset(&mod2, 0, sizeof(mod2));
+    mod2.version = 1;
+    mod2.type_count = 1;
+    mod2.types[0].param_count = 0;
+    mod2.types[0].return_count = 1;
+    mod2.types[0].return_types[0] = VAL_I32;
+    mod2.func_count = 1;
+    mod2.funcs[0].type_idx = 0;
+    mod2.funcs[0].local_count = 0;
+    mod2.code_count = 1;
+    mod2.codes[0].func_idx = 0;
+    mod2.codes[0].body_size = sizeof(extend_code);
+    memcpy(mod2.codes[0].body, extend_code, sizeof(extend_code));
+    mod2.total_memory_size = 256;
+    mod2.safety.cycle_limit = 1000;
+    mod2.entry_function = 0;
+    
+    static VM vm2;
+    assert(vm_init(&vm2, &mod2, 256) == 0);
+    assert(vm_run(&vm2) == VM_OK);
+    sasm_value result2 = vm_get_result(&vm2);
+    printf("  扩展+截断: %d (期望: -1)\n", result2);
+    assert(result2 == -1);
+    printf("测试 8: 通过 ✅\n");
+}
+
+/* ================================================================
+   测试 9: I32_STORE8 + I32_LOAD8_U
+   ================================================================ */
+
+static void test_load8_store8(void) {
+    printf("测试 9: I32_STORE8 + I32_LOAD8_U...\n");
+    
+    /* 在 addr=256 处写入 0xAB，再读回 */
+    const uint8_t load8_code[] = {
+        0x41, 0x00, 0x01, 0x00, 0x00,    /* I32_CONST 256 (address) */
+        0x41, 0xAB, 0x00, 0x00, 0x00,    /* I32_CONST 0xAB (value) */
+        0x3A, 0x02, 0x00, 0x00, 0x00,    /* I32_STORE8 (align=2, offset=0) */
+        0x41, 0x00, 0x01, 0x00, 0x00,    /* I32_CONST 256 */
+        0x2C, 0x02, 0x00, 0x00, 0x00,    /* I32_LOAD8_U (align=2, offset=0) */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule module;
+    memset(&module, 0, sizeof(module));
+    module.version = 1;
+    module.type_count = 1;
+    module.types[0].param_count = 0;
+    module.types[0].return_count = 1;
+    module.types[0].return_types[0] = VAL_I32;
+    module.func_count = 1;
+    module.funcs[0].type_idx = 0;
+    module.funcs[0].local_count = 0;
+    module.code_count = 1;
+    module.codes[0].func_idx = 0;
+    module.codes[0].body_size = sizeof(load8_code);
+    memcpy(module.codes[0].body, load8_code, sizeof(load8_code));
+    module.total_memory_size = 512;
+    module.safety.cycle_limit = 1000;
+    module.entry_function = 0;
+    
+    static VM vm;
+    assert(vm_init(&vm, &module, 512) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    sasm_value result = vm_get_result(&vm);
+    printf("  读回值: %d (期望: 171 = 0xAB)\n", result);
+    assert(result == 0xAB);
+    printf("测试 9: 通过 ✅\n");
+}
+
+/* ================================================================
+   测试 10: I64 加法 (I64_CONST + I64_ADD + I32_WRAP_I64)
+   ================================================================ */
+
+static void test_i64_arith(void) {
+    printf("测试 10: I64 算术 (10 + 20 = 30)...\n");
+    
+    /* I64_CONST 10 + I64_CONST 20 = I64_CONST 30 */
+    const uint8_t i64_add_code[] = {
+        0x50, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* I64_CONST 10 */
+        0x50, 0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  /* I64_CONST 20 */
+        0x7C,                             /* I64_ADD: 10 + 20 = 30 */
+        0xA7,                             /* I32_WRAP_I64: takes lo 32 bits */
+        0x06                              /* RETURN */
+    };
+    
+    SasmModule module;
+    memset(&module, 0, sizeof(module));
+    module.version = 1;
+    module.type_count = 1;
+    module.types[0].param_count = 0;
+    module.types[0].return_count = 1;
+    module.types[0].return_types[0] = VAL_I32;
+    module.func_count = 1;
+    module.funcs[0].type_idx = 0;
+    module.funcs[0].local_count = 0;
+    module.code_count = 1;
+    module.codes[0].func_idx = 0;
+    module.codes[0].body_size = sizeof(i64_add_code);
+    memcpy(module.codes[0].body, i64_add_code, sizeof(i64_add_code));
+    module.total_memory_size = 256;
+    module.safety.cycle_limit = 1000;
+    module.entry_function = 0;
+    
+    static VM vm;
+    assert(vm_init(&vm, &module, 256) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    sasm_value result = vm_get_result(&vm);
+    printf("  10 + 20 = %d (期望: 30)\n", result);
+    assert(result == 30);
+    printf("测试 10: 通过 ✅\n");
+}
+
 int main(void) {
     printf("========================================\n");
     printf("  Phase 0.10: 里程碑验证\n");
@@ -294,9 +578,14 @@ int main(void) {
     test_arithmetic();
     test_div_by_zero();
     test_conditional();
+    test_i32_shifts();
+    test_i32_comparisons();
+    test_i64_const_and_conv();
+    test_load8_store8();
+    test_i64_arith();
     
     printf("\n========================================\n");
-    printf("  全部 4 个测试通过 ✅\n");
+    printf("  全部 9 个测试通过 ✅\n");
     printf("  里程碑验证完成\n");
     printf("========================================\n");
     return 0;

@@ -38,7 +38,9 @@ Record corest_function : Type := {
 }.
 Record corest_program : Type := {
   cprog_functions : list corest_function;
-  cprog_global_vars : list st_var_decl; cprog_entry : ident;
+  cprog_global_vars : list st_var_decl;
+  cprog_entry : ident;
+  cprog_io_mapping : list io_entry;
 }.
 
 Fixpoint desugar_expr (e : st_expr) : corest_expr := match e with
@@ -107,7 +109,8 @@ Definition desugar_pou (p : st_pou) : corest_function :=
 
 Definition desugar_program (p : st_program) : corest_program :=
   {| cprog_functions := List.map desugar_pou p.(pou_list);
-     cprog_global_vars := p.(global_vars); cprog_entry := p.(entry_point); |}.
+     cprog_global_vars := p.(global_vars); cprog_entry := p.(entry_point);
+     cprog_io_mapping := p.(io_mapping); |}.
 
 Definition corest_eval_env : Type := list (ident * st_value).
 

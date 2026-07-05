@@ -186,8 +186,8 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
       [I32_ADD; I32_LOAD (Build_memory_arg 2 0)]
 
   | CE_UNARY_OP U_NEG e1 =>
-      (* -x = (-1) * x: 利用 I32_MUL 避免使用 LOCAL_TEE *)
-      compile_expr env e1 ++ [I32_CONST (-1); I32_MUL]
+      (* -x = 0 - x *)
+      [I32_CONST 0] ++ compile_expr env e1 ++ [I32_SUB]
   | CE_UNARY_OP U_NOT e1 =>
       compile_expr env e1 ++ [I32_EQZ]
   | CE_UNARY_OP U_ABS e1 =>
@@ -312,6 +312,37 @@ Fixpoint compile_expr_typed (env : compile_env) (env_ty : compile_type_env) (ty 
       | L_INT n, T_LINT => [I64_CONST n]
       | L_REAL f, T_LREAL => [F64_CONST f]
       | _, _ => compile_expr env e
+      end
+  | CE_UNARY_OP op e1 =>
+      let c1 := compile_expr_typed env env_ty ty e1 in
+      c1 ++
+      match ty with
+      | T_LINT =>
+          match op with
+          | U_NEG => [I64_CONST 0; I64_SUB]
+          | U_ABS => [LOCAL_SET 255; LOCAL_GET 255; I64_CONST 0; I64_LT_S;
+                      I64_CONST 0; LOCAL_GET 255; I64_SUB; LOCAL_GET 255; SELECT]
+          | U_NOT => [I32_EQZ]
+          end
+      | T_REAL =>
+          match op with
+          | U_NEG => [F32_NEG]
+          | U_ABS => [F32_ABS]
+          | U_NOT => [I32_EQZ]
+          end
+      | T_LREAL =>
+          match op with
+          | U_NEG => [F64_NEG]
+          | U_ABS => [F64_ABS]
+          | U_NOT => [I32_EQZ]
+          end
+      | _ =>
+          match op with
+          | U_NEG => [I32_CONST 0; I32_SUB]
+          | U_ABS => [LOCAL_SET 255; LOCAL_GET 255; I32_CONST 0; I32_LT_S;
+                      I32_CONST 0; LOCAL_GET 255; I32_SUB; LOCAL_GET 255; SELECT]
+          | U_NOT => [I32_EQZ]
+          end
       end
   | CE_BIN_OP op e1 e2 =>
       let c1 := compile_expr env e1 in
@@ -495,6 +526,38 @@ Definition estimate_total_memory (funcs : list corest_function) : Z :=
   Z.max (local_count * 4 + 1024 + 256) 256.
 
 (* 构建全局变量区段 *)
+(* ST IO 方向 → SafeASM IO 方向 *)
+Definition st_dir_to_sasm_dir (d : var_direction) : io_direction :=
+  match d with D_INPUT => IO_INPUT | D_OUTPUT => IO_OUTPUT | _ => IO_INPUT end.
+
+(* ST 类型 → SafeASM IO 类型 (AI/AO/DI/DO) *)
+Definition st_type_to_io_type (dir : var_direction) (t : st_type) : io_type :=
+  match dir, t with
+  | D_INPUT, T_INT | D_INPUT, T_DINT | D_INPUT, T_REAL => IO_AI
+  | D_OUTPUT, T_INT | D_OUTPUT, T_DINT | D_OUTPUT, T_REAL => IO_AO
+  | D_INPUT, _ => IO_DI
+  | D_OUTPUT, _ => IO_DO
+  | _, _ => IO_DI
+  end.
+
+(* ST 类型 → 单个 IOMAP 偏移（简化：从 1024 开始递增）*)
+Fixpoint assign_io_offsets (entries : list io_entry) (base : Z) : list (Z * io_entry) :=
+  match entries with
+  | nil => nil
+  | e :: rest => (base, e) :: assign_io_offsets rest (base + 4)
+  end.
+
+(* ST io_entry → SafeASM io_entry_sasm *)
+Definition io_entry_to_sasm (offset : Z) (e : io_entry) : io_entry_sasm :=
+  let 'Build_io_entry name_ ch_ dir_ ty_ := e in
+  let s : string := match name_ with ID s => s end in
+  Build_io_entry_sasm s offset ch_
+    (st_dir_to_sasm_dir dir_)
+    (st_type_to_io_type dir_ ty_)
+    (type_width ty_)
+    PrimFloat.one PrimFloat.zero
+    (-2147483648) 2147483647.
+
 Definition build_global_mem_segment (funcs : list corest_function) : memory_segment :=
   let total := estimate_total_memory funcs in
   {| seg_type := SEG_GLOBAL; seg_start := 0; seg_size := total |}.
@@ -507,6 +570,8 @@ Definition compile_program (p : corest_program) : sasm_module :=
   let types := List.map build_sasm_func_type p.(cprog_functions) in
   let total_mem := estimate_total_memory p.(cprog_functions) in
   let global_seg := build_global_mem_segment p.(cprog_functions) in
+  let io_offsets := assign_io_offsets p.(cprog_io_mapping) 1024 in
+  let io_map := List.map (fun p' => io_entry_to_sasm (fst p') (snd p')) io_offsets in
   {| sasm_magic := "SASM";
      sasm_version := 1;
      sasm_flags := 0;
@@ -514,7 +579,7 @@ Definition compile_program (p : corest_program) : sasm_module :=
      sasm_functions := funcs;
      sasm_memory_segments := [global_seg];
      sasm_total_memory_size := total_mem;
-     sasm_io_map := [];
+     sasm_io_map := io_map;
      sasm_safety := {| safe_level := 0;
                        safe_cycle_limit := 1000000;
                        safe_stack_depth := 64;

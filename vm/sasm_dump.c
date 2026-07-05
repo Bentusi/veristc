@@ -153,8 +153,10 @@ static int op_has_f64_imm(uint8_t op) {
 /* 指令是否带有 memory_arg (align + offset, 4 bytes) */
 static int op_has_mem_arg(uint8_t op) {
     switch (op) {
-    case OP_I32_LOAD: case OP_I32_STORE:
-    case OP_I32_LOAD8_U: case OP_I32_STORE8:
+    case OP_I32_LOAD: /* fall through */
+    case OP_I32_STORE: /* fall through */
+    case OP_I32_LOAD8_U: /* fall through */
+    case OP_I32_STORE8:
         return 1;
     default:
         return 0;
