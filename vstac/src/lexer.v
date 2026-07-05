@@ -268,8 +268,6 @@ Fixpoint string_to_list (s : string) : list ascii :=
   | EmptyString => nil
   | String c s' => c :: string_to_list s'
   end.
-
-(* 辅助谓词：合法 SafeST 源码——即 lexer 能成功分词的字符串 *)
 Definition valid_safest_source (s : string) : Prop :=
   exists tokens, lex s = Some tokens.
 

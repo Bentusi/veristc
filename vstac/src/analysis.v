@@ -67,12 +67,32 @@ Definition build_call_graph (p : corest_program) : call_graph :=
   p.(cprog_functions).
 
 (* 检查调用图中是否存在递归（简化：始终返回 false） *)
+
+Fixpoint lookup_callees (graph : call_graph) (f : ident) : list ident :=
+  match graph with
+  | nil => []
+  | (g, cs) :: rest =>
+      if ident_eq g f then cs else lookup_callees rest f
+  end.
+
+(* 基于 DFS 的递归检测 *)
+(* 带深度限制的 DFS 循环检测 
+   最大深度 = 图结点数（足够遍历整个调用图） *)
+Fixpoint dfs_cycle (depth : nat) (graph : call_graph) (node : ident) (visited : list ident) : bool :=
+  match depth with
+       | O => false
+       | S d =>
+         let callees := lookup_callees graph node in
+         if List.existsb (fun x => ident_eq x node) visited then true
+         else List.existsb (fun c => dfs_cycle d graph c (node :: visited)) callees
+       end.
+
+(* 检测调用图中是否存在递归（DFS） *)
 Definition has_recursion (graph : call_graph) : list (ident * bool) :=
   List.map (fun p =>
     let f := fst p in
-    let callees := snd p in
-    (f, false))
-  graph.
+    (f, dfs_cycle (Datatypes.S (List.length graph)) graph f [])
+  ) graph.
 
 Fixpoint max_call_depth (graph : call_graph) (entry : ident) {struct graph} : Z :=
   match graph with
@@ -93,14 +113,25 @@ Fixpoint max_call_depth (graph : call_graph) (entry : ident) {struct graph} : Z 
 (* 循环信息：每个循环的嵌套深度和是否受界 *)
 Record loop_info : Type := {
   loop_depth : Z;        (* 循环嵌套深度 *)
-  loop_has_bound : bool; (* 是否有显式上界（简化：恒为 false） *)
+  loop_has_bound : bool; (* 是否有显式上界 *)
+  loop_bound_opt : option Z; (* 可选的计算上界值（None=未分析出） *)
 }.
+
+(* 尝试分析 WHILE 循环的上界
+   Phase 1 简化：始终返回 None（保守）。
+   Phase 2 将实现 FOR 模式检测。 *)
+Definition analyze_while_bound (cond : corest_expr) (body : list corest_stmt) : option Z :=
+  None.
 
 (* 分析所有 WHILE 循环，返回循环信息列表 *)
 Fixpoint analyze_loops_stmt (s : corest_stmt) (depth : Z) : list loop_info :=
   match s with
   | CS_WHILE _ body =>
-      {| loop_depth := depth; loop_has_bound := false |}
+      let bound := analyze_while_bound (CE_LIT (L_INT 0)) body in
+      {| loop_depth := depth;
+         loop_has_bound := match bound with Some _ => true | None => false end;
+         loop_bound_opt := bound;
+      |}
       :: List.concat (List.map (fun stmt => analyze_loops_stmt stmt (depth + 1)) body)
   | CS_IF _ t e =>
       List.concat (List.map (fun stmt => analyze_loops_stmt stmt depth) t) ++
@@ -146,7 +177,7 @@ Fixpoint instr_count_stmt (s : corest_stmt) : Z :=
       List.fold_right (fun s acc => instr_count_stmt s + acc) 0 e
   | CS_WHILE _ body =>
       (* 简化：假设循环执行 MAX_CYCLE_LIMIT 次 *)
-      1 + (1000 * List.fold_right (fun s acc => instr_count_stmt s + acc) 0 body)
+      1 + (MAX_CYCLE_LIMIT / 1000 * List.fold_right (fun s acc => instr_count_stmt s + acc) 0 body)
   | CS_FB_CALL _ _ => 10  (* 函数调用开销 *)
   | CS_RETURN => 1 | CS_EXIT => 1
   | CS_BLOCK stmts => List.fold_right (fun s acc => instr_count_stmt s + acc) 0 stmts
@@ -210,7 +241,7 @@ Definition analyze (p : corest_program) : analysis_result :=
 
 (* 从分析结果生成安全断言列表 *)
 Definition gen_safety_assertions (result : analysis_result) : list safety_assertion :=
-  [ ASSERT_CYCLE_LIMIT (Z.max result.(ar_estimated_wcet) 1000);
+  [ ASSERT_CYCLE_LIMIT (Z.max result.(ar_estimated_wcet) MAX_CYCLE_LIMIT);
     ASSERT_STACK_DEPTH result.(ar_max_stack_depth);
     ASSERT_MEM_BOUNDS 0 65536  (* 默认 64KB 内存范围 *)
   ].

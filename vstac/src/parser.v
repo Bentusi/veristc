@@ -1231,8 +1231,10 @@ Theorem parse_well_formed : forall (tokens : list token) (p : st_program),
     well_formed_program p.
 Proof.
   intros tokens p Hparse. unfold well_formed_program.
-  repeat split; exact I.
-Qed.
+  repeat split; try exact I.
+  - admit.  (* no_duplicate_declarations *)
+  - admit.  (* no_recursive_calls *)
+Admitted.
 
 Theorem parse_sound : forall (tokens : list token) (p : st_program),
     parse tokens = Some p ->

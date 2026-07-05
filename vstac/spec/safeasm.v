@@ -334,8 +334,64 @@ Definition i32_bin_op (op : sasm_instr) (v1 v2 : Z) : option Z :=
   | I32_XOR => Some (Z.lxor v1 v2)
   | I32_SHL => Some (Z.shiftl v1 v2)
   | I32_SHR_S => Some (Z.shiftr v1 v2)
+  | I32_ROTL => Some (Z.land (Z.lor (Z.shiftl v1 (Z.land v2 31)) (Z.shiftr v1 (Z.land (32 - Z.land v2 31) 31))) 4294967295)
+  | I32_ROTR => Some (Z.land (Z.lor (Z.shiftr v1 (Z.land v2 31)) (Z.shiftl v1 (Z.land (32 - Z.land v2 31) 31))) 4294967295)
   | _ => None
   end.
+
+
+(* ================================================================
+   第 12a 部分：算术与比较辅助函数 (Arithmetic & Compare Helpers)
+   ================================================================ *)
+
+(* i32 比较: 返回 0 或 1 *)
+Definition i32_cmp_op (op : sasm_instr) (v1 v2 : Z) : Z :=
+  match op with
+  | I32_EQ => if Z.eqb v1 v2 then 1 else 0
+  | I32_NE => if negb (Z.eqb v1 v2) then 1 else 0
+  | I32_LT_S => if Z.ltb v1 v2 then 1 else 0
+  | I32_LE_S => if Z.leb v1 v2 then 1 else 0
+  | I32_GT_S => if Z.ltb v2 v1 then 1 else 0
+  | I32_GE_S => if Z.leb v2 v1 then 1 else 0
+  | _ => 0
+  end.
+
+(* i64 二元运算 *)
+Definition i64_bin_op (op : sasm_instr) (v1 v2 : Z) : option Z :=
+  match op with
+  | I64_ADD => Some (v1 + v2)
+  | I64_SUB => Some (v1 - v2)
+  | I64_MUL => Some (v1 * v2)
+  | I64_DIV_S => if v2 =? 0 then None else Some (v1 / v2)
+  | I64_REM_S => if v2 =? 0 then None else Some (Z.rem v1 v2)
+  | I64_AND => Some (Z.land v1 v2)
+  | I64_OR => Some (Z.lor v1 v2)
+  | I64_XOR => Some (Z.lxor v1 v2)
+  | I64_SHL => Some (Z.shiftl v1 v2)
+  | I64_SHR_S => Some (Z.shiftr v1 v2)
+  | _ => None
+  end.
+
+(* i64 比较 *)
+Definition i64_cmp_op (op : sasm_instr) (v1 v2 : Z) : Z :=
+  match op with
+  | I64_EQ => if Z.eqb v1 v2 then 1 else 0
+  | I64_NE => if negb (Z.eqb v1 v2) then 1 else 0
+  | I64_LT_S => if Z.ltb v1 v2 then 1 else 0
+  | I64_LE_S => if Z.leb v1 v2 then 1 else 0
+  | I64_GT_S => if Z.ltb v2 v1 then 1 else 0
+  | I64_GE_S => if Z.leb v2 v1 then 1 else 0
+  | _ => 0
+  end.
+
+(* i32 负载: 从 linear_memory 读取 4 字节小端并拼接为 i32 *)
+Definition read_i32 (mem : list Z) (addr : Z) (offset : Z) : Z :=
+  let a := addr + offset in
+  let nth_or0 (pos : Z) : Z :=
+    let idx := Z.to_nat pos in
+    if Nat.ltb idx (Datatypes.length mem) then List.nth idx mem 0 else 0
+  in
+  nth_or0 a + nth_or0 (a+1) * 256 + nth_or0 (a+2) * 65536 + nth_or0 (a+3) * 16777216.
 
 
 (* 从内存读取单字节并零扩展到 i32（v1.1 新增，支持 I32_LOAD8_U） *)
@@ -400,6 +456,26 @@ Fixpoint list_set {A : Type} (l : list A) (n : nat) (x : A) : list A :=
   | _ :: l', S n' => list_set l' n' x
   end.
 
+(* 将 i32 写入 linear_memory（4 字节小端）*)
+Definition write_i32 (mem : list Z) (addr : Z) (offset : Z) (val : Z) : list Z :=
+  let a := addr + offset in
+  let wb (mem0 : list Z) (pos : Z) (v : Z) : list Z :=
+    let idx := Z.to_nat (a + pos) in
+    let clip := Z.land (Z.shiftr v (pos * 8)) 255 in
+    list_set mem0 idx clip
+  in
+  wb (wb (wb (wb mem 0 val) 1 val) 2 val) 3 val.
+
+(* f32 简易转换: read_f32_bits 将 addr 处 4 字节解析为浮点按位模式 (占位) *)
+Definition read_f32_bits (mem : list Z) (addr : Z) (offset : Z) : Z :=
+  read_i32 mem addr offset.
+
+(* f64 简易转换 *)
+Definition read_f64_lo (mem : list Z) (addr : Z) (offset : Z) : Z :=
+  read_i32 mem addr offset.
+Definition read_f64_hi (mem : list Z) (addr : Z) (offset : Z) : Z :=
+  read_i32 mem (addr + 4) offset.
+
 (* 写入单字节到内存（v1.1 新增，支持 I32_STORE8） *)
 Definition write_memory_byte (s : runtime_state) (addr : Z) (val : Z) : runtime_state :=
   let idx := Z.to_nat addr in
@@ -447,23 +523,73 @@ Definition block_addr_at (f : sasm_frame) (depth : Z) : option Z :=
 
 (* 存储值到内存（简化实现） *)
 Definition state_after_store (addr offset : Z) (v : sasm_value) (s : runtime_state) : runtime_state :=
-  s.
+  let val := match v with V_I32 z => z | V_I64 z => z | _ => 0 end in
+  let new_mem := match v with
+                 | V_I32 _ => write_i32 s.(rt_memory) addr offset val
+                 | V_I64 _ => write_i32 s.(rt_memory) addr offset val
+                 | _ => s.(rt_memory)
+                 end in
+  {| rt_values := s.(rt_values);
+     rt_frames := s.(rt_frames);
+     rt_memory := new_mem;
+     rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+  |}.
 
-(* 跳转（简化占位） *)
+(* 跳转：更新当前帧的 PC 和 block_stack（通过 block_stack 索引执行）
+   depth = 0 → 跳出最内层 BLOCK/LOOP
+   depth = 1 → 跳出外层 BLOCK，依此类推
+   简化实现：将 block_stack 截断至 depth，PC 指向 block_stack[depth] *)
 Definition branch_to (depth : Z) (s : runtime_state) : runtime_state :=
-  s.
+  match s.(rt_frames) with
+  | nil => s
+  | f :: rest =>
+      let new_block_stack := List.firstn (Z.to_nat depth) f.(frame_block_stack) in
+      let new_pc := match List.nth_error f.(frame_block_stack) (Z.to_nat depth) with
+                    | Some addr => addr
+                    | None => f.(frame_pc)
+                    end in
+      let f' := {| frame_locals := f.(frame_locals);
+                   frame_func_idx := f.(frame_func_idx);
+                   frame_pc := new_pc;
+                   frame_block_stack := new_block_stack |} in
+      {| rt_values := s.(rt_values);
+         rt_frames := f' :: rest;
+         rt_memory := s.(rt_memory);
+         rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+      |}
+  end.
 
-(* 查找函数（简化占位） *)
-Definition lookup_function (m : sasm_module) (idx : Z) : option (list sasm_value) :=
-  None.
+(* 查找函数：返回模块中指定索引的函数 *)
+Definition lookup_function (m : sasm_module) (idx : Z) : option sasm_function :=
+  List.nth_error m.(sasm_functions) (Z.to_nat idx).
 
-(* 创建新帧（简化占位） *)
+(* 创建新帧：使用给定参数构造函数帧，压入帧栈 *)
 Definition push_frame (idx : Z) (args : list sasm_value) (s : runtime_state) : runtime_state :=
-  s.
+  let new_frame : sasm_frame :=
+    {| frame_locals := args;
+       frame_func_idx := idx;
+       frame_pc := 0;
+       frame_block_stack := [];
+    |}
+  in
+  {| rt_values := s.(rt_values);
+     rt_frames := new_frame :: s.(rt_frames);
+     rt_memory := s.(rt_memory);
+     rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+  |}.
 
-(* 返回并恢复帧（简化占位） *)
+(* 返回并恢复帧：弹出当前帧，恢复上一帧的执行
+   注意：返回值已由函数体留在值栈中，此处仅管理帧栈 *)
 Definition pop_frame_with_return (ret_val : sasm_value) (s : runtime_state) : runtime_state :=
-  s.
+  match s.(rt_frames) with
+  | nil => s
+  | _ :: rest =>
+      {| rt_values := s.(rt_values);  (* 返回值已在栈上，由函数体留下 *)
+         rt_frames := rest;
+         rt_memory := s.(rt_memory);
+         rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+      |}
+  end.
 
 (* 小步语义: step m s s' 表示从状态 s 执行一步到 s' *)
 Inductive step : sasm_module -> runtime_state -> runtime_state -> Prop :=
@@ -489,10 +615,415 @@ Inductive step : sasm_module -> runtime_state -> runtime_state -> Prop :=
         (push_value (V_I32 (raw_val mod 256)) (pop1 s))
 
   | Step_i32_store8 : forall m s addr val,
-      (* 栈顶是 val(低8位)，次栈顶是 addr *)
       step m
         (state_with_top2 (V_I32 addr) (V_I32 val) s)
         (write_memory_byte (pop2 s) addr (val mod 256))
+
+  (* ─── 控制流 ─── *)
+  | Step_nop : forall m s,
+      step m s s
+
+  | Step_unreachable : forall m s,
+      step m s s
+
+  | Step_drop : forall m s v,
+      step m (state_with_top v s) (pop1 s)
+
+  | Step_select : forall m s v1 v2 c,
+      step m
+        (state_with_top2 (V_I32 v1) (V_I32 v2) (state_with_top (V_I32 c) s))
+        (push_value (if Z.eqb c 0 then V_I32 v2 else V_I32 v1) (pop2 s))
+
+  | Step_return : forall m s f rest,
+      s.(rt_frames) = f :: rest ->
+      step m s
+        {| rt_values := s.(rt_values);
+           rt_frames := rest;
+           rt_memory := s.(rt_memory);
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  (* ─── 局部变量 ─── *)
+  | Step_local_get : forall m s f rest idx v,
+      s.(rt_frames) = f :: rest ->
+      List.nth_error f.(frame_locals) (Z.to_nat idx) = Some v ->
+      step m s (push_value v s)
+
+  | Step_local_set : forall m s f rest idx v vs,
+      s.(rt_frames) = f :: rest ->
+      s.(rt_values) = v :: vs ->
+      let f' := {| frame_locals := list_set f.(frame_locals) (Z.to_nat idx) v;
+                   frame_func_idx := f.(frame_func_idx);
+                   frame_pc := f.(frame_pc);
+                   frame_block_stack := f.(frame_block_stack) |} in
+      step m s
+        {| rt_values := vs;
+           rt_frames := f' :: rest;
+           rt_memory := s.(rt_memory);
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  | Step_local_tee : forall m s f rest idx v vs,
+      s.(rt_frames) = f :: rest ->
+      s.(rt_values) = v :: vs ->
+      let f' := {| frame_locals := list_set f.(frame_locals) (Z.to_nat idx) v;
+                   frame_func_idx := f.(frame_func_idx);
+                   frame_pc := f.(frame_pc);
+                   frame_block_stack := f.(frame_block_stack) |} in
+      step m s
+        {| rt_values := v :: vs;
+           rt_frames := f' :: rest;
+           rt_memory := s.(rt_memory);
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  (* ─── i32 常量 ─── *)
+  | Step_i32_const : forall m s v,
+      step m s (push_value (V_I32 v) s)
+
+  | Step_i64_const : forall m s v,
+      step m s (push_value (V_I64 v) s)
+
+  | Step_f32_const : forall m s f,
+      step m s (push_value (V_F32 f) s)
+
+  | Step_f64_const : forall m s f,
+      step m s (push_value (V_F64 f) s)
+
+  (* ─── i32 比较 ─── *)
+  | Step_i32_eqz : forall m s v,
+      step m (state_with_top (V_I32 v) s)
+        (state_with_top (V_I32 (if Z.eqb v 0 then 1 else 0)) (pop1 s))
+
+  | Step_i32_eq : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_EQ v1 v2)) (pop2 s))
+
+  | Step_i32_ne : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_NE v1 v2)) (pop2 s))
+
+  | Step_i32_lt_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_LT_S v1 v2)) (pop2 s))
+
+  | Step_i32_le_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_LE_S v1 v2)) (pop2 s))
+
+  | Step_i32_gt_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_GT_S v1 v2)) (pop2 s))
+
+  | Step_i32_ge_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s)
+        (state_with_top (V_I32 (i32_cmp_op I32_GE_S v1 v2)) (pop2 s))
+
+  (* ─── i32 二元运算 ─── *)
+  | Step_i32_sub : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_SUB v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_mul : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_MUL v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_div_s : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_DIV_S v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_rem_s : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_REM_S v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_and : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_AND v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_or : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_OR v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_xor : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_XOR v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_shl : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_SHL v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_shr_s : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_SHR_S v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_rotl : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_ROTL v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  | Step_i32_rotr : forall m s v1 v2 new_v,
+      Some new_v = i32_bin_op I32_ROTR v1 v2 ->
+      step m (state_with_top2 (V_I32 v1) (V_I32 v2) s) (state_with_top (V_I32 new_v) (pop2 s))
+
+  (* ─── i64 比较 ─── *)
+  | Step_i64_eqz : forall m s v,
+      step m (state_with_top (V_I64 v) s)
+        (state_with_top (V_I32 (if Z.eqb v 0 then 1 else 0)) (pop1 s))
+
+  | Step_i64_eq : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_EQ v1 v2)) (pop2 s))
+
+  | Step_i64_ne : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_NE v1 v2)) (pop2 s))
+
+  | Step_i64_lt_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_LT_S v1 v2)) (pop2 s))
+
+  | Step_i64_le_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_LE_S v1 v2)) (pop2 s))
+
+  | Step_i64_gt_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_GT_S v1 v2)) (pop2 s))
+
+  | Step_i64_ge_s : forall m s v1 v2,
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s)
+        (state_with_top (V_I32 (i64_cmp_op I64_GE_S v1 v2)) (pop2 s))
+
+  (* ─── i64 二元运算 ─── *)
+  | Step_i64_add : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_ADD v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_sub : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_SUB v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_mul : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_MUL v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_div_s : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_DIV_S v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_rem_s : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_REM_S v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_and : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_AND v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_or : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_OR v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_xor : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_XOR v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_shl : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_SHL v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  | Step_i64_shr_s : forall m s v1 v2 new_v,
+      Some new_v = i64_bin_op I64_SHR_S v1 v2 ->
+      step m (state_with_top2 (V_I64 v1) (V_I64 v2) s) (state_with_top (V_I64 new_v) (pop2 s))
+
+  (* ─── f32 二元运算 ─── *)
+  | Step_f32_add : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_F32 (PrimFloat.add f1 f2)) (pop2 s))
+
+  | Step_f32_sub : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_F32 (PrimFloat.sub f1 f2)) (pop2 s))
+
+  | Step_f32_mul : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_F32 (PrimFloat.mul f1 f2)) (pop2 s))
+
+  | Step_f32_div : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_F32 (PrimFloat.div f1 f2)) (pop2 s))
+
+  (* ─── f32 比较 ─── *)
+  | Step_f32_eq : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.eqb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f32_ne : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if negb (PrimFloat.eqb f1 f2) then 1 else 0)) (pop2 s))
+
+  | Step_f32_lt : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.ltb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f32_le : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.leb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f32_gt : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.ltb f2 f1 then 1 else 0)) (pop2 s))
+
+  | Step_f32_ge : forall m s f1 f2,
+      step m (state_with_top2 (V_F32 f1) (V_F32 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.leb f2 f1 then 1 else 0)) (pop2 s))
+
+  (* ─── f32 一元运算 ─── *)
+  | Step_f32_abs : forall m s f,
+      step m (state_with_top (V_F32 f) s)
+        (state_with_top (V_F32 (PrimFloat.abs f)) (pop1 s))
+
+  | Step_f32_neg : forall m s f,
+      step m (state_with_top (V_F32 f) s)
+        (state_with_top (V_F32 (PrimFloat.opp f)) (pop1 s))
+
+  | Step_f32_sqrt : forall m s f,
+      step m (state_with_top (V_F32 f) s)
+        (state_with_top (V_F32 (PrimFloat.sqrt f)) (pop1 s))
+
+  (* ─── f64 二元运算 ─── *)
+  | Step_f64_add : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_F64 (PrimFloat.add f1 f2)) (pop2 s))
+
+  | Step_f64_sub : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_F64 (PrimFloat.sub f1 f2)) (pop2 s))
+
+  | Step_f64_mul : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_F64 (PrimFloat.mul f1 f2)) (pop2 s))
+
+  | Step_f64_div : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_F64 (PrimFloat.div f1 f2)) (pop2 s))
+
+  (* ─── f64 比较 ─── *)
+  | Step_f64_eq : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.eqb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f64_ne : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if negb (PrimFloat.eqb f1 f2) then 1 else 0)) (pop2 s))
+
+  | Step_f64_lt : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.ltb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f64_le : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.leb f1 f2 then 1 else 0)) (pop2 s))
+
+  | Step_f64_gt : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.ltb f2 f1 then 1 else 0)) (pop2 s))
+
+  | Step_f64_ge : forall m s f1 f2,
+      step m (state_with_top2 (V_F64 f1) (V_F64 f2) s)
+        (state_with_top (V_I32 (if PrimFloat.leb f2 f1 then 1 else 0)) (pop2 s))
+
+  (* ─── f64 一元运算 ─── *)
+  | Step_f64_abs : forall m s f,
+      step m (state_with_top (V_F64 f) s)
+        (state_with_top (V_F64 (PrimFloat.abs f)) (pop1 s))
+
+  | Step_f64_neg : forall m s f,
+      step m (state_with_top (V_F64 f) s)
+        (state_with_top (V_F64 (PrimFloat.opp f)) (pop1 s))
+
+  | Step_f64_sqrt : forall m s f,
+      step m (state_with_top (V_F64 f) s)
+        (state_with_top (V_F64 (PrimFloat.sqrt f)) (pop1 s))
+
+  (* ─── 类型转换 ─── *)
+  | Step_i32_wrap_i64 : forall m s v,
+      step m (state_with_top (V_I64 v) s)
+        (state_with_top (V_I32 (Z.land v 4294967295)) (pop1 s))
+
+  | Step_i64_extend_i32_s : forall m s v,
+      step m (state_with_top (V_I32 v) s)
+        (state_with_top (V_I64 v) (pop1 s))
+
+  | Step_i32_trunc_f32_s : forall m s f,
+      step m (state_with_top (V_F32 f) s)
+        (state_with_top (V_I32 0) (pop1 s))
+
+  | Step_i32_trunc_f64_s : forall m s f,
+      step m (state_with_top (V_F64 f) s)
+        (state_with_top (V_I32 0) (pop1 s))
+
+  | Step_f32_convert_i32_s : forall m s v,
+      step m (state_with_top (V_I32 v) s)
+        (state_with_top (V_F32 PrimFloat.zero) (pop1 s))
+
+  | Step_f64_convert_i32_s : forall m s v,
+      step m (state_with_top (V_I32 v) s)
+        (state_with_top (V_F64 PrimFloat.zero) (pop1 s))
+
+  (* ─── 内存操作: 加载 ─── *)
+  | Step_i32_load : forall m s addr arg,
+      step m (state_with_top (V_I32 addr) s)
+        (push_value (V_I32 (read_i32 s.(rt_memory) addr arg.(mem_offset))) (pop1 s))
+
+  | Step_i64_load : forall m s addr arg,
+      step m (state_with_top (V_I32 addr) s)
+        (push_value (V_I64 (read_i32 s.(rt_memory) addr arg.(mem_offset))) (pop1 s))
+
+  | Step_f32_load : forall m s addr arg,
+      step m (state_with_top (V_I32 addr) s)
+        (push_value (V_I32 (read_i32 s.(rt_memory) addr arg.(mem_offset))) (pop1 s))
+
+  | Step_f64_load : forall m s addr arg,
+      step m (state_with_top (V_I32 addr) s)
+        (push_value (V_I64 (read_i32 s.(rt_memory) addr arg.(mem_offset))) (pop1 s))
+
+  (* ─── 内存操作: 存储 ─── *)
+  | Step_i32_store : forall m s addr val arg,
+      step m (state_with_top2 (V_I32 addr) (V_I32 val) s)
+        {| rt_values := (tl (tl s.(rt_values)));
+           rt_frames := s.(rt_frames);
+           rt_memory := write_i32 s.(rt_memory) addr arg.(mem_offset) val;
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  | Step_i64_store : forall m s addr val arg,
+      step m (state_with_top2 (V_I64 val) (V_I32 addr) s)
+        {| rt_values := (tl (tl s.(rt_values)));
+           rt_frames := s.(rt_frames);
+           rt_memory := write_i32 s.(rt_memory) addr arg.(mem_offset) val;
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  | Step_f32_store : forall m s addr val arg,
+      step m (state_with_top2 (V_F32 val) (V_I32 addr) s)
+        {| rt_values := (tl (tl s.(rt_values)));
+           rt_frames := s.(rt_frames);
+           rt_memory := write_i32 s.(rt_memory) addr arg.(mem_offset) 0;
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  | Step_f64_store : forall m s addr val arg,
+      step m (state_with_top2 (V_F64 val) (V_I32 addr) s)
+        {| rt_values := (tl (tl s.(rt_values)));
+           rt_frames := s.(rt_frames);
+           rt_memory := write_i32 s.(rt_memory) addr arg.(mem_offset) 0;
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1;
+        |}
+
+  (* ─── 安全断言 ─── *)
+  | Step_safe_bounds_check_pass : forall m s low high idx,
+      low <= idx < high ->
+      step m (state_with_top (V_I32 idx) s)
+        (state_with_top (V_I32 idx) (pop1 s))
 .
 
 (* 多步执行 *)
@@ -534,8 +1065,7 @@ Inductive safe_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
    第 14 部分：编码/解码可逆性定理
    ================================================================ *)
 
-(* 类型安全定理声明（后续在 proofs/ 中实现） *)
-(* Theorem sasm_type_safety : ... *)
+(* 最终状态：帧栈为空 *)
 
 
 (* ================================================================
@@ -704,7 +1234,7 @@ Definition body_length (f : sasm_function) : Z :=
 
 (* V1: Magic 必须为 "SASM" *)
 Definition rule_V1 (m : sasm_module) : Prop :=
-  True.  (* Magic "SASM" 在加载器层级检查, v1.1 *)
+  m.(sasm_magic) = "SASM"%string.
 
 (* V2: Version 必须为 1 *)
 Definition rule_V2 (m : sasm_module) : Prop :=
@@ -1144,8 +1674,15 @@ Definition rule_V25 (m : sasm_module) : Prop :=
     List.In r m.(sasm_safety).(safe_mem_access_map) ->
     r.(mar_low) >= 0 /\ r.(mar_high) <= m.(sasm_total_memory_size).
 
-(* V26: 无递归调用 — 需调用图分析，简化占位 *)
-Definition rule_V26 (m : sasm_module) : Prop := True.
+(* V26: 无直接递归调用 — 每个函数不可 CALL 自身 *)
+Definition rule_V26 (m : sasm_module) : Prop :=
+  forall (idx : Z) (f : sasm_function) (instr : sasm_instr),
+    List.nth_error m.(sasm_functions) (Z.to_nat idx) = Some f ->
+    List.In instr f.(sasm_body) ->
+    match instr with
+    | CALL i => i <> idx
+    | _ => True
+    end.
 
 (* ---- 组合验证谓词 ---- *)
 
@@ -1161,5 +1698,26 @@ Definition validate_module (m : sasm_module) : Prop :=
   rule_V24 m /\ rule_V25 m /\ rule_V26 m.
 
 End Validation.
+Definition terminal_state_sasm (s : runtime_state) : Prop :=
+  s.(rt_frames) = nil.
+
+(* ================================================================
+   定理 5: sasm_type_safety (类型安全)
+   
+   如果模块通过了 V1-V26 验证，
+   则执行过程中要么执行结束（帧栈为空），
+   要么可以安全地执行下一步（满足安全约束）。
+   
+   证明策略:
+   - Multi_refl 情况: 若帧栈非空，需 Progress 引理（Phase 1 补全）
+   - Multi_step 情况: 归纳假设保证后续状态也可继续或终止
+   ================================================================ *)
+Theorem sasm_type_safety : forall (m : sasm_module) (s s' : runtime_state),
+  validate_module m ->
+  multi_step m s s' ->
+  terminal_state_sasm s' \/ (exists s'', safe_step m s' s'').
+Admitted.
+
+
 
 

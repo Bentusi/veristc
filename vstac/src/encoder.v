@@ -294,7 +294,7 @@ Definition encode_safe_section (m : sasm_module) : list Z :=
 
 (* ---- 2g. 综合汇编 section 清单 ---- *)
 
-Fixpoint concat_sections (secs : list (list Z)) : list Z :=
+Definition concat_sections (secs : list (list Z)) : list Z :=
   List.fold_right (fun a b => a ++ b) [] secs.
 
 (* ================================================================
