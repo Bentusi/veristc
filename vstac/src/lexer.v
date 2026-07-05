@@ -95,8 +95,16 @@ Definition keyword_table : list (string * token) :=
     ("XOR", TK_XOR);
     ("NOT", TK_NOT);
     ("MOD", TK_MOD);
-    ("ABS", TK_ABS)
-  ].
+    ("ABS", TK_ABS);
+    ("QUALITY", TK_QUALITY);
+    ("GOOD", TK_GOOD); ("BAD", TK_BAD); ("UNCERTAIN", TK_UNCERTAIN); ("NOT_CONNECTED", TK_NOT_CONNECTED);
+    ("QBOOL", TK_QBOOL); ("QBYTE", TK_QBYTE); ("QWORD", TK_QWORD); ("QDWORD", TK_QDWORD);
+    ("QSINT", TK_QSINT); ("QINT", TK_QINT); ("QDINT", TK_QDINT); ("QLINT", TK_QLINT);
+    ("QREAL", TK_QREAL); ("QLREAL", TK_QLREAL); ("QTIME", TK_QTIME);
+    ("Q_STATUS", TK_Q_STATUS); ("Q_SET", TK_Q_SET); ("Q_VALUE", TK_Q_VALUE);
+    ("Q_WITH", TK_Q_WITH); ("Q_FORCE", TK_Q_FORCE);
+    ("Q_GOOD", TK_Q_GOOD); ("Q_BAD", TK_Q_BAD); ("Q_UNCERTAIN", TK_Q_UNCERTAIN);
+    ("Q_NONE", TK_Q_NONE); ("Q_DISABLE", TK_Q_DISABLE)  ].
 
 (* 查找关键字（严格区分大小写，后续可扩展为不区分大小写） *)
 Fixpoint lookup_keyword (s : string) (kt : list (string * token)) : option token :=

@@ -41,4 +41,5 @@ Separate Extraction
   vstac_src.codegen.compile_program
   vstac_src.analysis.analyze
   vstac_src.encoder.encode_sasm_instr
+  vstac_src.encoder.encode_module
 .

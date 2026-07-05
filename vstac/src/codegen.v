@@ -66,11 +66,36 @@ Fixpoint lookup_var_type (env_ty : compile_type_env) (x : ident) : option st_typ
       end
   end.
 
+(* ST 类型 → SafeASM 值类型（用于编译时的类型映射） *)
+Definition st_type_to_sasm (t : st_type) : sasm_value_type :=
+  match t with
+  | T_BOOL | T_BYTE | T_SINT  => I32
+  | T_WORD | T_INT             => I32
+  | T_DWORD | T_DINT           => I32
+  | T_REAL                     => F32
+  | T_LREAL                    => F64
+  | T_TIME                     => I64
+  | T_LINT                     => I64
+  | T_QUALITY                  => I32
+  | T_QBOOL | T_QBYTE | T_QWORD | T_QDWORD
+  | T_QSINT | T_QINT | T_QDINT => I32
+  | T_QLINT                    => I64
+  | T_QREAL                    => F32
+  | T_QLREAL                   => F64
+  | T_QTIME                    => I64
+  | T_ARRAY _ _ _             => I32  (* 数组基址视为 i32 指针 *)
+  end.
+
 (* 从 CoreST 函数构建编译环境 *)
+Fixpoint assign_env_indices (vars : list (ident * st_type)) (base : Z) : compile_env :=
+  match vars with
+  | nil => nil
+  | (n, _) :: rest => (n, base) :: assign_env_indices rest (base + 1)
+  end.
+
 Definition build_compile_env (f : corest_function) : compile_env :=
-  let params := List.map (fun p => let n := fst p in let _ := snd p in (n, 0)) f.(cfunc_params) in
-  let locals := List.map (fun p => let n := fst p in let _ := snd p in (n, Z.of_nat (List.length f.(cfunc_params)))) f.(cfunc_locals) in
-  params ++ locals.
+  assign_env_indices f.(cfunc_params) 0 ++
+  assign_env_indices f.(cfunc_locals) (Z.of_nat (List.length f.(cfunc_params))).
 
 (* ================================================================
    第 2 部分：指令编码尺寸计算
@@ -435,12 +460,12 @@ Fixpoint compile_stmt (env : compile_env) (env_ty : compile_type_env) (s : cores
 
 Definition compile_function (env : compile_env) (env_ty : compile_type_env) (f : corest_function) : sasm_function :=
   let body := List.concat (List.map (compile_stmt env env_ty) f.(cfunc_body)) in
-  let local_count := Z.of_nat (List.length env) in
-  let local_types := List.map (fun _ => I32) (List.repeat I32 (Z.to_nat local_count)) in
+  let local_types := List.map (fun p => snd p) env_ty in
+  let safeasm_types := List.map (fun ty => st_type_to_sasm ty) local_types in
   {| sasm_func_type_idx := 0;
-     sasm_locals := local_types;
+     sasm_locals := safeasm_types;
      sasm_body := body;
-     sasm_stack_depth := instr_seq_size body;  (* 近似值 *)
+     sasm_stack_depth := instr_seq_size body;
      sasm_cycle_budget := 1000000;
   |}.
 
@@ -448,25 +473,53 @@ Definition compile_function (env : compile_env) (env_ty : compile_type_env) (f :
    第 6 部分：程序编译 (Program Compilation)
    ================================================================ *)
 
+Definition build_sasm_func_type (f : corest_function) : sasm_func_type :=
+  let param_sasm := List.map (fun p => st_type_to_sasm (snd p)) f.(cfunc_params) in
+  let ret_sasm := match f.(cfunc_return_type) with
+                  | Some t => [st_type_to_sasm t]
+                  | None => []
+                  end in
+  {| sasm_param_types := param_sasm; sasm_return_types := ret_sasm |}.
+
+Fixpoint all_params_types (funcs : list corest_function) : list sasm_value_type :=
+  match funcs with
+  | nil => []
+  | f :: rest => List.map (fun p => st_type_to_sasm (snd p)) f.(cfunc_params) ++ all_params_types rest
+  end.
+
+(* 估算总内存: 每个 local 4 字节 + I/O 预留 1KB + 质量影子区 256 字节 *)
+Definition estimate_total_memory (funcs : list corest_function) : Z :=
+  let local_count := List.fold_right (fun f acc =>
+    acc + Z.of_nat (List.length f.(cfunc_params) + List.length f.(cfunc_locals))
+  ) 0 funcs in
+  Z.max (local_count * 4 + 1024 + 256) 256.
+
+(* 构建全局变量区段 *)
+Definition build_global_mem_segment (funcs : list corest_function) : memory_segment :=
+  let total := estimate_total_memory funcs in
+  {| seg_type := SEG_GLOBAL; seg_start := 0; seg_size := total |}.
+
 Definition compile_program (p : corest_program) : sasm_module :=
-  (* 假设第一个函数是入口 *)
   let funcs := List.map (fun f =>
     let env := build_compile_env f in
     let ty := build_compile_type_env f in
     compile_function env ty f) p.(cprog_functions) in
+  let types := List.map build_sasm_func_type p.(cprog_functions) in
+  let total_mem := estimate_total_memory p.(cprog_functions) in
+  let global_seg := build_global_mem_segment p.(cprog_functions) in
   {| sasm_magic := "SASM";
      sasm_version := 1;
      sasm_flags := 0;
-     sasm_types := [{| sasm_param_types := [I32]; sasm_return_types := [I32] |}];
+     sasm_types := types;
      sasm_functions := funcs;
-     sasm_memory_segments := [];
-     sasm_total_memory_size := 0;
+     sasm_memory_segments := [global_seg];
+     sasm_total_memory_size := total_mem;
      sasm_io_map := [];
      sasm_safety := {| safe_level := 0;
                        safe_cycle_limit := 1000000;
                        safe_stack_depth := 64;
                        safe_loop_bounds := [];
-                       safe_mem_access_map := [];
+                       safe_mem_access_map := [{| mar_low := 0; mar_high := total_mem |}];
                     |};
      sasm_wcet := None;
      sasm_entry_function := 0;

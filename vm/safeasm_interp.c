@@ -366,6 +366,20 @@ int vm_execute_cycle(VM *vm) {
             break;
         }
         
+        case OP_I32_LE_S: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            push_value(vm, v1 <= v2 ? 1 : 0);
+            break;
+        }
+        
+        case OP_I32_GE_S: {
+            sasm_value v2 = pop_value(vm);
+            sasm_value v1 = pop_value(vm);
+            push_value(vm, v1 >= v2 ? 1 : 0);
+            break;
+        }
+        
         case OP_I32_ADD: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
