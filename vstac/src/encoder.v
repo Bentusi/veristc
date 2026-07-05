@@ -319,11 +319,10 @@ Definition encode_module (m : sasm_module) : list Z :=
 (* ================================================================
    第 4 部分：正确性定理
    ================================================================ *)
-
 Theorem encode_starts_with_magic : forall (m : sasm_module),
     exists rest, encode_module m = [0x53; 0x41; 0x53; 0x4D] ++ rest.
 Proof.
-  intros m. unfold encode_module. simpl. eexists. reflexivity.
+  intros m. unfold encode_module. eexists. reflexivity.
 Qed.
 
 Theorem encode_module_nonempty : forall (m : sasm_module),

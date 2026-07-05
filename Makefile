@@ -185,6 +185,7 @@ clean:
 	find . -name '*.o' -delete
 
 	rm -f vstac/spec/*.vo vstac/spec/*.glob vstac/src/*.vo vstac/src/*.glob vstac/*.vo vstac/*.glob
+	rm -f vstac/spec/*.vos vstac/spec/*.vok vstac/src/*.vos vstac/src/*.vok
 	rm -f vstac/extraction/extraction.ml vstac/extraction/extraction.cm*
 	rm -f vstac/extraction/vstac vstac/extraction/vstac_main.cm*
 	cd vstac && dune clean 2>/dev/null || true

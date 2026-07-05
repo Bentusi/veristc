@@ -1353,6 +1353,8 @@ Lemma exec_instr_preserves_frame_count : forall (st : runtime_state) (i : sasm_i
     exec_instr st i = Some st' ->
     List.length st'.(rt_frames) = List.length st.(rt_frames).
 Proof.
+  (* 控制流指令（RETURN/BR/BR_IF/BLOCK/LOOP/CALL）会修改 rt_frames，
+     此引理仅对非控制流指令成立。完整证明见 Phase 2。 *)
   admit.
 Admitted.
 
@@ -1362,6 +1364,10 @@ Lemma exec_instrs_preserves_frame_count : forall (st : runtime_state) (instrs : 
 Proof.
   admit.
 Admitted.
+
+(* 说明：上述引理对非控制流指令（运算/加载/存储等）成立，
+   对控制流指令（RETURN/BR/BR_IF/BLOCK/LOOP/CALL）因会修改 rt_frames 而不成立。
+   当前这些 case 用 admit 标记，待 Phase 2 完善。 *)
 
 (* ================================================================
    第 7c 节：指令序列拼接引理
@@ -1480,6 +1486,9 @@ Proof.
   - (* CE_QUALITY_OP *) admit.
 Admitted.
 
+(* 注意: compile_expr_correct 需要 compile_env_matches env env_s 作为前提条件，
+   才能证明 CE_VAR 以及依赖 CE_VAR 的复合表达式。当前 9 个 case 的 admit
+   需要 Phase 2 中完善 compile_env_matches 定义后补全。 *)
 
 (* ================================================================
    第 8 部分：语句模拟引理 (Statement Simulation)

@@ -30,6 +30,7 @@ Require Import vstac_src.desugar.
 Require Import vstac_src.typechecker.
 Require Import vstac_src.codegen.
 Require Import vstac_src.analysis.
+Require Import vstac_src.encoder.
 
 (* 提取 OCaml 代码 *)
 Separate Extraction
@@ -39,4 +40,6 @@ Separate Extraction
   vstac_src.typechecker.type_check_program
   vstac_src.codegen.compile_program
   vstac_src.analysis.analyze
+  vstac_src.encoder.encode_sasm_instr
+  vstac_src.encoder.encode_module
 .
