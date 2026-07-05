@@ -890,12 +890,21 @@ Fixpoint parse_program (fuel : nat) (st : parser_state) {struct fuel}
       | Some TK_EOF => Parse_ok ((Build_st_program nil nil nil (ID "")), st)
       | _ =>
           let (global_vars, st1) := parse_global_var_decls fuel' st in
-          let (pou_list, st2) := parse_pou_list fuel' st1 in
+          let (io_map, st_iomap) := match peek st1 with
+              | Some (TK_IDENT "IOMAP") =>
+                  let st_io := snd (consume st1) in
+                  match parse_iomap_entries fuel' st_io with
+                  | Parse_ok (map, s) => (map, s)
+                  | _ => (nil, st1)
+                  end
+              | _ => (nil, st1)
+              end in
+          let (pou_list, st2) := parse_pou_list fuel' st_iomap in
           let entry := match pou_list with
                        | p :: _ => pou_entry_name p
                        | nil => ID ""
                        end in
-          Parse_ok ((Build_st_program global_vars pou_list nil entry), st2)
+          Parse_ok ((Build_st_program global_vars pou_list io_map entry), st2)
       end
   end
 
@@ -1140,6 +1149,64 @@ with parse_type (fuel : nat) (st : parser_state) {struct fuel}
           | _ => (T_BOOL, st2)
           end
       | _ => (T_BOOL, st)
+      end
+  end
+
+with parse_iomap_entry (fuel : nat) (st : parser_state) {struct fuel}
+     : parse_result io_entry :=
+  match fuel with
+  | O => Parse_error "Out of fuel"
+  | S fuel' =>
+      match peek st with
+      | Some (TK_IDENT name) =>
+          let st1 := snd (consume st) in
+          let st2 := snd (expect_token st1 TK_COMMA) in
+          let (tok_ch, st3) := consume st2 in
+          match tok_ch with
+          | TK_INT_LIT ch =>
+              let st4 := snd (expect_token st3 TK_COMMA) in
+              let (tok_dir, st5) := consume st4 in
+              match tok_dir with
+              | TK_IDENT "INPUT" =>
+                  let st6 := snd (expect_token st5 TK_COMMA) in
+                  let (ioty, st7) := parse_type fuel' st6 in
+                  let st8 := snd (expect_token st7 TK_SEMI) in
+                  Parse_ok ({| io_var_name := ID name; io_channel_id := ch;
+                               io_direction := D_INPUT; io_type := ioty |}, st8)
+              | TK_IDENT "OUTPUT" =>
+                  let st6 := snd (expect_token st5 TK_COMMA) in
+                  let (ioty, st7) := parse_type fuel' st6 in
+                  let st8 := snd (expect_token st7 TK_SEMI) in
+                  Parse_ok ({| io_var_name := ID name; io_channel_id := ch;
+                               io_direction := D_OUTPUT; io_type := ioty |}, st8)
+              | _ => Parse_fail
+              end
+          | _ => Parse_fail
+          end
+      | _ => Parse_fail
+      end
+  end
+
+with parse_iomap_entries (fuel : nat) (st : parser_state) {struct fuel}
+     : parse_result (list io_entry) :=
+  match fuel with
+  | O => Parse_error "Out of fuel"
+  | S fuel' =>
+      match peek st with
+      | Some (TK_IDENT "END_IOMAP") =>
+          let st1 := snd (consume st) in
+          Parse_ok (nil, st1)
+      | _ =>
+          match parse_iomap_entry fuel' st with
+          | Parse_ok (entry, st1) =>
+              match parse_iomap_entries fuel' st1 with
+              | Parse_ok (entries, st2) => Parse_ok (entry :: entries, st2)
+              | Parse_fail => Parse_fail
+              | Parse_error msg => Parse_error msg
+              end
+          | Parse_fail => Parse_ok (nil, st)
+          | Parse_error msg => Parse_error msg
+          end
       end
   end.
 
