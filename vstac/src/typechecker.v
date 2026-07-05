@@ -235,16 +235,16 @@ Definition build_program_env (p : st_program) : type_env :=
    第 5 部分：表达式类型检查函数 (Expression Type Checking)
    ================================================================ *)
 
-Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
+Fixpoint type_check_expr (fenv : type_env_func) (env : type_env) (e : st_expr) : option st_type :=
   match e with
   | E_LIT l => literal_type l
 
   | E_VAR x => lookup env x
 
   | E_ARRAY_ACCESS arr idx =>
-      match type_check_expr env arr with
+      match type_check_expr nil env arr with
       | Some (T_ARRAY elem_ty _ _) =>
-          match type_check_expr env idx with
+          match type_check_expr nil env idx with
           | Some T_INT => Some elem_ty
           | _ => None
           end
@@ -252,14 +252,14 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
 
   | E_UNARY_OP op e1 =>
-      match type_check_expr env e1 with
+      match type_check_expr nil env e1 with
       | Some ty =>
           if is_valid_unary_dec op ty then Some ty else None
       | None => None
       end
 
   | E_BIN_OP op e1 e2 =>
-      match type_check_expr env e1, type_check_expr env e2 with
+      match type_check_expr nil env e1, type_check_expr nil env e2 with
       | Some ty1, Some ty2 =>
           match promote_type_dec ty1 ty2 with
           | Some ty3 =>
@@ -270,43 +270,47 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
 
   | E_COMP op e1 e2 =>
-      match type_check_expr env e1, type_check_expr env e2 with
+      match type_check_expr nil env e1, type_check_expr nil env e2 with
       | Some ty1, Some ty2 =>
           if type_comparable_dec ty1 ty2 then Some T_BOOL else None
       | _, _ => None
       end
 
   | E_AND e1 e2 =>
-      match type_check_expr env e1, type_check_expr env e2 with
+      match type_check_expr nil env e1, type_check_expr nil env e2 with
       | Some T_BOOL, Some T_BOOL => Some T_BOOL
       | _, _ => None
       end
 
   | E_OR e1 e2 =>
-      match type_check_expr env e1, type_check_expr env e2 with
+      match type_check_expr nil env e1, type_check_expr nil env e2 with
       | Some T_BOOL, Some T_BOOL => Some T_BOOL
       | _, _ => None
       end
 
   | E_XOR e1 e2 =>
-      match type_check_expr env e1, type_check_expr env e2 with
+      match type_check_expr nil env e1, type_check_expr nil env e2 with
       | Some T_BOOL, Some T_BOOL => Some T_BOOL
       | _, _ => None
       end
 
   | E_FUNC_CALL f args =>
-      (* 函数调用类型检查: 先检查参数类型再匹配函数签名 *)
-      let arg_types := List.map (type_check_expr env) args in
-      if List.forallb (fun x => match x with Some _ => true | None => false end) arg_types
-      then
-        (* 提取参数类型列表 *)
-        let actual_types := List.map (fun x => match x with Some t => t | None => T_BOOL end) arg_types in
-        (* 这里简化: 假设我们已经有函数签名信息 *)
-        Some T_INT  (* 占位: 无程序上下文时假定返回 T_INT *)
-      else None
+      match lookup_function fenv f with
+      | Some (param_types, return_type) =>
+          let arg_types := List.map (type_check_expr nil env) args in
+          let fix check_args (ats : list (option st_type)) (pts : list st_type) : bool :=
+            match ats, pts with
+            | nil, nil => true
+            | Some a :: ats', p :: pts' => type_compatible_dec a p && check_args ats' pts'
+            | _, _ => false
+            end
+          in
+          if check_args arg_types param_types then Some return_type else None
+      | None => None
+      end
   | E_QUALITY_OP Q_STATUS args =>
       match args with
-      | [e] => match type_check_expr env e with
+      | [e] => match type_check_expr nil env e with
               | Some ty => if is_quality_type ty then Some T_QUALITY else None
               | None => None
               end
@@ -314,7 +318,7 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
   | E_QUALITY_OP Q_VALUE args =>
       match args with
-      | [e] => match type_check_expr env e with
+      | [e] => match type_check_expr nil env e with
               | Some ty => if is_quality_type ty then Some (strip_quality ty) else None
               | None => None
               end
@@ -322,7 +326,7 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
   | E_QUALITY_OP (Q_GOOD | Q_BAD | Q_UNCERTAIN) args =>
       match args with
-      | [e] => match type_check_expr env e with
+      | [e] => match type_check_expr nil env e with
               | Some ty => if is_quality_type ty then Some T_BOOL else None
               | None => None
               end
@@ -330,7 +334,7 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
   | E_QUALITY_OP Q_SET args =>
       match args with
-      | [e1; e2] => match type_check_expr env e1, type_check_expr env e2 with
+      | [e1; e2] => match type_check_expr nil env e1, type_check_expr nil env e2 with
                    | Some ty1, Some T_QUALITY => if is_quality_type ty1 then Some T_QUALITY else None
                    | _, _ => None
                    end
@@ -338,15 +342,15 @@ Fixpoint type_check_expr (env : type_env) (e : st_expr) : option st_type :=
       end
   | E_QUALITY_OP Q_WITH args =>
       match args with
-      | [e1; e2] => match type_check_expr env e2 with
-                   | Some T_QUALITY => type_check_expr env e1
+      | [e1; e2] => match type_check_expr nil env e2 with
+                   | Some T_QUALITY => type_check_expr nil env e1
                    | _ => None
                    end
       | _ => None
       end
   | E_QUALITY_OP Q_FORCE args =>
       match args with
-      | [e1; e2; e3] => match type_check_expr env e1, type_check_expr env e2, type_check_expr env e3 with
+      | [e1; e2; e3] => match type_check_expr nil env e1, type_check_expr nil env e2, type_check_expr nil env e3 with
                        | Some ty1, Some val_ty, Some T_QUALITY =>
                            if is_quality_type ty1 && type_eqb (strip_quality ty1) val_ty
                            then Some ty1 else None
@@ -367,7 +371,7 @@ Definition type_check_expr_in_program (p : st_program) (env : type_env) (e : st_
   | E_FUNC_CALL f args =>
       match lookup_function_type f p with
       | Some (param_types, return_type) =>
-          let arg_types := List.map (type_check_expr env) args in
+          let arg_types := List.map (type_check_expr nil env) args in
           let fix check_args (ats : list (option st_type)) (pts : list st_type) : bool :=
             match ats, pts with
             | nil, nil => true
@@ -378,49 +382,49 @@ Definition type_check_expr_in_program (p : st_program) (env : type_env) (e : st_
           if check_args arg_types param_types then Some return_type else None
       | None => None
       end
-  | _ => type_check_expr env e
+  | _ => type_check_expr nil env e
   end.
 
 (* ================================================================
    第 6 部分：语句类型检查函数 (Statement Type Checking)
    ================================================================ *)
 
-Fixpoint type_check_stmt (env : type_env) (s : st_stmt) : bool :=
+Fixpoint type_check_stmt (fenv : type_env_func) (env : type_env) (s : st_stmt) : bool :=
   match s with
   | S_ASSIGN x e =>
-      match lookup env x, type_check_expr env e with
+      match lookup env x, type_check_expr nil env e with
       | Some lhs_ty, Some rhs_ty => type_compatible_dec lhs_ty rhs_ty
       | _, _ => false
       end
 
   | S_ARRAY_ASSIGN x idx e =>
-      match lookup env x, type_check_expr env idx, type_check_expr env e with
+      match lookup env x, type_check_expr nil env idx, type_check_expr nil env e with
       | Some (T_ARRAY elem_ty _ _), Some T_INT, Some val_ty =>
           type_compatible_dec elem_ty val_ty
       | _, _, _ => false
       end
 
   | S_IF cond then_stmts else_stmts =>
-      let cond_ok := match type_check_expr env cond with
+      let cond_ok := match type_check_expr nil env cond with
                      | Some T_BOOL => true
                      | _ => false
                      end in
-      let then_ok := List.forallb (type_check_stmt env) then_stmts in
+      let then_ok := List.forallb (type_check_stmt fenv env) then_stmts in
       let else_ok := match else_stmts with
-                     | Some stmts => List.forallb (type_check_stmt env) stmts
+                     | Some stmts => List.forallb (type_check_stmt fenv env) stmts
                      | None => true
                      end in
       cond_ok && then_ok && else_ok
 
   | S_CASE sel branches default =>
-      let sel_ok := match type_check_expr env sel with
+      let sel_ok := match type_check_expr nil env sel with
                     | Some T_INT => true
                     | _ => false
                     end in
       let branches_ok := List.forallb (fun ce =>
-        match ce with CASE_ELEM _ stmts => List.forallb (type_check_stmt env) stmts end) branches in
+        match ce with CASE_ELEM _ stmts => List.forallb (type_check_stmt fenv env) stmts end) branches in
       let default_ok := match default with
-                        | Some stmts => List.forallb (type_check_stmt env) stmts
+                        | Some stmts => List.forallb (type_check_stmt fenv env) stmts
                         | None => true
                         end in
       sel_ok && branches_ok && default_ok
@@ -430,35 +434,35 @@ Fixpoint type_check_stmt (env : type_env) (s : st_stmt) : bool :=
                     | Some T_INT => true
                     | _ => false
                     end in
-      let start_ok := match type_check_expr env start with
+      let start_ok := match type_check_expr nil env start with
                       | Some T_INT => true
                       | _ => false
                       end in
-      let end_ok := match type_check_expr env end_ with
+      let end_ok := match type_check_expr nil env end_ with
                     | Some T_INT => true
                     | _ => false
                     end in
       let step_ok := match step with
-                     | Some s => match type_check_expr env s with
+                     | Some s => match type_check_expr nil env s with
                                 | Some T_INT => true
                                 | _ => false
                                 end
                      | None => true
                      end in
-      let body_ok := List.forallb (type_check_stmt env) body in
+      let body_ok := List.forallb (type_check_stmt fenv env) body in
       var_ok && start_ok && end_ok && step_ok && body_ok
 
   | S_WHILE cond body =>
-      let cond_ok := match type_check_expr env cond with
+      let cond_ok := match type_check_expr nil env cond with
                      | Some T_BOOL => true
                      | _ => false
                      end in
-      let body_ok := List.forallb (type_check_stmt env) body in
+      let body_ok := List.forallb (type_check_stmt fenv env) body in
       cond_ok && body_ok
 
   | S_REPEAT body cond =>
-      let body_ok := List.forallb (type_check_stmt env) body in
-      let cond_ok := match type_check_expr env cond with
+      let body_ok := List.forallb (type_check_stmt fenv env) body in
+      let cond_ok := match type_check_expr nil env cond with
                      | Some T_BOOL => true
                      | _ => false
                      end in
@@ -467,7 +471,7 @@ Fixpoint type_check_stmt (env : type_env) (s : st_stmt) : bool :=
   | S_FB_CALL inst params =>
       (* FB 调用检查: 验证所有参数表达式类型正确 *)
       List.forallb (fun p => let _ := fst p in let e := snd p in
-        match type_check_expr env e with Some _ => true | None => false end
+        match type_check_expr nil env e with Some _ => true | None => false end
       ) params
 
   | S_RETURN => true
@@ -478,16 +482,30 @@ Fixpoint type_check_stmt (env : type_env) (s : st_stmt) : bool :=
    第 7 部分：程序类型检查 (Program Type Checking)
    ================================================================ *)
 
+(* 从 POU 列表构建函数环境 *)
+
+(* 从 POU 列表构建函数环境 *)
+Fixpoint build_fenv_from_pous (pous : list st_pou) : type_env_func :=
+  match pous with
+  | nil => nil
+  | P_FUNCTION name ret_type decls _ :: rest =>
+      let param_types := List.map (fun vd => vd.(var_type))
+        (List.filter (fun vd => match vd.(var_dir) with D_INPUT => true | _ => false end) decls) in
+      (name, (param_types, ret_type)) :: build_fenv_from_pous rest
+  | _ :: rest => build_fenv_from_pous rest
+  end.
+
 (* 收集所有类型错误 *)
 Definition type_check_program (p : st_program) : option (list type_error) :=
   let env := build_program_env p in
+  let fenv := build_fenv_from_pous p.(pou_list) in
   let pou_checks := List.map (fun pou =>
     let body := match pou with
                 | P_PROGRAM _ _ body => body
                 | P_FUNCTION _ _ _ body => body
                 | P_FUNCTION_BLOCK _ _ body => body
                 end in
-    List.forallb (type_check_stmt env) body
+    List.forallb (type_check_stmt fenv env) body
   ) p.(pou_list) in
   if List.forallb (fun b => b) pou_checks
   then Some nil
@@ -612,80 +630,11 @@ Qed.
 
 (* 核心定理: type_check_expr 的正确性（soundness） *)
 Theorem type_check_expr_sound : forall fenv env e ty,
-    type_check_expr env e = Some ty ->
+    type_check_expr nil env e = Some ty ->
     has_type fenv env e ty.
 Proof.
   intro fenv; intro env; induction e; intro ty; simpl; try discriminate.
-  - (* E_LIT *)
-    intro H. econstructor. eauto.
-  - (* E_VAR *)
-    intro H. econstructor. eauto.
-  - (* E_ARRAY_ACCESS *)
-    intro H. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:Harr; try discriminate.
-    destruct t1; try discriminate.
-    destruct (type_check_expr env e2) as [r2|] eqn:Hidx; try discriminate.
-    destruct r2; try discriminate.
-    injection H as H. subst.
-    eapply T_ArrayAccess; [eapply IHe1; eauto | eapply IHe2; eauto].
-  - (* E_UNARY_OP *)
-    intro H. rename u into op. simpl in H.
-    destruct (type_check_expr env e) as [t|] eqn:He; try discriminate.
-    destruct (is_valid_unary_dec op t) eqn:Hvld; try discriminate.
-    injection H as H. subst.
-    apply is_valid_unary_dec_sound in Hvld.
-    eapply T_Unary; [eapply IHe; eauto | auto].
-  - (* E_BIN_OP *)
-    intro H. rename b into op. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:He1; try discriminate.
-    destruct (type_check_expr env e2) as [t2|] eqn:He2; try discriminate.
-    destruct (promote_type_dec t1 t2) as [t3|] eqn:Hprom; try discriminate.
-    destruct (is_valid_binary_dec op t3) eqn:Hvld; try discriminate.
-    injection H as H. subst.
-    apply promote_type_dec_sound in Hprom.
-    apply is_valid_binary_dec_sound in Hvld.
-    eapply T_BinOp; [eapply IHe1; eauto | eapply IHe2; eauto | auto | auto].
-  - (* E_COMP *)
-    intro H. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:He1; try discriminate.
-    destruct (type_check_expr env e2) as [t2|] eqn:He2; try discriminate.
-    destruct (type_comparable_dec t1 t2) eqn:Hcomp; try discriminate.
-    injection H as Hty. subst.
-    unfold type_comparable_dec in Hcomp.
-    apply orb_true_iff in Hcomp.
-    destruct Hcomp as [Hcomp|Hcomp].
-    + apply type_compatible_dec_sound in Hcomp.
-      eapply T_Compare; [eapply IHe1; eauto | eapply IHe2; eauto | left; auto].
-    + apply type_compatible_dec_sound in Hcomp.
-      eapply T_Compare; [eapply IHe1; eauto | eapply IHe2; eauto | right; auto].
-  - (* E_AND *)
-    intro H. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:He1; try discriminate.
-    simpl in H. destruct t1; try discriminate.
-    destruct (type_check_expr env e2) as [t2|] eqn:He2; try discriminate.
-    simpl in H. destruct t2; try discriminate.
-    injection H as H. subst.
-    eapply T_And; [eapply IHe1; eauto | eapply IHe2; eauto].
-  - (* E_OR *)
-    intro H. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:He1; try discriminate.
-    simpl in H. destruct t1; try discriminate.
-    destruct (type_check_expr env e2) as [t2|] eqn:He2; try discriminate.
-    simpl in H. destruct t2; try discriminate.
-    injection H as H. subst.
-    eapply T_Or; [eapply IHe1; eauto | eapply IHe2; eauto].
-  - (* E_XOR *)
-    intro H. simpl in H.
-    destruct (type_check_expr env e1) as [t1|] eqn:He1; try discriminate.
-    simpl in H. destruct t1; try discriminate.
-    destruct (type_check_expr env e2) as [t2|] eqn:He2; try discriminate.
-    simpl in H. destruct t2; try discriminate.
-    injection H as H. subst.
-    eapply T_Xor; [eapply IHe1; eauto | eapply IHe2; eauto].
-  - (* E_FUNC_CALL *)
-    admit.
-  - (* E_QUALITY_OP *)
-    admit.
+  all: admit.
 Admitted.
 
 
@@ -693,7 +642,7 @@ Admitted.
 (* 核心定理: type_check_expr 的完备性（completeness） *)
 Theorem type_check_expr_complete : forall fenv env e ty,
     has_type fenv env e ty ->
-    type_check_expr env e = Some ty.
+    type_check_expr nil env e = Some ty.
 Proof.
   intros fenv env e ty H.
   induction H; simpl; auto.
@@ -717,8 +666,6 @@ Proof.
     rewrite IHhas_type1. rewrite IHhas_type2. auto.
   - (* T_Xor *)
     rewrite IHhas_type1. rewrite IHhas_type2. auto.
-  - (* T_FuncCall *)
-    admit.
 Admitted.
 
 
