@@ -1360,25 +1360,41 @@ Fixpoint exec_instrs (st : runtime_state) (instrs : list sasm_instr) : option ru
    因此无法保证帧栈精确相等，只能保证长度不变。
    ================================================================ *)
 
-Lemma exec_instr_preserves_frame_count : forall (st : runtime_state) (i : sasm_instr) (st' : runtime_state),
+Lemma exec_instr_not_return_preserves_frame_count : forall (st : runtime_state) (i : sasm_instr) (st' : runtime_state),
     exec_instr st i = Some st' ->
+    i <> RETURN ->
     List.length st'.(rt_frames) = List.length st.(rt_frames).
 Proof.
-  (* 控制流指令（RETURN/BR/BR_IF/BLOCK/LOOP/CALL）会修改 rt_frames，
-     此引理仅对非控制流指令成立。完整证明见 Phase 2。 *)
-  admit.
-Admitted.
+  intros st i st' Hexec Hnotret.
+  destruct i; simpl in Hexec; try discriminate.
+  all: try (exfalso; apply Hnotret; reflexivity).
+  all: repeat match type of Hexec with
+    | context[match ?x with _ => _ end] =>
+        destruct x eqn:?; simpl in Hexec; try discriminate
+    | context[if ?x then _ else _] =>
+        destruct x eqn:?; simpl in Hexec; try discriminate
+    end;
+    inversion Hexec; subst; simpl; rewrite ?Heqf, ?Heq0, ?Heq1, ?Heq2, ?Heq3, ?Heq4; simpl; reflexivity.
+Qed.
 
 Lemma exec_instrs_preserves_frame_count : forall (st : runtime_state) (instrs : list sasm_instr) (st' : runtime_state),
     exec_instrs st instrs = Some st' ->
+    Forall (fun i => i <> RETURN) instrs ->
     List.length st'.(rt_frames) = List.length st.(rt_frames).
 Proof.
-  admit.
-Admitted.
+  intros st instrs st' Hexec Hno_ret.
+  revert st st' Hexec Hno_ret.
+  induction instrs as [|i instrs']; intros st st' Hexec Hno_ret; simpl in Hexec.
+  - inversion Hexec; reflexivity.
+  - inversion Hno_ret as [|? ? Hi_not_ret Hrest']; subst.
+    destruct (exec_instr st i) as [st1|] eqn:Hei; [|discriminate].
+    eapply IHinstrs' in Hexec; [|exact Hrest'].
+    eapply exec_instr_not_return_preserves_frame_count in Hei; [|exact Hi_not_ret].
+    rewrite Hei in Hexec; exact Hexec.
+Qed.
 
-(* 说明：上述引理对非控制流指令（运算/加载/存储等）成立，
-   对控制流指令（RETURN/BR/BR_IF/BLOCK/LOOP/CALL）因会修改 rt_frames 而不成立。
-   当前这些 case 用 admit 标记，待 Phase 2 完善。 *)
+(* 说明：exec_instrs_preserves_frame_count 要求序列中所有指令都不是 RETURN。
+   BLOCK/LOOP/BR/BR_IF 虽然操作块栈但不改变帧列表长度。 *)
 
 (* ================================================================
    第 7c 节：指令序列拼接引理
@@ -1452,13 +1468,75 @@ Qed.
    因此，这里保留一个可检查的保守引理：表达式编译不改变帧栈长度
    由 exec_instrs_preserves_frame_count 给出；完整值栈仿真将在环境关联不变式补齐后恢复。
 *)
+Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
+    Forall (fun i => i <> RETURN) (compile_expr env e).
+Proof.
+  intro env; induction e as [lit | x | e1 IHe1 e2 IHe2 | op e1 IHe | b e1 IHe1 e2 IHe2 | c e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | f args | q args]; simpl.
+  - (* CE_LIT *) destruct lit; repeat constructor; try congruence.
+  - (* CE_VAR *)
+    destruct (lookup_var_idx env x); repeat constructor; try congruence.
+  - (* CE_ARRAY_ACCESS *)
+    rewrite Forall_app; split; [apply IHe1 |].
+    rewrite Forall_app; split; [apply IHe2 |].
+    repeat constructor; try congruence.
+  - (* CE_UNARY_OP *)
+    destruct op; simpl.
+    + (* U_NEG *)
+      constructor; [try congruence |].
+      rewrite Forall_app; split; [apply IHe |].
+      repeat constructor; try congruence.
+    + (* U_NOT *)
+      rewrite Forall_app; split; [apply IHe |].
+      repeat constructor; try congruence.
+    + (* U_ABS *)
+      rewrite Forall_app; split; [apply IHe |].
+      repeat constructor; try congruence.
+  - (* CE_BIN_OP *)
+    destruct b; simpl;
+      rewrite Forall_app; split; try apply IHe1;
+      rewrite Forall_app; split; try apply IHe2;
+      repeat constructor; try congruence.
+  - (* CE_COMP *)
+    destruct c; simpl;
+      rewrite Forall_app; split; try apply IHe1;
+      rewrite Forall_app; split; try apply IHe2;
+      repeat constructor; try congruence.
+  - (* CE_AND *)
+    simpl; rewrite Forall_app; split; try apply IHe1;
+    rewrite Forall_app; split; try apply IHe2;
+    repeat constructor; try congruence.
+  - (* CE_OR *)
+    simpl; rewrite Forall_app; split; try apply IHe1;
+    rewrite Forall_app; split; try apply IHe2;
+    repeat constructor; try congruence.
+  - (* CE_XOR *)
+    simpl; rewrite Forall_app; split; try apply IHe1;
+    rewrite Forall_app; split; try apply IHe2;
+    repeat constructor; try congruence.
+  - (* CE_FUNC_CALL *)
+    simpl; repeat constructor; try congruence.
+  - (* CE_QUALITY_OP *)
+    admit.
+Abort.
+(* CE_QUALITY_OP 的 8 种情况需要分别处理：
+   Q_STATUS: destruct args + match lookup
+   Q_VALUE: Forall_concat; apply Forall_map
+   Q_GOOD/BAD/UNCERTAIN: rewrite Forall_app; [apply compile_quality_status_no_return|]
+   Q_SET: destruct args + match lookup
+   Q_WITH: destruct args + Forall_app
+   Q_FORCE: destruct args + Forall_app
+   当前使用 Admitted 作为占位符，编译通过后再补全。 *)
+Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
+    Forall (fun i => i <> RETURN) (compile_expr env e). Admitted.
+
 Lemma compile_expr_preserves_frame_count :
   forall (st0 st' : runtime_state) (env : compile_env) (e : corest_expr),
     exec_instrs st0 (compile_expr env e) = Some st' ->
     List.length st'.(rt_frames) = List.length st0.(rt_frames).
 Proof.
   intros st0 st' env e Hexec.
-  eapply exec_instrs_preserves_frame_count; eauto.
+  apply (exec_instrs_preserves_frame_count st0 (compile_expr env e) st' Hexec).
+  apply compile_expr_no_return.
 Qed.
 
 (* ================================================================
