@@ -143,18 +143,39 @@ SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/desugar.v src/analysis.v 
 EXTRACTION_DIR = extraction
 EXTRACTION_FILE = extraction/extraction.v
 
-coq:
-	@echo "  [ROQC] spec files..."
-	cd $(VSTAC_DIR) && for f in $(SPEC_FILES); do \
-		echo "    $$f"; $(ROQC) $(ROQCFLAGS) $$f || exit 1; \
-	done
-	@echo "  [ROQC] src files..."
-	cd $(VSTAC_DIR) && for f in $(SRC_FILES); do \
-		echo "    $$f"; $(ROQC) $(ROQCFLAGS) $$f || exit 1; \
-	done
-	@echo "  [ROQC] extraction..."
-	cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) $(EXTRACTION_FILE) || exit 1
-	@echo "  [ROQC] All files compiled successfully"
+# 编译后的 .vo 文件路径
+SPEC_VO = $(addprefix $(VSTAC_DIR)/, $(SPEC_FILES:.v=.vo))
+SRC_VO  = $(addprefix $(VSTAC_DIR)/, $(SRC_FILES:.v=.vo))
+EXTR_VO = $(addprefix $(VSTAC_DIR)/, $(EXTRACTION_FILE:.v=.vo))
+
+# 顶层目标：构建所有 .vo 文件
+coq: $(SPEC_VO) $(SRC_VO) $(EXTR_VO)
+
+# ── 泛型模式规则：.v → .vo ──
+$(VSTAC_DIR)/spec/%.vo: $(VSTAC_DIR)/spec/%.v
+	@echo "  [ROQC] $<"
+	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) spec/$*.v
+
+$(VSTAC_DIR)/src/%.vo: $(VSTAC_DIR)/src/%.v
+	@echo "  [ROQC] $<"
+	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) src/$*.v
+
+$(VSTAC_DIR)/extraction/%.vo: $(VSTAC_DIR)/extraction/%.v
+	@echo "  [ROQC] $<"
+	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) extraction/$*.v
+
+# ── 依赖关系 ──
+$(VSTAC_DIR)/spec/compiler_correctness.vo: $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/safest.vo
+
+$(VSTAC_DIR)/src/encoder.vo:       $(VSTAC_DIR)/spec/safeasm.vo
+$(VSTAC_DIR)/src/lexer.vo:         $(VSTAC_DIR)/spec/safest.vo
+$(VSTAC_DIR)/src/parser.vo:        $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/src/lexer.vo
+$(VSTAC_DIR)/src/desugar.vo:       $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/compiler_correctness.vo
+$(VSTAC_DIR)/src/analysis.vo:      $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/src/desugar.vo
+$(VSTAC_DIR)/src/typechecker.vo:   $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/compiler_correctness.vo
+$(VSTAC_DIR)/src/codegen.vo:       $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/compiler_correctness.vo $(VSTAC_DIR)/src/desugar.vo
+
+$(VSTAC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
 
 # ================================================================
 # Coq → OCaml Extraction
@@ -165,13 +186,13 @@ ROQC_EXTRACT = rocq extract
 # 提取 OCaml 代码
 extract: coq
 	@echo "  [EXTRACT] Extracting OCaml code..."
-	cd $(VSTAC_DIR) && $(ROQC) -Q spec vstac_spec -Q src vstac_src $(EXTRACTION_FILE) 2>&1
+	@cd $(VSTAC_DIR) && $(ROQC) -Q spec vstac_spec -Q src vstac_src $(EXTRACTION_FILE) 2>&1
 	@echo "  [EXTRACT] Extraction complete"
 
 # 编译提取后的 OCaml 可执行程序
 vstac: extract
 	@echo "  [OCAML] Compiling vstac executable..."
-	cd $(VSTAC_DIR)/$(EXTRACTION_DIR) && \
+	@cd $(VSTAC_DIR)/$(EXTRACTION_DIR) && \
 		ocamlfind ocamlopt -o vstac -package str -linkpkg \
 		extraction.ml vstac_main.ml 2>&1 || \
 		ocamlopt -o vstac str.cmxa extraction.ml vstac_main.ml 2>&1
