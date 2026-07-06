@@ -10,15 +10,15 @@
      lexer_complete: 所有合法 SafeST 源码都能被正确分词
    ================================================================ *)
 
-Require Import Stdlib.Strings.String.
-Require Import Stdlib.Arith.Arith.
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Bool.Bool.
-Require Import Stdlib.Strings.Ascii.
-Require Import Stdlib.Floats.Floats.
-Local Open Scope Z_scope.
+From Stdlib Require Import String.
+From Stdlib Require Import Arith.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import Bool.
+From Stdlib Require Import Ascii.
+From Stdlib Require Import Floats.
 Require Import Stdlib.Lists.List.
 Require Import vstac_spec.safest.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 Local Open Scope string_scope.

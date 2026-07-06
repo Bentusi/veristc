@@ -11,13 +11,13 @@
      6. Type Safety 定理: 良类型程序不会卡住
    ================================================================ *)
 
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Local Open Scope Z_scope.
-Require Import Stdlib.Bool.Bool.
-Require Import Stdlib.Strings.String.
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import Bool.
+From Stdlib Require Import String.
 Require Import vstac_spec.safest.
 Require Import vstac_spec.compiler_correctness.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 (* ================================================================

@@ -10,12 +10,12 @@
      parse_sound:       parse ts = Some p → 所有 token 被消耗
    ================================================================ *)
 
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Strings.String.
-Local Open Scope Z_scope.
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
 Require Import vstac_spec.safest.
 Require Import vstac_src.lexer.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 (* ================================================================

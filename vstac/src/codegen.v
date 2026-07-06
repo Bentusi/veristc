@@ -15,14 +15,14 @@
      - 所有值在值栈上传递
    ================================================================ *)
 
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Local Open Scope Z_scope.
-Require Import Stdlib.Strings.String.
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
 Require Import vstac_spec.safest.
 Require Import vstac_spec.safeasm.
 Require Import vstac_src.desugar.
 Require Import vstac_spec.compiler_correctness.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 (* ================================================================

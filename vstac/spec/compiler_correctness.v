@@ -6,11 +6,11 @@
    具体证明在 proofs/ 目录中逐步完成。
    ================================================================ *)
 
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.Bool.Bool.
-Require Import Stdlib.Floats.Floats.
-Require Import Stdlib.Strings.String.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import List.
+From Stdlib Require Import Bool.
+From Stdlib Require Import Floats.
+From Stdlib Require Import String.
 Local Open Scope Z_scope.
 Require Import vstac_spec.safest.
 Require Import vstac_spec.safeasm.

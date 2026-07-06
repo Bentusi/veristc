@@ -1,11 +1,18 @@
-(* vstac/src/desugar.v — SafeST → CoreST 脱糖 *)
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Strings.String.
-Require Import Stdlib.Floats.Floats.
-Local Open Scope Z_scope.
+(* 
+    vstac/src/desugar.v — SafeST → CoreST 脱糖
+    ================================================================
+    将 SafeST 程序转换为 CoreST 程序，去除语法
+    糖衣，保留语义。
+    ================================================================
+*)
+
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
+From Stdlib Require Import Floats.
 Require Import vstac_spec.safest.
 Require Import vstac_spec.compiler_correctness.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 Inductive corest_expr : Type :=

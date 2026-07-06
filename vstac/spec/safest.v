@@ -6,12 +6,12 @@
    所有定义与文档保持同步。
    ================================================================ *)
 
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Lists.List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import List.
+From Stdlib Require Import Floats.
+From Stdlib Require Import String.
+From Stdlib Require Import Bool.
 Local Open Scope Z_scope.
-Require Import Stdlib.Floats.Floats.
-Require Import Stdlib.Strings.String.
-Require Import Stdlib.Bool.Bool.
 Import ListNotations.
 
 (* ================================================================

@@ -17,13 +17,13 @@
    - 失败时附带错误信息字符串
   ================================================================ *)
 
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Strings.String.
-Local Open Scope Z_scope.
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
 Require Import vstac_spec.safeasm.
 Require Import vstac_spec.safest.
 Require Import vstac_src.desugar.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 (* ================================================================

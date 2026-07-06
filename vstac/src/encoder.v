@@ -15,13 +15,13 @@
    Section header: type(1) + length(4) + reserved(1) + flags(2) = 8 bytes
    ================================================================ *)
 
-Require Import Stdlib.Lists.List.
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Strings.String.
-Require Import Stdlib.Floats.Floats.
-Require Import Stdlib.Strings.Ascii.
-Local Open Scope Z_scope.
+From Stdlib Require Import List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
+From Stdlib Require Import Floats.
+From Stdlib Require Import Ascii.
 Require Import vstac_spec.safeasm.
+Local Open Scope Z_scope.
 Import ListNotations.
 
 (* ================================================================

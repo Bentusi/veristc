@@ -7,11 +7,11 @@
    编码方式：固定宽度编码（非 LEB128）
    ================================================================ *)
 
-Require Import Stdlib.ZArith.ZArith.
-Require Import Stdlib.Lists.List.
+From Stdlib Require Import ZArith.
+From Stdlib Require Import List.
+From Stdlib Require Import Floats.
+From Stdlib Require Import String.
 Local Open Scope Z_scope.
-Require Import Stdlib.Floats.Floats.
-Require Import Stdlib.Strings.String.
 Import ListNotations.
 
 (* ================================================================
