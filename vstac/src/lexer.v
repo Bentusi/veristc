@@ -10,8 +10,6 @@
      lexer_complete: 所有合法 SafeST 源码都能被正确分词
    ================================================================ *)
 
-Unset Guard Checking.
-
 Require Import Stdlib.Strings.String.
 Require Import Stdlib.Arith.Arith.
 Require Import Stdlib.ZArith.ZArith.
@@ -251,16 +249,22 @@ Fixpoint next_token (s : string) : option (token * string) :=
   end.
 
 (* 完整词法分析：将字符串转换为 token 列表 *)
-Fixpoint lex (s : string) : option (list token) :=
+Fixpoint lex_fuel (fuel : nat) (s : string) {struct fuel} : option (list token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
   match next_token s with
   | None => None
   | Some (TK_EOF, _) => Some (TK_EOF :: nil)
   | Some (tok, rest) =>
-      match lex rest with
+      match lex_fuel fuel' rest with
       | None => None
       | Some tokens => Some (tok :: tokens)
       end
+  end
   end.
+Definition lex (s : string) : option (list token) :=
+  lex_fuel (S (String.length s)) s.
 
 (* 辅助函数：将字符串转为 ascii 列表 *)
 Fixpoint string_to_list (s : string) : list ascii :=

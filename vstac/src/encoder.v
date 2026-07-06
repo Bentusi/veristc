@@ -24,8 +24,6 @@ Local Open Scope Z_scope.
 Require Import vstac_spec.safeasm.
 Import ListNotations.
 
-Unset Guard Checking.
-
 (* ================================================================
    第 1 部分：基本编码函数 (Fixed-width Encoding)
    ================================================================ *)

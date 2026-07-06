@@ -15,8 +15,6 @@
      - 所有值在值栈上传递
    ================================================================ *)
 
-Unset Guard Checking.
-
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.ZArith.ZArith.
 Local Open Scope Z_scope.
@@ -25,7 +23,6 @@ Require Import vstac_spec.safest.
 Require Import vstac_spec.safeasm.
 Require Import vstac_src.desugar.
 Require Import vstac_spec.compiler_correctness.
-Import ListNotations.
 Import ListNotations.
 
 (* ================================================================
@@ -161,6 +158,18 @@ Fixpoint instr_seq_size (instrs : list sasm_instr) : Z :=
    编译结果在值栈顶留下表达式的值。
    ================================================================ *)
 
+
+Definition compile_quality_status (env : compile_env) (args : list corest_expr) : list sasm_instr :=
+  match args with
+  | [CE_VAR x] =>
+      match lookup_var_idx env x with
+      | Some idx => [I32_CONST Q_BASE; I32_CONST idx; I32_ADD;
+                     I32_LOAD8_U {| mem_align := 2; mem_offset := 0 |}]
+      | None => [I32_CONST 0]
+      end
+  | _ => [I32_CONST 0]
+  end.
+
 Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sasm_instr :=
   match e with
   | CE_LIT l =>
@@ -263,11 +272,11 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
       List.concat (List.map (compile_expr env) args)
   | CE_QUALITY_OP Q_GOOD args =>
       (* Q_GOOD(x) = Q_STATUS(x) == 0 *)
-      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 0; I32_EQ]
+      compile_quality_status env args ++ [I32_CONST 0; I32_EQ]
   | CE_QUALITY_OP Q_BAD args =>
-      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 2; I32_EQ]
+      compile_quality_status env args ++ [I32_CONST 2; I32_EQ]
   | CE_QUALITY_OP Q_UNCERTAIN args =>
-      compile_expr env (CE_QUALITY_OP Q_STATUS args) ++ [I32_CONST 1; I32_EQ]
+      compile_quality_status env args ++ [I32_CONST 1; I32_EQ]
   | CE_QUALITY_OP Q_SET args =>
       (* Q_SET(x, q) = 写影子质量字节 mem[Q_BASE + idx] = q *)
       match args with
@@ -293,7 +302,9 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
           match lookup_var_idx env x with
           | Some idx =>
               compile_expr env v ++ [LOCAL_SET idx] ++
-              compile_expr env (CE_QUALITY_OP Q_SET [CE_VAR x; q])
+              compile_expr env q ++
+              [I32_CONST Q_BASE; I32_CONST idx; I32_ADD;
+               I32_STORE8 {| mem_align := 2; mem_offset := 0 |}]
           | None => [NOP]
           end
       | _ => [NOP]

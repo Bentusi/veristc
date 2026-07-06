@@ -1,5 +1,4 @@
 (* vstac/src/desugar.v — SafeST → CoreST 脱糖 *)
-Unset Guard Checking.
 Require Import Stdlib.Lists.List.
 Require Import Stdlib.ZArith.ZArith.
 Require Import Stdlib.Strings.String.
@@ -62,8 +61,11 @@ Fixpoint desugar_case_values_cond (sel : corest_expr) (values : list case_value)
     | CV_RANGE lo hi => CE_AND (CE_COMP C_LE (CE_LIT lo) sel) (CE_COMP C_LE sel (CE_LIT hi)) end in
     match rest with [] => c | _ => CE_OR c (desugar_case_values_cond sel rest) end end.
 
-Fixpoint desugar_stmt (s : st_stmt) : list corest_stmt :=
-  let ds := desugar_stmt in let de := desugar_expr in
+Fixpoint desugar_stmt_fuel (fuel : nat) (s : st_stmt) {struct fuel} : list corest_stmt :=
+  match fuel with
+  | O => []
+  | S fuel' =>
+  let ds := desugar_stmt_fuel fuel' in let de := desugar_expr in
   match s with
   | S_ASSIGN x e => [CS_ASSIGN x (de e)]
   | S_ARRAY_ASSIGN x idx e => [CS_ARRAY_ASSIGN x (de idx) (de e)]
@@ -93,7 +95,11 @@ Fixpoint desugar_stmt (s : st_stmt) : list corest_stmt :=
   | S_FB_CALL inst params =>
       [CS_FB_CALL inst (List.map (fun p : ident * st_expr => (fst p, de (snd p))) params)]
   | S_RETURN => [CS_RETURN] | S_EXIT => [CS_EXIT]
+  end
   end.
+
+Definition desugar_stmt (s : st_stmt) : list corest_stmt :=
+  desugar_stmt_fuel (S 1000) s.
 
 Definition desugar_pou (p : st_pou) : corest_function :=
   let body := match p with P_PROGRAM _ _ b => b | P_FUNCTION _ _ _ b => b | P_FUNCTION_BLOCK _ _ b => b end in

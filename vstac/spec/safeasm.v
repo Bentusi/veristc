@@ -14,8 +14,6 @@ Require Import Stdlib.Floats.Floats.
 Require Import Stdlib.Strings.String.
 Import ListNotations.
 
-Unset Guard Checking.
-
 (* ================================================================
    第 1 部分：值类型 (Value Types)
    ================================================================ *)
@@ -1141,9 +1139,12 @@ Record block_body_result : Type := {
    BR depth 语义（WASM 风格）：
    - depth = 0: 退出当前块，跳过块体剩余字节，返回 skip_depth=0
    - depth > 0: 退出当前块 + depth 层外层块，逐层跳过剩余字节 *)
-Fixpoint process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget : Z) {struct instrs}
+Fixpoint process_block_body_fuel (fuel : nat) (instrs : list sasm_instr) (ctrl_depth : Z) (budget : Z) {struct fuel}
   : option block_body_result :=
-  match instrs with
+    match fuel with
+    | O => None
+    | S fuel' =>
+    match instrs with
   | nil =>
     if budget =? 0 then Some {| body_rest := nil; body_skip_depth := 0 |}
     else None
@@ -1154,7 +1155,7 @@ Fixpoint process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget 
     else
     match instr with
     | BLOCK len =>
-        match process_block_body rest (ctrl_depth + 1) len with
+        match process_block_body_fuel fuel' rest (ctrl_depth + 1) len with
         | Some inner =>
             if 0 <? inner.(body_skip_depth) then
               let new_skip := inner.(body_skip_depth) - 1 in
@@ -1164,11 +1165,11 @@ Fixpoint process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget 
               | None => None
               end
             else
-              process_block_body inner.(body_rest) ctrl_depth remaining
+              process_block_body_fuel fuel' inner.(body_rest) ctrl_depth remaining
         | None => None
         end
     | LOOP len =>
-        match process_block_body rest (ctrl_depth + 1) len with
+        match process_block_body_fuel fuel' rest (ctrl_depth + 1) len with
         | Some inner =>
             if 0 <? inner.(body_skip_depth) then
               let new_skip := inner.(body_skip_depth) - 1 in
@@ -1178,7 +1179,7 @@ Fixpoint process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget 
               | None => None
               end
             else
-              process_block_body inner.(body_rest) ctrl_depth remaining
+              process_block_body_fuel fuel' inner.(body_rest) ctrl_depth remaining
         | None => None
         end
     | BR depth =>
@@ -1206,10 +1207,13 @@ Fixpoint process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget 
     | RETURN =>
         Some {| body_rest := rest; body_skip_depth := 0 |}
     | _ =>
-        process_block_body rest ctrl_depth remaining
+        process_block_body_fuel fuel' rest ctrl_depth remaining
     end
-  end.
+  end
+end.
 
+Definition process_block_body (instrs : list sasm_instr) (ctrl_depth : Z) (budget : Z) : option block_body_result :=
+  process_block_body_fuel (S (List.length instrs)) instrs ctrl_depth budget.
 (* 顶层函数体验证包装器。
    ctrl_depth=0（顶层无标签），budget=-1（无字节预算约束，消耗到末）。 *)
 Definition validate_function_body (f : sasm_function) : bool :=

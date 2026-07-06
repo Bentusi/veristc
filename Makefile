@@ -123,15 +123,15 @@ rtthread: $(VM_CORE_LIB) $(VM_IO_LIB)
 # Coq/Rocq 编译器
 # ================================================================
 
-# 自动检测 Rocq 标准库路径（如 rocq c 找不到 Stdlib 则尝试 COQLIB）
-COQC := rocq c
+# 自动检测 Rocq 标准库路径（如 /home/wei/.opam/default/bin/coqc 找不到 Stdlib 则尝试 COQLIB）
+COQC := /home/wei/.opam/default/bin/coqc
 ifndef COQLIB
 COQLIB := $(shell $(COQC) -where 2>/dev/null || echo "/usr/lib/rocq")
 endif
 
 VSTAC_DIR = vstac
 ROQC = $(COQC)
-ROQCFLAGS = -Q spec vstac_spec -Q src vstac_src -coqlib /usr/lib/ocaml/coq
+ROQCFLAGS = -Q spec vstac_spec -Q src vstac_src
 
 # Spec files (compile in order due to dependencies)
 SPEC_FILES = spec/safeasm.v spec/safest.v spec/compiler_correctness.v
