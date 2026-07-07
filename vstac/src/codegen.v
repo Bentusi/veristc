@@ -158,7 +158,6 @@ Fixpoint instr_seq_size (instrs : list sasm_instr) : Z :=
    编译结果在值栈顶留下表达式的值。
    ================================================================ *)
 
-
 Definition compile_quality_status (env : compile_env) (args : list corest_expr) : list sasm_instr :=
   match args with
   | [CE_VAR x] =>
@@ -1444,30 +1443,54 @@ Qed.
    且 st0 的值栈恰好是 extra，
    则执行后值栈变为 st_val_to_sasm_val v :: extra，
    且帧栈不变。
-   
-   这个引理比原始的 compile_expr_correct 更强：
-   - 支持从任意中间状态开始执行（extra 可以是任何已有值栈）
-   - 明确给出值栈的完整状态变化（不仅仅是栈顶匹配）
-   - 保证帧栈不变
    ================================================================ *)
+Lemma compile_quality_status_no_return : forall (env : compile_env) (args : list corest_expr),
+    Forall (fun i => i <> RETURN) (compile_quality_status env args).
+Proof.
+  intros env args.
+  destruct args as [|a [|]].
+  - (assert (H: compile_quality_status env [] = I32_CONST 0 :: nil)
+       by (unfold compile_quality_status; compute; reflexivity);
+     rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+  - destruct a as [lit | x | e1 e2 | op e | b e1 e2 | c e1 e2 | e1 e2 | e1 e2 | e1 e2 | f args' | q args''].
+    ** (assert (H: compile_quality_status env [CE_LIT lit] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** unfold compile_quality_status; destruct (lookup_var_idx env x) as [idx |];
+       simpl; repeat constructor; try congruence.
+    ** (assert (H: compile_quality_status env [CE_ARRAY_ACCESS e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_UNARY_OP op e] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_BIN_OP b e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_COMP c e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_AND e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_OR e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_XOR e1 e2] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_FUNC_CALL f args'] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+    ** (assert (H: compile_quality_status env [CE_QUALITY_OP q args''] = I32_CONST 0 :: nil)
+           by (unfold compile_quality_status; compute; reflexivity);
+        rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+  - (assert (H: compile_quality_status env (a :: c :: l) = I32_CONST 0 :: nil)
+       by (unfold compile_quality_status; destruct a; reflexivity);
+     rewrite H; apply Forall_cons; congruence || apply Forall_nil).
+Qed.
 
-(*
-   原来的 compile_expr_correct_stack 试图无条件证明所有表达式的完整仿真，
-   但该命题在当前模型下并不成立：
-   - compile_env 与 corest_eval_env 没有关联不变式，CE_VAR 不能保证 LOCAL_GET idx
-     读取到 lookup_var env_s x 的同一个值；
-   - 旧版 CE_FUNC_CALL 编译为 CALL，而本文件的轻量 exec_instr 尚未实现 CALL；
-   - 旧版 I32_DIV_S/I32_REM_S 在除零时返回 None，而 CoreST 求值把除零定义为 0。
 
-   本次修复已先让可执行语义与当前 CoreST 占位语义对齐（函数调用编译为 0，
-   除零产生 0）。
-   LOCAL_SET/LOCAL_TEE 通过 set_local 修改栈帧内容（如 U_ABS 使用 LOCAL_SET 255
-   暂存中间值），因此只能保证帧栈长度不变，无法保证精确相等。
-   变量正确性仍需要后续引入 compile_env_matches/env well-formedness 前提。
-
-   因此，这里保留一个可检查的保守引理：表达式编译不改变帧栈长度
-   由 exec_instrs_preserves_frame_count 给出；完整值栈仿真将在环境关联不变式补齐后恢复。
-*)
 Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
     Forall (fun i => i <> RETURN) (compile_expr env e).
 Proof.
@@ -1516,16 +1539,9 @@ Proof.
   - (* CE_FUNC_CALL *)
     simpl; repeat constructor; try congruence.
   - (* CE_QUALITY_OP *)
-    admit.
+    destruct q; simpl.
+    all: admit.
 Abort.
-(* CE_QUALITY_OP 的 8 种情况需要分别处理：
-   Q_STATUS: destruct args + match lookup
-   Q_VALUE: Forall_concat; apply Forall_map
-   Q_GOOD/BAD/UNCERTAIN: rewrite Forall_app; [apply compile_quality_status_no_return|]
-   Q_SET: destruct args + match lookup
-   Q_WITH: destruct args + Forall_app
-   Q_FORCE: destruct args + Forall_app
-   当前使用 Admitted 作为占位符，编译通过后再补全。 *)
 Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
     Forall (fun i => i <> RETURN) (compile_expr env e). Admitted.
 
