@@ -1,11 +1,11 @@
 (* ================================================================
-   vstac/extraction/vstac_main.ml
-   vstac 编译器命令行入口 — 提取后的 OCaml 代码
+   veristc/extraction/veristc_main.ml
+   veristc 编译器命令行入口 — 提取后的 OCaml 代码
    
    用法:
-     vstac compile input.st -o output.sasm
-     vstac compile input.st --dump > output.txt
-     vstac analyze input.st
+     veristc compile input.st -o output.sasm
+     veristc compile input.st --dump > output.txt
+     veristc analyze input.st
    ================================================================ *)
 
 (* 从 Coq Extraction 生成的模块 *)

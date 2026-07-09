@@ -1,0 +1,4 @@
+(rocq.theory
+ (name veristc_src)
+ (synopsis "VeriSTC source implementations")
+ (theories veristc_spec))

@@ -23,7 +23,7 @@
 ```
 ├─ 规则/约束编号格式：Sx.y（安全约束）、Tx.y（类型规则）、Lx.y（词法规则）
 ├─ EBNF 中 [...] 表示可选，{...} 表示重复零次或多次
-├─ Coq 引用以 `vstac/spec/safest.v` 中的定义名为准
+├─ Coq 引用以 `veristc/spec/safest.v` 中的定义名为准
 └─ 所有非规范性说明以"注："开头
 ```
 
@@ -31,7 +31,7 @@
 
 ## 1. 概述
 
-SafeST 是 IEC 61131-3 国际标准中 Structured Text (ST) 语言的一个**安全关键子集**。本规范定义它的词法结构、语法、类型系统和安全约束。所有 SafeST 程序均可由 vstac 编译器编译为 SafeASM 字节码，且编译正确性已在 Coq 中形式化证明。
+SafeST 是 IEC 61131-3 国际标准中 Structured Text (ST) 语言的一个**安全关键子集**。本规范定义它的词法结构、语法、类型系统和安全约束。所有 SafeST 程序均可由 VeriSTC 编译器编译为 SafeASM 字节码，且编译正确性已在 Coq 中形式化证明。
 
 ### 1.1 设计原则
 
@@ -60,12 +60,12 @@ SafeST 是 IEC 61131-3 第三版（IEC 61131-3:2013）Structured Text 语言的�
 
 #### 数据类型
 
-| IEC 61131-3 类型 | SafeST | 理由 |
+| IEC 61131-3 类型  | SafeST | 理由 |
 |------------------|--------|------|
-| BOOL | ✅ 包含 | 布尔逻辑最基础 |
-| BYTE | ✅ 包含 | I/O 字节操作 |
-| WORD | ✅ 包含 | 位操作、状态字 |
-| DWORD | ✅ 包含 | 32 位状态字 |
+| BOOL             | ✅ 包含 | 布尔逻辑最基础 |
+| BYTE             | ✅ 包含 | I/O 字节操作 |
+| WORD             | ✅ 包含 | 位操作、状态字 |
+| DWORD            | ✅ 包含 | 32 位状态字 |
 | SINT (signed 8-bit) | ✅ 包含 | 小型计数器 |
 | INT (signed 16-bit) | ✅ 包含 | 通用整数 |
 | DINT (signed 32-bit) | ✅ 包含 | 主计数器/累加器 |
@@ -634,7 +634,7 @@ QUALITY        ❌        ✅③   ✅
 
 ## 6. SafeST 操作语义 (Operational Semantics)
 
-SafeST 的操作语义采用**小步语义 (small-step semantics)** 定义，与 Coq 文件 `vstac/spec/compiler_correctness.v` 中的形式化定义一致。
+SafeST 的操作语义采用**小步语义 (small-step semantics)** 定义，与 Coq 文件 `veristc/spec/compiler_correctness.v` 中的形式化定义一致。
 
 ### 6.1 运行时状态
 
@@ -834,7 +834,7 @@ star_step_st(p, σ, σ')  :=  σ = σ'
 terminal_state(σ) := σ.call_stack = nil
 ```
 
-**注**：完整的形式化定义请参见 Coq 文件 `vstac/spec/compiler_correctness.v`。上述规则是其精确的数学表示。
+**注**：完整的形式化定义请参见 Coq 文件 `veristc/spec/compiler_correctness.v`。上述规则是其精确的数学表示。
 
 ---
 

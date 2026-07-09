@@ -1,9 +1,9 @@
 ---
 name: phase1-compiler-proofs
-description: 'Phase 1: implement vstac compiler passes with Coq correctness proofs. Use when: building compiler passes, writing Coq proofs, verifying type safety and semantics preservation.'
+description: 'Phase 1: implement VeriSTC compiler passes with Coq correctness proofs. Use when: building compiler passes, writing Coq proofs, verifying type safety and semantics preservation.'
 ---
 
-# Phase 1: vstac 编译器全量实现 + 形式化证明（第 5-16 周）
+# Phase 1: VeriSTC 编译器全量实现 + 形式化证明（第 5-16 周）
 
 ## 目标
 
@@ -13,11 +13,11 @@ description: 'Phase 1: implement vstac compiler passes with Coq correctness proo
 
 | 阶段 | 文件 | 实现内容 | 正确性定理 |
 |------|------|---------|-----------|
-| 1.1 | `vstac/src/typechecker.v` | 类型检查器 + 类型推理规则 | `type_safety` (progress + preservation) |
-| 1.2 | `vstac/src/desugar.v` | 脱糖（AST → CoreST IR） | `desugar_semantics_preservation` |
-| 1.3 | `vstac/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_simulation` **（核心定理）** |
-| 1.4 | `vstac/src/analysis.v` | 静态分析（WCET/循环上限/栈深度） | 无证明（工具性质） |
-| 1.5 | `vstac/extraction/` | Coq Extraction → OCaml 配置 | 无（工具链配置） |
+| 1.1 | `veristc/src/typechecker.v` | 类型检查器 + 类型推理规则 | `type_safety` (progress + preservation) |
+| 1.2 | `veristc/src/desugar.v` | 脱糖（AST → CoreST IR） | `desugar_semantics_preservation` |
+| 1.3 | `veristc/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_simulation` **（核心定理）** |
+| 1.4 | `veristc/src/analysis.v` | 静态分析（WCET/循环上限/栈深度） | 无证明（工具性质） |
+| 1.5 | `veristc/extraction/` | Coq Extraction → OCaml 配置 | 无（工具链配置） |
 
 **并行任务**（VM 端，与 1.1-1.5 同步）：
 - `vm/memory/`：静态安全内存容器实现

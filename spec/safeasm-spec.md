@@ -35,7 +35,7 @@ float64  : 8 字节，IEEE 754 双精度
 
 ## 1. 概述
 
-SafeASM 是一种自定义安全汇编字节码格式，作为 **vstac 编译器** 的输出目标和 **C 语言 SafeASM 虚拟机** 的输入。它参考 WASM 核心指令集做安全化剪裁和扩展，采用**固定宽度编码**以确保 WCET（最差执行时间）的确定性和形式化验证的可追溯性。
+SafeASM 是一种自定义安全汇编字节码格式，作为 **VeriSTC 编译器** 的输出目标和 **C 语言 SafeASM 虚拟机** 的输入。它参考 WASM 核心指令集做安全化剪裁和扩展，采用**固定宽度编码**以确保 WCET（最差执行时间）的确定性和形式化验证的可追溯性。
 
 ### 1.1 设计原则
 
@@ -518,7 +518,7 @@ SafeASM 虚拟机在以下情况触发**安全保护动作 (safety trap)**，立
 
 ### 5.6 小步语义的形式化定义（Coq 对应）
 
-SafeASM 的小步操作语义在 `vstac/spec/safeasm.v` 中用归纳关系定义：
+SafeASM 的小步操作语义在 `veristc/spec/safeasm.v` 中用归纳关系定义：
 
 ```
 Inductive step : sasm_module -> runtime_state -> runtime_state -> Prop :=

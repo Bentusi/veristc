@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/src/typechecker.v
+   veristc/src/typechecker.v
    SafeST 类型检查器 — 可判定类型检查 + Progress/Preservation 证明
    
    实现:
@@ -15,8 +15,8 @@ From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import Bool.
 From Stdlib Require Import String.
-Require Import vstac_spec.safest.
-Require Import vstac_spec.compiler_correctness.
+Require Import veristc_spec.safest.
+Require Import veristc_spec.compiler_correctness.
 Local Open Scope Z_scope.
 Import ListNotations.
 

@@ -1,4 +1,0 @@
-(rocq.theory
- (name vstac_src)
- (synopsis "vstac source implementations")
- (theories vstac_spec))

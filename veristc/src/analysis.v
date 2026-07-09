@@ -1,5 +1,5 @@
 (* ================================================================
-  vstac/src/analysis.v
+  veristc/src/analysis.v
   静态分析器 — WCET / 循环上限 / 栈深度 / 递归检查
  
   对 CoreST 程序（脱糖后）执行静态分析。
@@ -20,9 +20,9 @@
 From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
-Require Import vstac_spec.safeasm.
-Require Import vstac_spec.safest.
-Require Import vstac_src.desugar.
+Require Import veristc_spec.safeasm.
+Require Import veristc_spec.safest.
+Require Import veristc_src.desugar.
 Local Open Scope Z_scope.
 Import ListNotations.
 

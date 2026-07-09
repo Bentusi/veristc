@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/src/parser.v
+   veristc/src/parser.v
    SafeST 递归下降解析器 — Gallina 手写
    
    输入:  list token (由 lexer.v 产出)
@@ -13,8 +13,8 @@
 From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
-Require Import vstac_spec.safest.
-Require Import vstac_src.lexer.
+Require Import veristc_spec.safest.
+Require Import veristc_src.lexer.
 Local Open Scope Z_scope.
 Import ListNotations.
 

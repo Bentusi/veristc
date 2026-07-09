@@ -1,5 +1,5 @@
 (* 
-    vstac/src/desugar.v — SafeST → CoreST 脱糖
+    veristc/src/desugar.v — SafeST → CoreST 脱糖
     ================================================================
     将 SafeST 程序转换为 CoreST 程序，去除语法
     糖衣，保留语义。
@@ -10,8 +10,8 @@ From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
 From Stdlib Require Import Floats.
-Require Import vstac_spec.safest.
-Require Import vstac_spec.compiler_correctness.
+Require Import veristc_spec.safest.
+Require Import veristc_spec.compiler_correctness.
 Local Open Scope Z_scope.
 Import ListNotations.
 

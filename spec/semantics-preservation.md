@@ -1008,7 +1008,7 @@ ST:  VAR_INPUT  AI1 : QREAL; END_VAR
 
 ## 6. 抽象关系 R 的完整定义 (Abstraction Relation)
 
-抽象关系 `R(σ, τ)` 是编译正确性证明中最核心的定义。它在 Coq 文件 `vstac/spec/compiler_correctness.v` 中定义为：
+抽象关系 `R(σ, τ)` 是编译正确性证明中最核心的定义。它在 Coq 文件 `veristc/spec/compiler_correctness.v` 中定义为：
 
 ### 6.1 形式化定义
 

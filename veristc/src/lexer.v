@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/src/lexer.v
+   veristc/src/lexer.v
    SafeST 词法分析器 — Gallina 手写递归下降词法分析
    
    输入:  string (ST 源码)
@@ -17,7 +17,7 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Ascii.
 From Stdlib Require Import Floats.
 Require Import Stdlib.Lists.List.
-Require Import vstac_spec.safest.
+Require Import veristc_spec.safest.
 Local Open Scope Z_scope.
 Import ListNotations.
 

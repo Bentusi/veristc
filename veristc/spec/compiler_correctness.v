@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/spec/compiler_correctness.v
+   veristc/spec/compiler_correctness.v
    编译正确性定理声明 — CompCert-style Simulation Relation
    
    本文件声明了 SafeST → SafeASM 编译正确性的核心定理。
@@ -12,8 +12,8 @@ From Stdlib Require Import Bool.
 From Stdlib Require Import Floats.
 From Stdlib Require Import String.
 Local Open Scope Z_scope.
-Require Import vstac_spec.safest.
-Require Import vstac_spec.safeasm.
+Require Import veristc_spec.safest.
+Require Import veristc_spec.safeasm.
 Import ListNotations.
 
 (* ================================================================

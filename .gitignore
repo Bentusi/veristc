@@ -49,12 +49,12 @@ tests/vm-tests/test_minimal
 *.cma
 
 # 提取生成的 OCaml 代码（Coq Extraction 产出）
-vstac/extraction/*.ml
-vstac/extraction/*.mli
-!vstac/extraction/vstac_main.ml
+veristc/extraction/*.ml
+veristc/extraction/*.mli
+!veristc/extraction/veristc_main.ml
 
 # 编译后的可执行文件
-vstac/extraction/vstac
+veristc/extraction/veristc
 
 # Dune 构建缓存
 _build/

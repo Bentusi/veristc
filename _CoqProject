@@ -1,22 +1,22 @@
-# vstac _CoqProject — 用于 Proof General (Emacs/RocqIDE)
+# VeriSTC _CoqProject — 用于 Proof General (Emacs/RocqIDE)
 # 用法: 在 Emacs 中打开任意 .v 文件，PG 自动读取此文件
 
--Q vstac/spec vstac_spec
--Q vstac/src vstac_src
+-Q veristc/spec veristc_spec
+-Q veristc/src veristc_src
 
 # Spec 文件（按依赖顺序）
-vstac/spec/safeasm.v
-vstac/spec/safest.v
-vstac/spec/compiler_correctness.v
+veristc/spec/safeasm.v
+veristc/spec/safest.v
+veristc/spec/compiler_correctness.v
 
 # Src 文件（按依赖顺序）
-vstac/src/encoder.v
-vstac/src/lexer.v
-vstac/src/parser.v
-vstac/src/desugar.v
-vstac/src/analysis.v
-vstac/src/typechecker.v
-vstac/src/codegen.v
+veristc/src/encoder.v
+veristc/src/lexer.v
+veristc/src/parser.v
+veristc/src/desugar.v
+veristc/src/analysis.v
+veristc/src/typechecker.v
+veristc/src/codegen.v
 
 # Extraction 文件
-vstac/extraction/extraction.v
+veristc/extraction/extraction.v

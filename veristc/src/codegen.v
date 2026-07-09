@@ -1,14 +1,14 @@
 (* ================================================================
-   vstac/src/codegen.v
+   veristc/src/codegen.v
    CoreST → SafeASM 代码生成器 + 正确性证明
-   
+
    实现:
      1. compile_expr — CoreST 表达式 → SafeASM 指令序列
      2. compile_stmt — CoreST 语句 → SafeASM 指令序列
      3. compile_program — CoreST 程序 → SafeASM 模块
      4. 值栈模拟证明 — 表达式编译的正确性
      5. 语句模拟证明 — 基本语句编译的正确性
-   
+
    约定:
      - 变量映射: LOCAL_GET/LOCAL_SET idx
      - 控制流: BLOCK/LOOP/BR/BR_IF（结构化控制流）
@@ -18,16 +18,16 @@
 From Stdlib Require Import List.
 From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
-Require Import vstac_spec.safest.
-Require Import vstac_spec.safeasm.
-Require Import vstac_src.desugar.
-Require Import vstac_spec.compiler_correctness.
+Require Import veristc_spec.safest.
+Require Import veristc_spec.safeasm.
+Require Import veristc_src.desugar.
+Require Import veristc_spec.compiler_correctness.
 Local Open Scope Z_scope.
 Import ListNotations.
 
-(* ================================================================
+  (* ================================================================
    第 1 部分：编译环境 (Compilation Environment)
-   
+
    变量名 → 局部变量索引（后续可扩展为内存偏移）
    ================================================================ *)
 
@@ -96,7 +96,7 @@ Definition build_compile_env (f : corest_function) : compile_env :=
 
 (* ================================================================
    第 2 部分：指令编码尺寸计算
-   
+
    用于填充 BLOCK/LOOP 的 len 参数。
    ================================================================ *)
 
@@ -120,7 +120,7 @@ Definition instr_size (i : sasm_instr) : Z :=
   | I32_WRAP_I64 | I64_EXTEND_I32_S => 1
   | I32_TRUNC_F32_S | I32_TRUNC_F64_S => 1
   | F32_CONVERT_I32_S | F64_CONVERT_I32_S => 1
-  
+
   (* 1 字节操作码 + 4 字节立即数 *)
   | BLOCK _ | LOOP _ => 5
   | BR _ | BR_IF _ => 5
@@ -128,15 +128,15 @@ Definition instr_size (i : sasm_instr) : Z :=
   | LOCAL_GET _ | LOCAL_SET _ | LOCAL_TEE _ => 5
   | I32_CONST _ => 5
   | I64_CONST _ => 9  (* 1 + 8 *)
-  
+
   (* 浮点常量 *)
   | F32_CONST _ => 5   (* 1 + 4 *)
   | F64_CONST _ => 9   (* 1 + 8 *)
-  
+
   (* 内存操作: 1 + 4 (memory_arg) *)
   | I32_LOAD _ | I64_LOAD _ | F32_LOAD _ | F64_LOAD _ | I32_LOAD8_U _ => 5
   | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ | I32_STORE8 _ => 5
-  
+
   (* 安全扩展 *)
   | SAFE_ASSERT (ASSERT_CYCLE_LIMIT _) => 6    (* 1+1+4 *)
   | SAFE_ASSERT (ASSERT_STACK_DEPTH _) => 6
@@ -153,7 +153,7 @@ Fixpoint instr_seq_size (instrs : list sasm_instr) : Z :=
 
 (* ================================================================
    第 3 部分：表达式编译 (Expression Compilation)
-   
+
    将 CoreST 表达式编译为 SafeASM 指令序列。
    编译结果在值栈顶留下表达式的值。
    ================================================================ *)
@@ -396,7 +396,7 @@ Fixpoint compile_expr_typed (env : compile_env) (env_ty : compile_type_env) (ty 
 
 (* ================================================================
    第 4 部分：语句编译 (Statement Compilation)
-   
+
    将 CoreST 语句编译为 SafeASM 指令序列。
    使用 BLOCK/LOOP/BR/BR_IF 实现结构化控制流。
    ================================================================ *)
@@ -602,7 +602,7 @@ Definition compile_program (p : corest_program) : sasm_module :=
 
 (* ================================================================
    第 7 部分：SafeASM 指令执行模拟 (Instruction Simulation)
-   
+
    定义 compile_expr 生成的指令序列对 SafeASM 运行时状态的影响。
    ================================================================ *)
 
@@ -1353,7 +1353,7 @@ Fixpoint exec_instrs (st : runtime_state) (instrs : list sasm_instr) : option ru
 
 (* ================================================================
    第 7b 节：帧栈长度不变引理
-   
+
    compile_expr 生成的指令序列不改变帧栈长度（仅操作值栈）。
    注意：LOCAL_SET/LOCAL_TEE 会通过 set_local 修改栈帧内容，
    因此无法保证帧栈精确相等，只能保证长度不变。
@@ -1436,7 +1436,7 @@ Qed.
 
 (* ================================================================
    第 7d 节：通用栈引理 — compile_expr_correct_stack
-   
+
    corest_eval_expr env_s e = Some v →
    从任意初始状态 st0 执行 compile_expr env e，
    只要 st0 的帧栈与 build_sasm_state env_s 一致，
@@ -1494,56 +1494,76 @@ Qed.
 Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
     Forall (fun i => i <> RETURN) (compile_expr env e).
 Proof.
-  intro env; induction e as [lit | x | e1 IHe1 e2 IHe2 | op e1 IHe | b e1 IHe1 e2 IHe2 | c e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | f args | q args]; simpl.
-  - (* CE_LIT *) destruct lit; repeat constructor; try congruence.
+      intro env.
+      fix IH 1.                    (* ← 递归假设 IH，可作用于任意更小的 corest_expr *)
+      intro e.
+      destruct e as [lit | x | e1 e2 | op e1 | b e1 e2 | c e1 e2 | e1 e2 | e1 e2 | e1 e2 | f args | q args]; simpl.
+      - (* CE_LIT *)
+    destruct lit; repeat constructor; try congruence.
   - (* CE_VAR *)
     destruct (lookup_var_idx env x); repeat constructor; try congruence.
   - (* CE_ARRAY_ACCESS *)
-    rewrite Forall_app; split; [apply IHe1 |].
-    rewrite Forall_app; split; [apply IHe2 |].
+    rewrite Forall_app; split; [apply IH |].
+    rewrite Forall_app; split; [apply IH |].
     repeat constructor; try congruence.
   - (* CE_UNARY_OP *)
     destruct op; simpl.
     + (* U_NEG *)
       constructor; [try congruence |].
-      rewrite Forall_app; split; [apply IHe |].
+      rewrite Forall_app; split; [apply IH |].
       repeat constructor; try congruence.
     + (* U_NOT *)
-      rewrite Forall_app; split; [apply IHe |].
+      rewrite Forall_app; split; [apply IH |].
       repeat constructor; try congruence.
     + (* U_ABS *)
-      rewrite Forall_app; split; [apply IHe |].
+      rewrite Forall_app; split; [apply IH |].
       repeat constructor; try congruence.
   - (* CE_BIN_OP *)
     destruct b; simpl;
-      rewrite Forall_app; split; try apply IHe1;
-      rewrite Forall_app; split; try apply IHe2;
+      rewrite Forall_app; split; try apply IH;
+      rewrite Forall_app; split; try apply IH;
       repeat constructor; try congruence.
   - (* CE_COMP *)
     destruct c; simpl;
-      rewrite Forall_app; split; try apply IHe1;
-      rewrite Forall_app; split; try apply IHe2;
+      rewrite Forall_app; split; try apply IH;
+      rewrite Forall_app; split; try apply IH;
       repeat constructor; try congruence.
   - (* CE_AND *)
-    simpl; rewrite Forall_app; split; try apply IHe1;
-    rewrite Forall_app; split; try apply IHe2;
+    simpl; rewrite Forall_app; split; try apply IH;
+    rewrite Forall_app; split; try apply IH;
     repeat constructor; try congruence.
   - (* CE_OR *)
-    simpl; rewrite Forall_app; split; try apply IHe1;
-    rewrite Forall_app; split; try apply IHe2;
+    simpl; rewrite Forall_app; split; try apply IH;
+    rewrite Forall_app; split; try apply IH;
     repeat constructor; try congruence.
   - (* CE_XOR *)
-    simpl; rewrite Forall_app; split; try apply IHe1;
-    rewrite Forall_app; split; try apply IHe2;
+    simpl; rewrite Forall_app; split; try apply IH;
+    rewrite Forall_app; split; try apply IH;
     repeat constructor; try congruence.
   - (* CE_FUNC_CALL *)
     simpl; repeat constructor; try congruence.
   - (* CE_QUALITY_OP *)
     destruct q; simpl.
-    all: admit.
-Abort.
-Lemma compile_expr_no_return : forall (env : compile_env) (e : corest_expr),
-    Forall (fun i => i <> RETURN) (compile_expr env e). Admitted.
+    -- (* Q_STATUS *)
+      apply compile_quality_status_no_return.
+    -- (* Q_VALUE *)
+      induction args as [|a l IHl]; simpl.
+      +++ repeat constructor; try congruence.
+      +++ rewrite Forall_app; split; [apply IH; exact a | exact IHl].
+    -- (* Q_GOOD *)
+      rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
+    -- (* Q_BAD *)
+      rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
+    -- (* Q_UNCERTAIN *)
+      rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
+    -- admit. (* 其他质量操作的情况可以类似处理 *)
+Admitted.
+
+(* ================================================================
+   第 7e 节：compile_expr_preserves_frame_count
+
+   compile_expr 生成的指令序列执行后，帧栈长度不变。
+   ================================================================ *)
 
 Lemma compile_expr_preserves_frame_count :
   forall (st0 st' : runtime_state) (env : compile_env) (e : corest_expr),
@@ -1557,7 +1577,7 @@ Qed.
 
 (* ================================================================
    第 7e 节：compile_expr_correct — 原始引理（栈引理的特例）
-   
+
    compile_expr_correct_stack 在 extra = [] 时的特例。
    ================================================================ *)
 
@@ -1597,19 +1617,19 @@ Admitted.
 
 (* ================================================================
    第 8 部分：语句模拟引理 (Statement Simulation)
-   
+
    核心引理: compile_stmt 生成的指令序列
    正确实现 CoreST 语句的语义。
    ================================================================ *)
 
 (*
    引理 2: compile_stmt 控制流模拟
-   
+
    对于任何 CoreST 语句 s，
    如果 s 在 CoreST 语义下从状态 cs1 执行到 cs2，
    那么 compile_stmt env s 对应的 SafeASM 指令序列
    从匹配的 ASM 状态执行到对应的状态。
-   
+
    这是 Simulation Relation 的核心。
 *)
 Lemma compile_stmt_correct : forall (env : compile_env) (env_ty : compile_type_env) (s : corest_stmt),
@@ -1630,7 +1650,7 @@ Theorem codegen_correct :
       对于任意输入，
       编译生成的 SafeASM 模块 M 执行结果
       等于 CoreST 程序 P 的原语义。
-      
+
       完整表述: 存在 Simulation Relation R 使得
       R(corest_state, runtime_state) ∧ step_cs → multi_step_sasm
     *)

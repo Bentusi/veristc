@@ -1,6 +1,6 @@
-# vstac 项目指南
+# VeriSTC 项目指南
 
-vstac = **V**erified **ST** to **A**ssembly **C**ompiler
+VeriSTC = **V**erified **ST** to **A**ssembly **C**ompiler
 
 将 IEC 61131-3 Structured Text (ST) 编译为 SafeASM 字节码（`.sasm`），配套 C 语言实现的 SafeASM 虚拟机，用于安全级仪控设备。
 
@@ -19,7 +19,7 @@ st2wa/
 │   ├── safest-spec.md
 │   ├── safeasm-spec.md
 │   └── semantics-preservation.md
-├── vstac/                       ← Coq 编译器（实现+证明）
+├── veristc/                       ← Coq 编译器（实现+证明）
 │   ├── spec/                       Coq 规范定义
 │   ├── src/                       Coq 实现（每文件含证明）
 │   └── extraction/                Extraction → OCaml 配置
@@ -33,7 +33,7 @@ st2wa/
 
 方案 A — 独立工具链（编译·运行解耦）：
 
-- **上位机（IDE 侧）**：vstac 编译器（Coq 实现，Extraction 为 OCaml）
+- **上位机（IDE 侧）**：VeriSTC 编译器（Coq 实现，Extraction 为 OCaml）
   - 输入：`.st`（IEC 61131-3 Structured Text）
   - 输出：`.sasm`（SafeASM 二进制）+ `.iomap`（I/O 配置表）
 - **下位机（运行站）**：C 语言 SafeASM 虚拟机
@@ -46,7 +46,7 @@ st2wa/
 | Phase | 周期 | 内容 | 前置依赖 |
 |-------|------|------|---------|
 | 0 | 第 1-4 周 | 顶层 Spec 定义 + 项目骨架 | 无 |
-| 1 | 第 5-16 周 | vstac 编译器全量实现 + 形式化证明 | Phase 0 |
+| 1 | 第 5-16 周 | VeriSTC 编译器全量实现 + 形式化证明 | Phase 0 |
 | 2 | 第 17-20 周 | I/O 集成 + RTOS 适配 | Phase 1 |
 | 3 | 第 21-25 周 | 双机热备 + 增量下装 | Phase 1 |
 | 4 | 第 26-29 周 | 工程化完善（测试+文档） | Phase 1-3 |
@@ -79,4 +79,4 @@ st2wa/
 - `tests/st-examples/`：ST 示例程序
 - `tests/sasm-examples/`：预编译的 SafeASM 二进制
 - `tests/vm-tests/`：C VM 单元测试（Unity/CMock 框架）
-- `tests/vstac-tests/`：编译器集成测试
+- `tests/veristc-tests/`：编译器集成测试

@@ -1,4 +1,4 @@
-# Makefile — vstac 项目构建
+# Makefile — veristc 项目构建
 # 编译器 (Coq) + 虚拟机 (C)
 
 CC = gcc
@@ -129,9 +129,9 @@ ifndef COQLIB
 COQLIB := $(shell $(COQC) -where 2>/dev/null || echo "/usr/lib/rocq")
 endif
 
-VSTAC_DIR = vstac
+VERISTC_DIR = veristc
 ROQC = $(COQC)
-ROQCFLAGS = -Q spec vstac_spec -Q src vstac_src
+ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 
 # Spec files (compile in order due to dependencies)
 SPEC_FILES = spec/safeasm.v spec/safest.v spec/compiler_correctness.v
@@ -144,38 +144,38 @@ EXTRACTION_DIR = extraction
 EXTRACTION_FILE = extraction/extraction.v
 
 # 编译后的 .vo 文件路径
-SPEC_VO = $(addprefix $(VSTAC_DIR)/, $(SPEC_FILES:.v=.vo))
-SRC_VO  = $(addprefix $(VSTAC_DIR)/, $(SRC_FILES:.v=.vo))
-EXTR_VO = $(addprefix $(VSTAC_DIR)/, $(EXTRACTION_FILE:.v=.vo))
+SPEC_VO = $(addprefix $(VERISTC_DIR)/, $(SPEC_FILES:.v=.vo))
+SRC_VO  = $(addprefix $(VERISTC_DIR)/, $(SRC_FILES:.v=.vo))
+EXTR_VO = $(addprefix $(VERISTC_DIR)/, $(EXTRACTION_FILE:.v=.vo))
 
 # 顶层目标：构建所有 .vo 文件
 coq: $(SPEC_VO) $(SRC_VO) $(EXTR_VO)
 
 # ── 泛型模式规则：.v → .vo ──
-$(VSTAC_DIR)/spec/%.vo: $(VSTAC_DIR)/spec/%.v
+$(VERISTC_DIR)/spec/%.vo: $(VERISTC_DIR)/spec/%.v
 	@echo "  [ROQC] $<"
-	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) spec/$*.v
+	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) spec/$*.v
 
-$(VSTAC_DIR)/src/%.vo: $(VSTAC_DIR)/src/%.v
+$(VERISTC_DIR)/src/%.vo: $(VERISTC_DIR)/src/%.v
 	@echo "  [ROQC] $<"
-	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) src/$*.v
+	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) src/$*.v
 
-$(VSTAC_DIR)/extraction/%.vo: $(VSTAC_DIR)/extraction/%.v
+$(VERISTC_DIR)/extraction/%.vo: $(VERISTC_DIR)/extraction/%.v
 	@echo "  [ROQC] $<"
-	@cd $(VSTAC_DIR) && $(ROQC) $(ROQCFLAGS) extraction/$*.v
+	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) extraction/$*.v
 
 # ── 依赖关系 ──
-$(VSTAC_DIR)/spec/compiler_correctness.vo: $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/safest.vo
+$(VERISTC_DIR)/spec/compiler_correctness.vo: $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo
 
-$(VSTAC_DIR)/src/encoder.vo:       $(VSTAC_DIR)/spec/safeasm.vo
-$(VSTAC_DIR)/src/lexer.vo:         $(VSTAC_DIR)/spec/safest.vo
-$(VSTAC_DIR)/src/parser.vo:        $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/src/lexer.vo
-$(VSTAC_DIR)/src/desugar.vo:       $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/compiler_correctness.vo
-$(VSTAC_DIR)/src/analysis.vo:      $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/src/desugar.vo
-$(VSTAC_DIR)/src/typechecker.vo:   $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/compiler_correctness.vo
-$(VSTAC_DIR)/src/codegen.vo:       $(VSTAC_DIR)/spec/safest.vo $(VSTAC_DIR)/spec/safeasm.vo $(VSTAC_DIR)/spec/compiler_correctness.vo $(VSTAC_DIR)/src/desugar.vo
+$(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
+$(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo
+$(VERISTC_DIR)/src/parser.vo:        $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/lexer.vo
+$(VERISTC_DIR)/src/desugar.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/compiler_correctness.vo
+$(VERISTC_DIR)/src/analysis.vo:      $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/desugar.vo
+$(VERISTC_DIR)/src/typechecker.vo:   $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/compiler_correctness.vo
+$(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/compiler_correctness.vo $(VERISTC_DIR)/src/desugar.vo
 
-$(VSTAC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
+$(VERISTC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
 
 # ================================================================
 # Coq → OCaml Extraction
@@ -186,17 +186,17 @@ ROQC_EXTRACT = rocq extract
 # 提取 OCaml 代码
 extract: coq
 	@echo "  [EXTRACT] Extracting OCaml code..."
-	@cd $(VSTAC_DIR) && $(ROQC) -Q spec vstac_spec -Q src vstac_src $(EXTRACTION_FILE) 2>&1
+	@cd $(VERISTC_DIR) && $(ROQC) -Q spec veristc_spec -Q src veristc_src $(EXTRACTION_FILE) 2>&1
 	@echo "  [EXTRACT] Extraction complete"
 
 # 编译提取后的 OCaml 可执行程序
-vstac: extract
-	@echo "  [OCAML] Compiling vstac executable..."
-	@cd $(VSTAC_DIR)/$(EXTRACTION_DIR) && \
-		ocamlfind ocamlopt -o vstac -package str -linkpkg \
-		extraction.ml vstac_main.ml 2>&1 || \
-		ocamlopt -o vstac str.cmxa extraction.ml vstac_main.ml 2>&1
-	@echo "  [OCAML] vstac executable built: $(VSTAC_DIR)/$(EXTRACTION_DIR)/vstac"
+veristc: extract
+	@echo "  [OCAML] Compiling veristc executable..."
+	@cd $(VERISTC_DIR)/$(EXTRACTION_DIR) && \
+		ocamlfind ocamlopt -o veristc -package str -linkpkg \
+		extraction.ml veristc_main.ml 2>&1 || \
+		ocamlopt -o veristc str.cmxa extraction.ml veristc_main.ml 2>&1
+	@echo "  [OCAML] veristc executable built: $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc"
 
 # ================================================================
 # 清理
@@ -211,8 +211,8 @@ clean:
 	rm -f $(RTTHREAD_OBJS) $(RTTHREAD_BIN)
 	find . -name '*.o' -delete
 
-	rm -f vstac/spec/*.vo vstac/spec/*.glob vstac/src/*.vo vstac/src/*.glob vstac/*.vo vstac/*.glob
-	rm -f vstac/spec/*.vos vstac/spec/*.vok vstac/src/*.vos vstac/src/*.vok
-	rm -f vstac/extraction/extraction.ml vstac/extraction/extraction.cm*
-	rm -f vstac/extraction/vstac vstac/extraction/vstac_main.cm*
-	cd vstac && dune clean 2>/dev/null || true
+	rm -f veristc/spec/*.vo veristc/spec/*.glob veristc/src/*.vo veristc/src/*.glob veristc/*.vo veristc/*.glob
+	rm -f veristc/spec/*.vos veristc/spec/*.vok veristc/src/*.vos veristc/src/*.vok
+	rm -f veristc/extraction/extraction.ml veristc/extraction/extraction.cm*
+	rm -f veristc/extraction/veristc veristc/extraction/veristc_main.cm*
+	cd veristc && dune clean 2>/dev/null || true

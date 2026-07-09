@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/spec/safest.v
+   veristc/spec/safest.v
    SafeST — IEC 61131-3 Structured Text 安全子集 Coq 形式化定义
    
    本文件是 spec/safest-spec.md 的 Coq 形式化镜像。

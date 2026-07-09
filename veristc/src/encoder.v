@@ -1,9 +1,9 @@
 (* ================================================================
-   vstac/src/encoder.v
+   veristc/src/encoder.v
    SafeASM 二进制编码器 — v1.1 full encoder
 
    Usage (after OCaml extraction):
-     vstac compile input.st -o output.sasm
+     VeriSTC compile input.st -o output.sasm
 
    Binary format (matching vm/loader.c):
      [Magic]     "SASM"             4 bytes
@@ -20,7 +20,7 @@ From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
 From Stdlib Require Import Floats.
 From Stdlib Require Import Ascii.
-Require Import vstac_spec.safeasm.
+Require Import veristc_spec.safeasm.
 Local Open Scope Z_scope.
 Import ListNotations.
 

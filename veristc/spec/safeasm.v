@@ -1,5 +1,5 @@
 (* ================================================================
-   vstac/spec/safeasm.v
+   veristc/spec/safeasm.v
    SafeASM — 安全汇编字节码 Coq 形式化定义
    
    本文件是 spec/safeasm-spec.md 的 Coq 形式化镜像。

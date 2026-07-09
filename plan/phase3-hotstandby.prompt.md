@@ -16,7 +16,7 @@ description: 'Phase 3: implement dual-machine hot standby, incremental download,
 | 状态快照引擎 | `vm/hotstandby/snapshot.c` | 序列化 WASM 线性内存 + 全局变量 + PC |
 | 同步通信协议 | `vm/hotstandby/sync.c` | 共享内存/TCP 同步通道 |
 | 主备状态机 | `vm/hotstandby/state_machine.c` | 故障检测 + 角色切换 |
-| 增量补丁引擎（编译器端） | `vstac/src/codegen.v`（扩展） | 新旧 `.sasm` 差异计算 |
+| 增量补丁引擎（编译器端） | `veristc/src/codegen.v`（扩展） | 新旧 `.sasm` 差异计算 |
 | 增量下装模块 | `vm/hotstandby/download.c` | 周期边界原子切换 + 回滚 |
 
 ## 实现流程

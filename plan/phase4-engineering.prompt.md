@@ -13,7 +13,7 @@ description: 'Phase 4: engineering polish — testing, documentation, performanc
 
 | 产出物 | 路径 | 内容 |
 |--------|------|------|
-| WCET 分析工具 | `vstac/src/analysis.v`（完善） | 编译器端 WCET 静态分析 |
+| WCET 分析工具 | `veristc/src/analysis.v`（完善） | 编译器端 WCET 静态分析 |
 | 安全性测试套件 | `tests/` | 单元测试 + fuzz + 边界测试 + 故障注入 |
 | 性能评测报告 | `docs/performance.md` | 解释器性能数据 + 优化建议 |
 | 用户手册 | `docs/user-guide.md` | API 文档 + 使用示例 |
