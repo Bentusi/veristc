@@ -1,13 +1,13 @@
 # VeriSTC 项目指南
 
-VeriSTC = **V**erified **ST** to **A**ssembly **C**ompiler
+VeriSTC = **Veri**fied **ST** **C**ompiler
 
 将 IEC 61131-3 Structured Text (ST) 编译为 SafeASM 字节码（`.sasm`），配套 C 语言实现的 SafeASM 虚拟机，用于安全级仪控设备。
 
 ## 项目结构
 
 ```
-st2wa/
+veristc/
 ├── AGENTS.md                     ← 本文件，项目级指引
 ├── plan/                         ← Phase 描述文件（见下方导航）
 │   ├── phase0-spec-skeleton.prompt.md
