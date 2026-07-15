@@ -526,12 +526,20 @@ Definition read_sasm_mem (s : runtime_state) (offset : Z) : option sasm_value :=
    由编译器在编译期决定（codegen.v: build_compile_env） *)
 Parameter var_to_sasm_offset : ident -> Z.
 
+(* 质量影子区基址（由编译器在编译期决定，codegen.v 中定义为 256）
+   每个 Q*类型变量在 SEG_QUALITY 段中占用 1 字节质量码 *)
+Parameter Q_BASE : Z.
+
+(* 变量名到质量影子区索引的映射（由编译器在编译期决定） *)
+Parameter var_to_quality_idx : ident -> Z.
+
 (* 抽象关系: R(st_state, runtime_state)
    
    R(s, t) 当且仅当:
    1. 每个 ST 变量的值 = SafeASM 内存中对应偏移处的值
-   2. 当前执行位置对应（ST 的 POU = ASM 的 func_idx）
-   3. 类型兼容
+   2. 每个 Q*类型变量的质量码 = SafeASM 影子质量区中对应偏移处的字节值 (v1.1)
+   3. 当前执行位置对应（ST 的 POU = ASM 的 func_idx）
+   4. 调用栈深度一致
    
    这是整个验证中最关键的定义——它决定了什么是"编译正确"。 *)
 Definition abstraction_relation (st_st : st_state) (asm_st : runtime_state) : Prop :=
@@ -546,21 +554,33 @@ Definition abstraction_relation (st_st : st_state) (asm_st : runtime_state) : Pr
        | f :: _ => List.nth_error f.(frame_locals) (Z.to_nat idx) = Some frame_val
        end) /\
       st_val_to_sasm v = frame_val) /\
-  
-  (* 条件 2: 执行位置一致（取帧栈顶帧的函数索引） *)
+
+  (* 条件 2: 质量一致性
+     ST 中每个 Q*类型变量的质量码等于 SafeASM 影子质量区中对应偏移处的字节值。
+     质量影子区位于线性内存 [Q_BASE, Q_BASE + MAX_VARS)，每变量 1 字节。
+     编码: 0 = GOOD, 1 = BAD。
+     对未在 st_quality 中登记的普通变量不做约束。 *)
+  (forall (x : ident) (q : Z),
+    List.In (x, q) st_st.(st_quality) ->
+    let quality_addr := Q_BASE + var_to_quality_idx x in
+    (0 <= quality_addr < Z.of_nat (Datatypes.length asm_st.(rt_memory))) /\
+    List.nth (Z.to_nat quality_addr) asm_st.(rt_memory) 0 = q) /\
+
+  (* 条件 3: 执行位置一致（取帧栈顶帧的函数索引） *)
   (match asm_st.(rt_frames) with
    | nil => st_st.(st_pou_idx) = -1
    | f :: _ => st_st.(st_pou_idx) = f.(frame_func_idx)
    end) /\
-  
-  (* 条件 3: 调用栈深度一致 *)
+
+  (* 条件 4: 调用栈深度一致 *)
   (Z.of_nat (List.length st_st.(st_call_stack)) =
    Z.of_nat (List.length asm_st.(rt_frames))).
-(* 
+(*
    通俗理解:
    条件 1: "ST 里 x 是 42 → ASM 内存里 x 的偏移处也是 42"
-   条件 2: "ST 正在执行 POU_0 → ASM 的调用帧也在执行函数 0"
-   条件 3: "ST 调用栈深度=3 → ASM 帧栈深度=3"
+   条件 2: "ST 里 qX 质量是 BAD → ASM 影子区 [Q_BASE + idx(qX)] = 0x01"
+   条件 3: "ST 正在执行 POU_0 → ASM 的调用帧也在执行函数 0"
+   条件 4: "ST 调用栈深度=3 → ASM 帧栈深度=3"
 *)
 
 (* ================================================================
