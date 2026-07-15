@@ -35,7 +35,7 @@ Inductive st_value : Type :=
    包含所有变量的当前值、当前执行位置、调用栈 *)
 Record st_state : Type := {
   st_vars     : list (ident * st_value);   (* 所有变量的当前值 *)
-  st_quality  : list (ident * Z);           (* 质量码映射: 0=GOOD,1=UNCERTAIN,2=BAD,3=NOT_CONNECTED, v1.1 *)
+  st_quality  : list (ident * Z);           (* 质量码映射: 0=GOOD,1=BAD, v1.1 *)
   st_pou_idx  : Z;                          (* 当前执行的 POU 索引 *)
   st_stmt_idx : Z;                          (* 当前语句索引 *)
   st_call_stack : list Z;                   (* 调用栈 *)
@@ -122,7 +122,7 @@ Definition update_quality (s : st_state) (x : ident) (q : Z) : st_state :=
      st_cycle_cnt := s.(st_cycle_cnt) + 1;
   |}.
 
-(* worst() 函数: 质量序 GOOD(0) < UNCERTAIN(1) < BAD(2) < NOT_CONNECTED(3) *)
+(* worst() 函数: 质量序 GOOD(0) < BAD(1) *)
 Definition worst_quality (q1 q2 : Z) : Z := Z.max q1 q2.
 
 (* 判断 st_value 是否为 64 位 (v1.1) *)
@@ -285,11 +285,6 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
           | _ => Some (ST_V_BOOL true)
           end
       | Q_BAD =>
-          match args with
-          | [E_VAR id] => Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 2))
-          | _ => Some (ST_V_BOOL false)
-          end
-      | Q_UNCERTAIN =>
           match args with
           | [E_VAR id] => Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 1))
           | _ => Some (ST_V_BOOL false)

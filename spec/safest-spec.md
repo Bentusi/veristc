@@ -81,7 +81,7 @@ SafeST 是 IEC 61131-3 第三版（IEC 61131-3:2013）Structured Text 语言的�
 | STRUCT | ❌ 排除 | 结构体嵌套增加内存布局复杂度，可以展开为扁平变量 |
 | REF/REF_TO/POINTER | ❌ 排除 | 指针违反 P2（无法静态验证别名安全性） |
 | ENUM | ❌ 排除 | 可用 `INT` + `CONSTANT` 替代，不损失安全性 |
-| QUALITY | ✅ **v1.1 新增** | 信号质量码（GOOD/BAD/UNCERTAIN/NOT_CONNECTED） |
+| QUALITY | ✅ **v1.1 新增** | 信号质量码（GOOD/BAD） |
 | Q* (QINT/QREAL 等) | ✅ **v1.1 新增** | 带质量位的变量类型，I/O 变量默认使用 |
 
 #### 程序组织单元 (POU)
@@ -162,13 +162,12 @@ CONSTANT     RETAIN
 TRUE         FALSE
 AND          OR           XOR          NOT
 MOD          ABS
-QUALITY      GOOD         BAD          UNCERTAIN    NOT_CONNECTED
+QUALITY      GOOD         BAD
 QBOOL        QBYTE        QWORD        QDWORD
 QSINT        QINT         QDINT        QLINT
 QREAL        QLREAL       QTIME
 Q_STATUS     Q_SET        Q_VALUE      Q_WITH       Q_FORCE
-Q_GOOD       Q_BAD        Q_UNCERTAIN
-Q_NONE       Q_DISABLE
+Q_GOOD       Q_BAD
 ```
 
 **显式排除的关键字**（标准 IEC 61131-3 中有但 SafeST 不支持的）：
@@ -445,16 +444,14 @@ SFC 相关全部关键字
 
 #### 5.2.1 质量值定义
 
-质量码是 2 位编码，存储为 1 字节（低 2 位有效）：
+质量码编码（1 字节，低 1 位有效）：
 
 | 质量常量 | 编码 | 含义 |
 |---------|------|------|
-| `GOOD` | 0b00 (0) | 信号正常，完全可信 |
-| `UNCERTAIN` | 0b01 (1) | 质量降级，谨慎使用 |
-| `BAD` | 0b10 (2) | 信号无效，禁止用于控制 |
-| `NOT_CONNECTED` | 0b11 (3) | 信号源未连接 |
+| `GOOD` | 0 (0b0) | 信号正常，完全可信 |
+| `BAD` | 1 (0b1) | 信号无效，禁止用于控制 |
 
-质量序关系：`GOOD < UNCERTAIN < BAD < NOT_CONNECTED`
+质量序关系：`GOOD < BAD`
 
 #### 5.2.2 类型转换规则（含质量）
 
@@ -474,7 +471,6 @@ QT₁ → QT₂（提升/截断）: 质量透传
 ```
 worst(GOOD, q) = q
 worst(q, GOOD) = q
-worst(UNCERTAIN, BAD) = BAD
 worst(q1, q2) = q1  if q1 ≥ q2 （按质量序）
 ```
 
@@ -626,7 +622,7 @@ QUALITY        ❌        ✅③   ✅
 
 
 Γ ⊢ e : QUALITY
-─────────────────────  (T_Quality_Literal)  GOOD/BAD/UNCERTAIN/NOT_CONNECTED
+─────────────────────  (T_Quality_Literal)  GOOD/BAD
 Γ ⊢ e : QUALITY
 ```
 
@@ -664,7 +660,7 @@ ST 运行时值 v ::= ST_V_BOOL(b)     b: bool
                 | ST_V_LREAL(f)    f: float64 (v1.1)
                 | ST_V_TIME(z)     z: 0..2^63-1 (纳秒)
 
-ST 运行时质量 q ::= Q_GOOD | Q_UNCERTAIN | Q_BAD | Q_NOT_CONNECTED
+ST 运行时质量 q ::= Q_GOOD | Q_BAD
 
 带质量的值 (Q 类型) = (st_value, quality) 二元组
 ```
@@ -763,8 +759,6 @@ eval_expr(σ, E_XOR e1 e2)
 -- 质量辅助函数
 worst(Q_GOOD, q)           = q
 worst(q, Q_GOOD)           = q
-worst(Q_UNCERTAIN, Q_BAD)  = Q_BAD
-worst(Q_BAD, Q_UNCERTAIN)  = Q_BAD
 worst(q1, q2)              = q1  如果 q1 ≥ q2 (按质量序)
 ```
 
@@ -931,9 +925,7 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 | 常量 | 编码值 | 含义 |
 |------|--------|------|
 | `GOOD` | 0 | 信号正常 |
-| `UNCERTAIN` | 1 | 质量降级 |
-| `BAD` | 2 | 信号无效 |
-| `NOT_CONNECTED` | 3 | 信号未连接 |
+| `BAD` | 1 | 信号无效 |
 
 ### 8.3 类型转换函数（v1.1 新增，LINT/LREAL）
 
@@ -1492,7 +1484,7 @@ END_PROGRAM
 | FOR 循环中修改循环变量 | 导致不确定的循环次数 | ❌ 编译期报错（禁止在 FOR 循环体内修改循环变量） |
 | 变量未初始化直接使用 | 未定义行为 | ❌ 编译期报错（SafeST 要求所有变量有默认初始化值） |
 | FB 输出变量在外部直接赋值 | 破坏封装性 | ❌ 编译期报错 |
-| QUALITY 变量直接赋值数值（如 `q := 2;`） | 掩盖质量语义 | ⚠️ 警告，建议使用 `Q_SET()` 或质量常量 GOOD/BAD |
+| QUALITY 变量直接赋值数值（如 `q := 1;`） | 掩盖质量语义 | ⚠️ 警告，建议使用 `Q_SET()` 或质量常量 GOOD/BAD |
 | `x := x + 1;` 在 FUNCTION 中修改全局变量 | S4 函数无副作用原则 | ❌ 编译期报错 |
 
 ---

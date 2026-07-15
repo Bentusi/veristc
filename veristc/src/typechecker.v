@@ -324,7 +324,7 @@ Fixpoint type_check_expr (fenv : type_env_func) (env : type_env) (e : st_expr) :
               end
       | _ => None
       end
-  | E_QUALITY_OP (Q_GOOD | Q_BAD | Q_UNCERTAIN) args =>
+  | E_QUALITY_OP (Q_GOOD | Q_BAD) args =>
       match args with
       | [e] => match type_check_expr nil env e with
               | Some ty => if is_quality_type ty then Some T_BOOL else None

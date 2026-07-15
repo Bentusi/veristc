@@ -1037,7 +1037,7 @@ ST:  Q_FORCE(qX, 100, BAD);
 
   ;; 质量部分
   I32_CONST  Q_BASE + X_idx
-  I32_CONST  2                ; BAD = 2
+  I32_CONST  1                ; BAD = 1
   I32_STORE8
 
   ;; ── 5 条指令，固定开销 ✅

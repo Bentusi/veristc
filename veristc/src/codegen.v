@@ -273,8 +273,6 @@ Fixpoint compile_expr (env : compile_env) (e : corest_expr) {struct e} : list sa
       (* Q_GOOD(x) = Q_STATUS(x) == 0 *)
       compile_quality_status env args ++ [I32_CONST 0; I32_EQ]
   | CE_QUALITY_OP Q_BAD args =>
-      compile_quality_status env args ++ [I32_CONST 2; I32_EQ]
-  | CE_QUALITY_OP Q_UNCERTAIN args =>
       compile_quality_status env args ++ [I32_CONST 1; I32_EQ]
   | CE_QUALITY_OP Q_SET args =>
       (* Q_SET(x, q) = 写影子质量字节 mem[Q_BASE + idx] = q *)
@@ -1553,8 +1551,6 @@ Proof.
     -- (* Q_GOOD *)
       rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
     -- (* Q_BAD *)
-      rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
-    -- (* Q_UNCERTAIN *)
       rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
     -- admit. (* 其他质量操作的情况可以类似处理 *)
 Admitted.

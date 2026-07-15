@@ -89,7 +89,7 @@ step_st   : ST 小步执行一步
 | **f64 → i32 截断** `DINT(x)` | `[x] I32_TRUNC_F64_S` | 双精度浮点截断 |
 | **质量读取** `Q_STATUS(x)` | `I32_CONST Q_BASE+x_idx I32_LOAD8_U` | 从影子质量区加载 1 字节质量码 |
 | **质量检查** `Q_GOOD(x)` | `[Q_STATUS(x)] I32_CONST 0 I32_EQ` | GOOD=0 比较 |
-| **质量检查** `Q_BAD(x)` | `[Q_STATUS(x)] I32_CONST 2 I32_EQ` | BAD=2 比较 |
+| **质量检查** `Q_BAD(x)` | `[Q_STATUS(x)] I32_CONST 1 I32_EQ` | BAD=1 比较 |
 | **值+质量构造** `Q_WITH(v, q)` | `[v] [q]` | 值栈同时保留值和质量 |
 
 ### 2.2 语句映射
@@ -159,7 +159,7 @@ end_br:
 **质量传播的 worst() 函数**在 SafeASM 层展开为 `I32_GT_U`（取数值上的最大值）：
 
 ```
-worst(a, b) = I32_GT_U   ── 因为编码: GOOD(0) < UNCERTAIN(1) < BAD(2) < NOT_CONNECTED(3)
+worst(a, b) = I32_GT_U   ── 因为编码: GOOD(0) < BAD(1)
 ```
 
 **语义保持核心**：质量传播代码由编译器自动插入，VM 无需感知质量语义。每条质量传播指令序列的 WCET 可静态计算（固定指令数、无分支），满足安全约束。
@@ -231,9 +231,7 @@ FB 字段偏移(inst, field) = FB_BASE + fb_base(inst) + field_offset(field)
 
   质量码编码:
     0x00 = GOOD (GOOD)
-    0x01 = UNCERTAIN (UNCERTAIN)
-    0x02 = BAD (BAD)
-    0x03 = NOT_CONNECTED (NOT_CONNECTED)
+    0x01 = BAD (BAD)
 
   质量区大小 = 变量总数 × 1 字节
   Q_BASE = IO_INPUT_BASE + IO_OUTPUT_BASE + GLOBAL_BASE + FB_BASE + STACK_BASE + CONST_BASE
@@ -898,8 +896,8 @@ ST:  qR := qA + qB;    -- qA, qB, qR 均为 QINT
        
      语义保持:
        情况 1: qA=GOOD(0), qB=GOOD(0) → worst=0 → qR=GOOD ✅
-       情况 2: qA=GOOD(0), qA=BAD(2)   → worst=2 → qR=BAD   ✅
-       情况 3: qA=BAD(2),  qB=BAD(2)   → worst=2 → qR=BAD   ✅
+       情况 2: qA=GOOD(0), qB=BAD(1)   → worst=1 → qR=BAD   ✅
+       情况 3: qA=BAD(1),  qB=BAD(1)   → worst=1 → qR=BAD   ✅
 
        WCET: 12 条指令 (5 值 + 7 质量)，固定无分支 ✅
 ```
@@ -1101,7 +1099,7 @@ ST 类型到 SafeASM 值类型的映射（编译期确定，运行期固定）�
     │ x → GOOD │───R(cond2)──→ │  [Q_BASE+x]  │
     │ y → BAD  │  (v1.1 新增) │  = 0x00      │
     └──────────┘               │  [Q_BASE+y]  │
-    ┌──────────┐               │  = 0x02      │
+    ┌──────────┐               │  = 0x01      │
     │ σ.pou_idx│               └──────────────┘
     │ = 0      │───R(cond3)──→ ┌──────────────┐
     │          │               │ τ.rt_frames  │

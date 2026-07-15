@@ -35,13 +35,13 @@ Inductive token : Type :=
   | TK_AND | TK_OR | TK_XOR | TK_NOT
  | TK_MOD | TK_ABS
  (* 质量类型关键字 (v1.1) *)
- | TK_QUALITY | TK_GOOD | TK_BAD | TK_UNCERTAIN | TK_NOT_CONNECTED
+ | TK_QUALITY | TK_GOOD | TK_BAD
  | TK_QBOOL | TK_QBYTE | TK_QWORD | TK_QDWORD
  | TK_QSINT | TK_QINT | TK_QDINT | TK_QLINT
  | TK_QREAL | TK_QLREAL | TK_QTIME
  (* 质量操作内置函数名 (v1.1) *)
  | TK_Q_STATUS | TK_Q_SET | TK_Q_VALUE | TK_Q_WITH | TK_Q_FORCE
- | TK_Q_GOOD | TK_Q_BAD | TK_Q_UNCERTAIN | TK_Q_NONE | TK_Q_DISABLE
+ | TK_Q_GOOD | TK_Q_BAD
  (* 字面量 *)
  | TK_INT_LIT : Z -> token              (* 整数常量 *)
   | TK_REAL_LIT : float -> token         (* 浮点常量 *)
@@ -245,7 +245,6 @@ Inductive quality_op : Type :=
   | Q_VALUE      (* Q_VALUE(x) → 基础类型值 *)
   | Q_GOOD       (* Q_GOOD(x) → BOOL *)
   | Q_BAD        (* Q_BAD(x) → BOOL *)
-  | Q_UNCERTAIN  (* Q_UNCERTAIN(x) → BOOL *)
   | Q_SET        (* Q_SET(x, q) → QUALITY *)
   | Q_WITH       (* Q_WITH(v, q) → Q 类型 *)
   | Q_FORCE      (* Q_FORCE(x, v, q) → Q 类型 *)
@@ -469,7 +468,7 @@ Inductive has_type : type_env_func -> type_env -> st_expr -> st_type -> Prop :=
   | T_QCheck : forall fenv ctx e ty op,
       has_type fenv ctx e ty ->
       is_quality_type ty = true ->
-      (op = Q_GOOD \/ op = Q_BAD \/ op = Q_UNCERTAIN) ->
+      (op = Q_GOOD \/ op = Q_BAD) ->
       has_type fenv ctx (E_QUALITY_OP op [e]) T_BOOL
   | T_QSet : forall fenv ctx e1 e2 ty1,
       has_type fenv ctx e1 ty1 ->
