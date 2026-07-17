@@ -414,7 +414,13 @@ VeriSTC 的工作横跨形式化验证编译器、工业语言安全子集、WCE
 
 ### 8.1 形式化验证编译器
 
-CompCert[1]是本工作最直接的理论先导。CompCert 证明了从 Clight 子集到多种目标架构(PowerPC、ARM、x86)的编译正确性,总证明规模超过 40,000 行 Coq。与之相比,VeriSTC 面临一组不同的挑战,可以从四个维度加以对比。从领域语义的复杂性看，IEC 61131-3 的领域特有语义（包括定时器 TON/TOF/TP、功能块 FB 实例化、CASE 多路分支）比 C 语言的对应构造更复杂，但具有更好的结构性。从目标架构的定制性看,SafeASM 是面向安全关键系统的定制字节码，而非通用处理器指令集，这简化了指令编码和 WCET 分析，但要求编译器设计者自行定义完整的指令语义。从内存模型的简化看,SafeST 禁止指针后,内存模型从 CompCert 的带别名堆简化为平坦内存映射,证明复杂度大幅降低。从领域特有的问题看,VeriSTC 引入的质量类型体系(Q*类型)是 CompCert 未处理的领域特有构造。CakeML[4]是另一个经过形式化验证的函数式语言编译器,但与 VeriSTC 不同,CakeML 面向通用函数式编程而非领域特定语言,其语义框架也缺乏对信号质量等工业控制特有关切的支持。
+CompCert[1]是本工作最直接的理论先导。CompCert 证明了从 Clight 子集到多种目标架构(PowerPC、ARM、x86)的编译正确性,总证明规模超过 40,000 行 Coq。与之相比,VeriSTC 面临一组不同的挑战,可以从四个维度加以对比。从领域语义的复杂性看，IEC 61131-3 的领域特有语义（包括定时器 TON/TOF/TP、功能块 FB 实例化、CASE 多路分支）比 C 语言的对应构造更复杂，但具有更好的结构性。从目标架构的定制性看,SafeASM 是面向安全关键系统的定制字节码，而非通用处理器指令集，这简化了指令编码和 WCET 分析，但要求编译器设计者自行定义完整的指令语义。从内存模型的简化看,SafeST 禁止指针后,内存模型从 CompCert 的带别名堆简化为平坦内存映射,证明复杂度大幅降低。从领域特有的问题看,VeriSTC 引入的质量类型体系(Q*类型)是 CompCert 未处理的领域特有构造。
+
+在工具链架构的全局视角下,VeriSTC 与以 **Lustre/SCADE→C→汇编**为代表的多阶段编译路径形成了鲜明的对比。后者(以下简称为 L2C 类工具链)将 Lustre 或 SCADE 等高阶同步语言编译为 C 代码[3]，再经由通用 C 编译器(GCC、Clang 等)生成目标架构上的汇编指令。这条路径存在三个内在的结构性问题。其一是**中间环节的信任断裂**:即便 Lustre 到 C 的编译器本身是经过形式化验证的,C 编译器作为一个未经验证的组件构成了信任链中的薄弱环节。虽然 CompCert 可以在理论上填补这一缺口——即以 CompCert 替代 GCC 作为后端——但这种"嵌套验证"的架构增加了工具链的集成复杂度和形式化证明的维护成本。其二是**语义抽象层的冗余**:C 语言的中间表示引入了大量与安全关键控制逻辑无关的语义细节——指针运算、内存分配、序列点、未定义行为——这些细节不仅对最终编译结果没有贡献,反而增加了形式化验证的负担(必须处理 C 语言语义中已知的 200 余项未定义行为)。其三是**领域信息在编译过程中的丢失**:Lustre 的同步假设、时钟约束、数据流结构等高层领域语义信息在翻译为 C 语言后即被展开为平坦的控制流和赋值序列,C 编译器无法利用这些语义信息进行深度优化或安全验证,因此 L2C 路径中的 WCET 分析只能后置于汇编代码生成阶段,作为额外的分析步骤而非编译过程的自然输出。
+
+VeriSTC 通过直接将 SafeST 编译为 SafeASM 字节码,从根本上绕过了上述三个问题。由于不存在 C 语言中间表示,工具链中不需要引入任何未经验证的编译器组件;由于 SafeASM 的指令语义与 SafeST 的语义构造之间存在直接的对应关系(见第 6 节的模拟关系),领域语义信息在编译过程中被保持而非丢弃;由于固定宽度编码保证了取指时间的静态可计算性(定理 4),WCET 信息可以作为编译器的直接输出而非事后分析的结果。此外,与 Lustre/SCADE 要求控制工程师学习新的同步数据流语言范式不同,IEC 61131-3 ST 是工业控制领域通用的编程语言,拥有庞大的存量代码库和成熟的工程师群体。VeriSTC 兼容已有 ST 控制代码的能力,使得安全升级可以在不改变工程团队工作流程的前提下渐进式地开展,从而降低了形式化验证技术在工业实践中推广的采用壁垒。
+
+CakeML[5]是另一个经过形式化验证的函数式语言编译器,但与 VeriSTC 不同,CakeML 面向通用函数式编程而非领域特定语言,其语义框架也缺乏对信号质量等工业控制特有关切的支持。
 
 ### 8.2 IEC 61131-3 安全子集
 
@@ -424,7 +430,7 @@ VeriSTC 与 PLCopen Safety 的根本区别在于：SafeST 的剪裁基于 P1-P4 
 
 ### 8.3 WCET 分析方法
 
-当下 WCET 分析的主流方法包括**基于抽象解释**(Wilhelm et al., 2008)[5]和**基于结构路径分析**(Puschner & Burns, 2000)[6]。这些方法的共同特征是：将 WCET 分析作为编译后的**后处理阶段**，即先编译，再分析已生成的机器码。
+当下 WCET 分析的主流方法包括**基于抽象解释**(Wilhelm et al., 2008)[6]和**基于结构路径分析**(Puschner & Burns, 2000)[7]。这些方法的共同特征是：将 WCET 分析作为编译后的**后处理阶段**，即先编译，再分析已生成的机器码。
 
 VeriSTC 的贡献在于证明了一个更强的论点:如果源语言和目标语言都是语义确定性的(定义 1),且编码是固定宽度的,那么 WCET 分析可以**提前到编译器设计中完成**,而非事后由分析工具推导。这意味着在 VeriSTC 框架下，WCET 信息可以作为编译器的**输出**而非分析工具的**输入**——当编译器输出 `.sasm` 文件时，WCET Section 已经包含了完整的 WCET 计算信息，虚拟机可以在加载时直接使用。
 
@@ -432,7 +438,7 @@ VeriSTC 的贡献在于证明了一个更强的论点:如果源语言和目标�
 
 IEC 61131-3 标准没有规定信号质量的统一处理方式。各厂商以私有函数库提供质量接口，如 Siemens 的 `GET_DP_DIAG`、CoDeSys 的 `__ISVALID`，但对质量传播的语义缺乏形式化定义。
 
-VeriSTC 的 Q*类型体系与程序语言中"基于类型的状态验证"（Swamy et al., 2012）[7]在方法论上一脉相承，即将运行时检查提升为类型约束。然而,Swamy et al. (2012) 解决的是加密协议的保护问题,其状态空间是离散的安全状态;而 Q*类型解决的是信号质量的连续退化问题,其代数结构是带有全序的交换半格。前者要求计算"何时状态允许此操作",后者要求计算"基于多个输入信号的质量,输出信号的质量如何"。
+VeriSTC 的 Q*类型体系与程序语言中"基于类型的状态验证"（Swamy et al., 2012）[8]在方法论上一脉相承，即将运行时检查提升为类型约束。然而,Swamy et al. (2012) 解决的是加密协议的保护问题,其状态空间是离散的安全状态;而 Q*类型解决的是信号质量的连续退化问题,其代数结构是带有全序的交换半格。前者要求计算"何时状态允许此操作",后者要求计算"基于多个输入信号的质量,输出信号的质量如何"。
 
 ## 9 可优化与可扩展的方向
 
@@ -472,16 +478,18 @@ P1-P4 剪裁判据的设计独立于 IEC 61131-3 的具体语法特性，其核�
 
 [2] PLCopen. Safety Software --- Technical Specification, Version 1.0, 2006.
 
-[3] W. Landi. Undecidability of static analysis. *ACM Letters on Programming Languages and Systems*, 1(4):323--337, 1992.
+[3] ANSYS Inc. SCADE Suite Technical Data Sheet, 2020.
 
-[4] R. Kumar, M. O. Myreen, M. Norrish, and S. Owens. CakeML: a verified implementation of ML. In *Proc. POPL*, 2014.
+[4] W. Landi. Undecidability of static analysis. *ACM Letters on Programming Languages and Systems*, 1(4):323--337, 1992.
 
-[5] R. Wilhelm et al. The worst-case execution-time problem. *ACM Transactions on Embedded Computing Systems*, 7(3):1--53, 2008.
+[5] R. Kumar, M. O. Myreen, M. Norrish, and S. Owens. CakeML: a verified implementation of ML. In *Proc. POPL*, 2014.
 
-[6] P. Puschner and A. Burns. A review of worst-case execution-time analysis. *Real-Time Systems*, 18(2):115--128, 2000.
+[6] R. Wilhelm et al. The worst-case execution-time problem. *ACM Transactions on Embedded Computing Systems*, 7(3):1--53, 2008.
 
-[7] N. Swamy, J. Chen, C. Fournet, P.-Y. Strub, K. Bhargavan, and J. Yang. Secure distributed programming with type-directed encryption. In *Proc. ICFP*, 2012.
+[7] P. Puschner and A. Burns. A review of worst-case execution-time analysis. *Real-Time Systems*, 18(2):115--128, 2000.
 
-[8] J. C. Reynolds. Separation logic: a logic for shared mutable data structures. In *Proc. LICS*, 2002.
+[8] N. Swamy, J. Chen, C. Fournet, P.-Y. Strub, K. Bhargavan, and J. Yang. Secure distributed programming with type-directed encryption. In *Proc. ICFP*, 2012.
 
-[9] E. W. Dijkstra. The humble programmer. *Communications of the ACM*, 15(10):859--866, 1972.
+[9] J. C. Reynolds. Separation logic: a logic for shared mutable data structures. In *Proc. LICS*, 2002.
+
+[10] E. W. Dijkstra. The humble programmer. *Communications of the ACM*, 15(10):859--866, 1972.
