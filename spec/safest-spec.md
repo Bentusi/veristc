@@ -17,6 +17,7 @@
 | v0.1 | 草案 | 初始草案 | JIANG Wei |
 | v1.0 | 2026-06-29 | 正式发布。补充完整的 IEC 61131-3 子集定义及选择理由；完善类型提升规则（完整 10×10 矩阵）；新增形式化操作语义章节（小步语义）；补充完整示例集 | JIANG Wei |
 | **v1.1** | **2026-06-30** | **新增 LINT(64位整数) 和 LREAL(64位浮点) 类型；新增带质量位的 Q 类型体系（QINT/QREAL/QLINT/QLREAL 等）；新增质量传播语义和影子内存设计；新增质量操作内置函数（Q_STATUS/Q_SET/Q_GOOD 等）；扩展类型提升矩阵至 12×12** | JIANG Wei |
+| **v1.2** | **2026-07-25** | **新增第 3 章"SAFEST 形式化定义"，包含完整的抽象语法范畴、表达式类型规则(T-Lit~T-QStrip)、语句类型规则(S-Assign~S-FBCall)、质量传播公理化(worst/best 双模体系及单调性定理)、良构程序条件(WF1~WF9)；后续章节重新编号(原第 3~9 章变为第 4~10 章)；质量传播语义从单函数 worst() 扩展为双模体系(worst+best)** | JIANG Wei |
 
 ### 0.2 约定
 
@@ -139,13 +140,555 @@ SafeST 删除了约 **70%** 的 IEC 61131-3 ST 语言特性。保留的 30% 经�
 
 ---
 
-## 3. 词法规范 (Lexical Structure)
 
-### 3.1 字符集
+## 3. SAFEST 形式化定义 (Formal Definition)
+
+本章给出 SafeST 语言的**形式化数学定义**，包括抽象语法范畴、类型系统、表达式类型规则、语句类型规则、质量传播公理以及良构程序条件。这些定义构成了编译器正确性证明的语义基础，与 `veristc/spec/safest.v` 中的 Coq 形式化描述完全对应。
+
+### 3.1 语法范畴 (Syntax Categories)
+
+抽象语法定义语言的内部表示（AST），与第 5 章的具体 EBNF 语法一一对应，但更便于形式化推理。
+
+#### 3.1.1 类型
+
+SafeST 的类型宇宙 $\mathcal{T}_{\text{ST}}$ 定义如下：
+
+$$
+\tau \in \mathcal{T}_{\text{ST}} \; ::= \; 
+\mathtt{BOOL} \mid \mathtt{BYTE} \mid \mathtt{WORD} \mid \mathtt{DWORD}
+\mid \mathtt{SINT} \mid \mathtt{INT} \mid \mathtt{DINT} \mid \mathtt{LINT}
+\mid \mathtt{REAL} \mid \mathtt{LREAL} \mid \mathtt{TIME} \mid \mathtt{QUALITY}
+\mid \tau^* \qquad (\text{其中 } \tau \in \mathcal{T}_{\text{ST}} \setminus \{\mathtt{QUALITY}\})
+\mid \mathtt{ARRAY}[\mathit{low}\,..\,\mathit{high}] \; \mathtt{OF} \; \tau
+$$
+
+其中 $\tau^*$ 表示带质量位的 Q* 类型（见定义 4），$\mathit{low}, \mathit{high} \in \mathbb{Z}$ 为编译期确定的数组边界。
+
+#### 3.1.2 表达式
+
+表达式 $e$ 的抽象语法：
+
+$$
+\begin{aligned}
+e \; ::= \; & c                              \quad \text{(字面量)} \\
+            & \mid x                         \quad \text{(变量引用)} \\
+            & \mid e[e]                      \quad \text{(数组访问)} \\
+            & \mid \mathit{op}_1\; e         \quad \text{(一元运算: } -, \mathtt{NOT}, \mathtt{ABS}) \\
+            & \mid e\; \mathit{op}_2\; e     \quad \text{(二元算术: } +, -, *, /, \mathtt{MOD}) \\
+            & \mid e\; \mathit{op}_3\; e     \quad \text{(比较: } =, \lt>, \lt, \gt, \le, \ge) \\
+            & \mid e\; \mathit{op}_4\; e     \quad \text{(逻辑: } \mathtt{AND}, \mathtt{OR}, \mathtt{XOR}) \\
+            & \mid f(e_1, \dots, e_n)        \quad \text{(函数调用)}
+\end{aligned}
+$$
+
+#### 3.1.3 语句
+
+语句 $s$ 的抽象语法：
+
+$$
+\begin{aligned}
+s \; ::= \; & x := e                                    \quad \text{(赋值)} \\
+            & \mid x[e] := e                            \quad \text{(数组赋值)} \\
+            & \mid \mathit{fb}(x_1 := e_1, \dots, x_n := e_n) \quad \text{(FB 调用)} \\
+            & \mid \mathtt{IF}\; e\; \mathtt{THEN}\; s^*\; \{\mathtt{ELSIF}\; e\; \mathtt{THEN}\; s^*\}\; [\mathtt{ELSE}\; s^*]\; \mathtt{END\_IF} \\
+            & \mid \mathtt{CASE}\; e\; \mathtt{OF}\; \{v\{,v\} : s^*\}\; [\mathtt{ELSE}\; s^*]\; \mathtt{END\_CASE} \\
+            & \mid \mathtt{FOR}\; x := e\; \mathtt{TO}\; e\; [\mathtt{BY}\; e]\; \mathtt{DO}\; s^*\; \mathtt{END\_FOR} \\
+            & \mid \mathtt{WHILE}\; e\; \mathtt{DO}\; s^*\; \mathtt{END\_WHILE} \\
+            & \mid \mathtt{REPEAT}\; s^*\; \mathtt{UNTIL}\; e\; \mathtt{END\_REPEAT} \\
+            & \mid \mathtt{RETURN} \\
+            & \mid \mathtt{EXIT}
+\end{aligned}
+$$
+
+#### 3.1.4 程序
+
+程序 $P$ 由全局变量声明段和若干个程序组织单元（POU）构成：
+
+$$
+P \; ::= \; (\mathtt{VAR\_GLOBAL}\; \overline{x:\tau}\; \mathtt{END\_VAR})^*\; \overline{\mathit{pou}}^+
+$$
+
+其中 $\mathit{pou}$ 为 $\mathtt{PROGRAM}$、$\mathtt{FUNCTION}$ 或 $\mathtt{FUNCTION\_BLOCK}$。
+
+---
+
+### 3.2 类型系统 (Formal Type System)
+
+#### 3.2.1 Q* 类型定义
+
+**定义 4（Q* 类型）**。对于每个基础类型 $\tau \in \mathcal{T}_{\text{ST}}$，定义其带质量位的版本 $\tau^*$（称为 Q 类型，如 $\mathtt{QINT}$、$\mathtt{QREAL}$ 等）。Q* 类型的值空间为：
+
+$$
+\mathcal{V}_{\tau^*} = \mathcal{V}_\tau \times Q
+$$
+
+即每个 Q* 类型变量同时包含一个数值和一字节质量码。
+
+#### 3.2.2 质量域
+
+质量码集合 $Q$ 定义为一个二元素全序格：
+
+$$
+Q = \{\mathtt{GOOD}, \mathtt{BAD}\}, \quad \mathtt{GOOD} < \mathtt{BAD}
+$$
+
+质量码编码（1 字节，低 1 位有效）：
+
+| 质量常量 | 编码 | 含义 |
+|---------|------|------|
+| $\mathtt{GOOD}$ | 0 (0b0) | 信号正常，完全可信 |
+| $\mathtt{BAD}$ | 1 (0b1) | 信号无效，禁止用于控制 |
+
+#### 3.2.3 类型环境
+
+类型环境 $\Gamma$ 是一个从变量名到类型的偏函数：
+
+$$
+\Gamma : \mathcal{V}\text{ar} \rightharpoonup \mathcal{T}_{\text{ST}}
+$$
+
+$\Gamma \vdash e : \tau$ 表示在类型环境 $\Gamma$ 下，表达式 $e$ 具有类型 $\tau$。
+
+#### 3.2.4 类型提升
+
+类型提升函数 $\text{promote}(\tau_1, \tau_2)$ 返回两种类型运算时的共同类型：
+
+$$
+\begin{aligned}
+\text{promote}(\tau, \tau) &= \tau \\
+\text{promote}(\mathtt{SINT}, \mathtt{INT}) &= \mathtt{INT} \\
+\text{promote}(\mathtt{SINT}, \mathtt{DINT}) &= \mathtt{DINT} \\
+\text{promote}(\mathtt{INT}, \mathtt{DINT}) &= \mathtt{DINT} \\
+\text{promote}(\tau_1, \tau_2) &= \text{按类型链提升至最小公共超类型（见第 6 章完整矩阵）}
+\end{aligned}
+$$
+
+对于 Q* 类型，提升在基础类型上进行：
+
+$$
+\text{promote}(\tau_1^*, \tau_2^*) = (\text{promote}(\tau_1, \tau_2))^*
+$$
+
+---
+
+### 3.3 表达式类型规则 (Expression Typing Rules)
+
+每条规则采用自然演绎风格的推理形式：横线上方为前提，下方为结论。
+
+#### 3.3.1 字面量和变量
+
+$$
+\frac{}{\Gamma \vdash c : \mathtt{typeof}(c)^*} \quad (\text{质量} = \mathtt{GOOD}) \tag{T-Lit}
+$$
+
+$$
+\frac{\Gamma(x) = \tau^*}{\Gamma \vdash x : \tau^*} \tag{T-Var}
+$$
+
+#### 3.3.2 一元运算
+
+$$
+\frac{\Gamma \vdash e : \tau^* \quad \tau \in \{\mathtt{INT}, \mathtt{DINT}, \mathtt{LINT}, \mathtt{REAL}, \mathtt{LREAL}\}}{\Gamma \vdash -e : \tau^*} \quad (\text{质量} = \text{qual}(e)) \tag{T-Neg}
+$$
+
+$$
+\frac{\Gamma \vdash e : \mathtt{BOOL}^*}{\Gamma \vdash \mathtt{NOT}\; e : \mathtt{BOOL}^*} \quad (\text{质量} = \text{qual}(e)) \tag{T-Not}
+$$
+
+$$
+\frac{\Gamma \vdash e : \tau^* \quad \tau \in \{\mathtt{INT}, \mathtt{DINT}, \mathtt{LINT}, \mathtt{REAL}, \mathtt{LREAL}\}}{\Gamma \vdash \mathtt{ABS}\; e : \tau^*} \quad (\text{质量} = \text{qual}(e)) \tag{T-Abs}
+$$
+
+#### 3.3.3 二元算术运算
+
+$$
+\frac{\Gamma \vdash e_1 : \tau_1^* \quad \Gamma \vdash e_2 : \tau_2^* \quad \text{promote}(\tau_1, \tau_2) = \tau}{\Gamma \vdash e_1 + e_2 : \tau^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Add}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \tau_1^* \quad \Gamma \vdash e_2 : \tau_2^* \quad \text{promote}(\tau_1, \tau_2) = \tau}{\Gamma \vdash e_1 - e_2 : \tau^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Sub}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \tau_1^* \quad \Gamma \vdash e_2 : \tau_2^* \quad \text{promote}(\tau_1, \tau_2) = \tau}{\Gamma \vdash e_1 * e_2 : \tau^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Mul}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \tau_1^* \quad \Gamma \vdash e_2 : \tau_2^* \quad \text{promote}(\tau_1, \tau_2) = \tau \quad \tau \notin \{\mathtt{REAL}, \mathtt{LREAL}\}}{\Gamma \vdash e_1 / e_2 : \tau^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Div}
+$$
+
+其中 $\land$ 为质量域上的 **meet** 运算（取较差者），即 $\text{worst}(q_1, q_2) = q_1 \land q_2$。其语义为：**串行链的可靠性由最薄弱的环节决定**。
+
+#### 3.3.4 比较运算
+
+比较运算的结果类型为 $\mathtt{BOOL}^*$，质量传播遵循 worst 规则：
+
+$$
+\frac{\Gamma \vdash e_1 : \tau_1^* \quad \Gamma \vdash e_2 : \tau_2^* \quad \text{promote}(\tau_1, \tau_2) = \tau}{\Gamma \vdash e_1 = e_2 : \mathtt{BOOL}^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Eq}
+$$
+
+（$\lt>$, $\lt$, $\gt$, $\le$, $\ge$ 同理，分别记作 T-Neq, T-Lt, T-Gt, T-Le, T-Ge。）
+
+#### 3.3.5 逻辑运算
+
+$$
+\frac{\Gamma \vdash e_1 : \mathtt{BOOL}^* \quad \Gamma \vdash e_2 : \mathtt{BOOL}^*}{\Gamma \vdash e_1 \;\mathtt{AND}\; e_2 : \mathtt{BOOL}^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-And}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \mathtt{BOOL}^* \quad \Gamma \vdash e_2 : \mathtt{BOOL}^*}{\Gamma \vdash e_1 \;\mathtt{OR}\; e_2 : \mathtt{BOOL}^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Or}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \mathtt{BOOL}^* \quad \Gamma \vdash e_2 : \mathtt{BOOL}^*}{\Gamma \vdash e_1 \;\mathtt{XOR}\; e_2 : \mathtt{BOOL}^*} \quad (\text{质量} = \text{qual}(e_1) \land \text{qual}(e_2)) \tag{T-Xor}
+$$
+
+> **注**：逻辑求值（short-circuit evaluation）仅影响运行时求值行为，不影响静态类型规则。
+
+#### 3.3.6 隐式类型转换
+
+$$
+\frac{\Gamma \vdash e : \tau}{\Gamma \vdash e : \tau^*} \quad (\text{质量} = \mathtt{GOOD}) \tag{T-QCast}
+$$
+
+$$
+\frac{\Gamma \vdash e : \tau^*}{\Gamma \vdash \mathtt{Q\_VALUE}(e) : \tau} \quad (\text{质量丢弃}) \tag{T-QStrip}
+$$
+
+规则 T-QCast 允许普通类型隐式转换为对应的 Q* 类型（质量初始化为 GOOD），T-QStrip 通过内置函数 `Q_VALUE` 显式剥离质量码。
+
+---
+
+### 3.4 语句类型规则 (Statement Typing Rules)
+
+语句的类型规则形式为 $\Gamma \vdash s : \Gamma'$，表示语句 $s$ 在类型环境 $\Gamma$ 下执行后，变量类型环境变为 $\Gamma'$（在 SafeST 中赋值不改变变量类型，因此 $\Gamma' = \Gamma$ 对绝大多数语句成立）。
+
+#### 3.4.1 赋值
+
+$$
+\frac{\Gamma \vdash e : \tau^* \quad \Gamma(x) = \tau^*}{\Gamma \vdash x := e : \Gamma} \tag{S-Assign}
+$$
+
+$$
+\frac{\Gamma \vdash e_1 : \mathtt{INT}^* \quad \Gamma \vdash e_2 : \tau^* \quad \Gamma(x) = \mathtt{ARRAY}[\mathit{low}..\mathit{high}] \; \mathtt{OF} \; \tau}{\Gamma \vdash x[e_1] := e_2 : \Gamma} \tag{S-ArrAssign}
+$$
+
+#### 3.4.2 IF 语句
+
+$$
+\frac{\Gamma \vdash e : \mathtt{BOOL}^* \quad \Gamma \vdash s_1^* : \Gamma \quad \Gamma \vdash s_2^* : \Gamma}{\Gamma \vdash \mathtt{IF}\; e\; \mathtt{THEN}\; s_1^*\; \mathtt{ELSE}\; s_2^*\; \mathtt{END\_IF} : \Gamma} \tag{S-If}
+$$
+
+ELSIF 子句可视为嵌套的 IF：
+
+$$
+\frac{\Gamma \vdash e_1 : \mathtt{BOOL}^* \quad \Gamma \vdash s_1^* : \Gamma \quad \Gamma \vdash \mathtt{ELSIF}\; e_2\; \mathtt{THEN}\; s_2^*\; \mathtt{ELSE}\; s_3^* : \Gamma}{\Gamma \vdash \mathtt{IF}\; e_1\; \mathtt{THEN}\; s_1^*\; \mathtt{ELSIF}\; e_2\; \mathtt{THEN}\; s_2^*\; \mathtt{ELSE}\; s_3^*\; \mathtt{END\_IF} : \Gamma} \tag{S-If-Elsif}
+$$
+
+#### 3.4.3 CASE 语句
+
+$$
+\frac{\Gamma \vdash e : \tau^* \quad \tau \in \{\mathtt{SINT}, \mathtt{INT}, \mathtt{DINT}, \mathtt{LINT}\} \quad \forall i, \Gamma \vdash s_i^* : \Gamma}{\Gamma \vdash \mathtt{CASE}\; e\; \mathtt{OF}\; \cdots\; \mathtt{END\_CASE} : \Gamma} \tag{S-Case}
+$$
+
+#### 3.4.4 FOR 循环
+
+$$
+\frac{
+\begin{array}{c}
+\Gamma \vdash e_1 : \tau^* \quad \Gamma \vdash e_2 : \tau^* \quad \Gamma(i) = \tau^* \quad \tau \in \{\mathtt{SINT}, \mathtt{INT}, \mathtt{DINT}, \mathtt{LINT}\} \\
+i \notin \text{modified}(\overline{s}) \quad \Gamma[i \mapsto \tau^*] \vdash \overline{s} : \Gamma' \quad \text{bounded}(e_1, e_2, \overline{s})
+\end{array}
+}{\Gamma \vdash \mathtt{FOR}\; i := e_1\; \mathtt{TO}\; e_2\; \mathtt{DO}\; \overline{s}\; \mathtt{END\_FOR} : \Gamma'} \tag{S-For}
+$$
+
+其中 $\text{modified}(\overline{s})$ 表示语句序列 $\overline{s}$ 中赋值的变量集合，$\text{bounded}(e_1, e_2, \overline{s})$ 确保循环次数可在编译期确定。
+
+#### 3.4.5 WHILE / REPEAT 循环
+
+$$
+\frac{\Gamma \vdash e : \mathtt{BOOL}^* \quad \Gamma \vdash \overline{s} : \Gamma \quad \text{LV}(\overline{s}) = f(x_1, \dots, x_n) \text{ 严格递减且良基}}{\Gamma \vdash \mathtt{WHILE}\; e\; \mathtt{DO}\; \overline{s}\; \mathtt{END\_WHILE} : \Gamma} \tag{S-While}
+$$
+
+$$
+\frac{\Gamma \vdash \overline{s} : \Gamma \quad \Gamma \vdash e : \mathtt{BOOL}^* \quad \text{LV}(\overline{s}) = f(x_1, \dots, x_n) \text{ 严格递减且良基}}{\Gamma \vdash \mathtt{REPEAT}\; \overline{s}\; \mathtt{UNTIL}\; e\; \mathtt{END\_REPEAT} : \Gamma} \tag{S-Repeat}
+$$
+
+其中 $\text{LV}$（Loop Variant）是一个由用户注解的从程序状态到良基集的严格递减函数，保证了循环的终止性。
+
+#### 3.4.6 RETURN 与 EXIT
+
+$$
+\frac{\Gamma \vdash \overline{s} : \Gamma}{\Gamma \vdash \mathtt{RETURN} : \Gamma} \qquad
+\frac{\Gamma \vdash \overline{s} : \Gamma \quad \text{EXIT 在最内层循环体内}}{\Gamma \vdash \mathtt{EXIT} : \Gamma} \tag{S-Return, S-Exit}
+$$
+
+#### 3.4.7 FB 调用
+
+$$
+\frac{\Gamma(\mathit{inst}) = \mathtt{FB}\;\mathit{T} \quad \text{params}(T) = \{x_1 : \tau_1^*, \dots, x_n : \tau_n^*\} \quad \forall i, \Gamma \vdash e_i : \tau_i^*}{\Gamma \vdash \mathit{inst}(x_1 := e_1, \dots, x_n := e_n) : \Gamma} \tag{S-FBCall}
+$$
+
+---
+
+### 3.5 质量传播公理化 (Axiomatization of Quality Propagation)
+
+#### 3.5.1 基本定义
+
+质量传播由两个核心函数定义：
+
+**定义 5（串行衰减 worst）。**
+
+$$
+\text{worst}(q_1, q_2) \triangleq q_1 \land q_2
+$$
+
+即二元运算的结果质量取两个操作数质量中"较差"者。在安全关键系统中，信号链的可靠性由最薄弱的环节决定。
+
+**定义 6（并行择优 best）。**
+
+$$
+\text{best}(q_1, q_2) \triangleq q_1 \lor q_2
+$$
+
+即多路冗余选择中输出质量取所有候选信号中"较好"者。这是 N 取 K 表决机制的数学抽象。
+
+#### 3.5.2 质量传播规则表
+
+| 构造 | 质量传播规则 | 引用 |
+|------|------------|------|
+| 字面量 `c` | $\text{qual}(c) = \mathtt{GOOD}$ | Q1 |
+| 变量引用 `x` | $\text{qual}(x) = x.\text{quality}$（运行时读取） | Q2 |
+| 一元运算 $\mathit{op}\; e$ | $\text{qual}(\mathit{op}\; e) = \text{qual}(e)$ | Q3 |
+| 二元算术 $e_1\;\mathit{op}\; e_2$ | $\text{qual}(e_1\;\mathit{op}\; e_2) = \text{worst}(\text{qual}(e_1), \text{qual}(e_2))$ | Q4 |
+| 比较运算 $e_1 \lt e_2$ | $\text{qual}(e_1 \lt e_2) = \text{worst}(\text{qual}(e_1), \text{qual}(e_2))$ | Q5 |
+| 逻辑运算 | $\text{qual}(e_1 \;\mathtt{AND}\; e_2) = \text{worst}(\text{qual}(e_1), \text{qual}(e_2))$ | Q6 |
+| 赋值 $x := e$ | $x.\text{quality} = \text{qual}(e)$ | Q7 |
+| 函数/FB 调用 | $\text{qual}(\text{result}) = \text{worst}(\text{qual}(p_1), \dots, \text{qual}(p_n))$ | Q8 |
+| $T \to T^*$ 隐式转换 | $\text{qual} = \mathtt{GOOD}$ | Q9 |
+| $T^* \to T$ 显式（Q_VALUE） | 质量丢弃 | Q10 |
+
+#### 3.5.3 单调性定理
+
+**定理 3（质量传播的单调性）。** 质量传播函数 $\text{worst}(\cdot, \cdot)$ 在良序 $(Q, >)$ 下是单调的：
+
+$$
+\forall q_1, q_1', q_2, q_2' \in Q \cdot (q_1 > q_1') \land (q_2 > q_2') \Rightarrow \text{worst}(q_1, q_2) > \text{worst}(q_1', q_2')
+$$
+
+**证明。** 由 $\text{worst}(q_1, q_2) = q_1 \land q_2$，在良序 $(Q, >)$ 下 meet 运算对每个参数都是单调的。因此 $\text{worst}(\cdot, \cdot)$ 是单调的。∎
+
+**定理 4（质量择优的单调性）。** 质量择优函数 $\text{best}(\cdot, \cdot)$ 在良序 $(Q, >)$ 下是单调的：
+
+$$
+\forall q_1, q_1', q_2, q_2' \in Q \cdot (q_1 > q_1') \land (q_2 > q_2') \Rightarrow \text{best}(q_1, q_2) > \text{best}(q_1', q_2')
+$$
+
+**证明。** 由 $\text{best}(q_1, q_2) = q_1 \lor q_2$，在良序 $(Q, >)$ 下 join 运算对每个参数都是单调的。因此 $\text{best}(\cdot, \cdot)$ 是单调的。∎
+
+**推论 1（单调性的工程意义）。** $\text{worst}$ 的单调性确保了"输入越差、输出绝不复好"的故障降级可预测性；$\text{best}$ 的单调性确保了"冗余路径越多、择优结果绝不更差"的容错增益可组合性。单调性还保证了质量推理的可组合性，即对子表达式的质量改进不会降低整体表达式的质量——这是模块化验证的基础。
+
+#### 3.5.4 影子内存布局
+
+Q* 类型的编译实现采用**影子内存 (shadow memory)** 方案。每个 Q* 类型变量的数值存储在主数据区，质量码存储在独立的 Quality 影子区中：
+
+$$
+\begin{aligned}
+\text{offset}_{\text{qual}}(v_i) &= Q\_BASE + i \\
+\text{offset}_{\text{val}}(v_i) &= DATA\_BASE + \text{layout}(i)
+\end{aligned}
+$$
+
+质量与值的分离存储保证了三条关键性质：
+
+1. **质量码与值宽度解耦**：质量码始终占用 1 字节，位宽与值的宽度（1–8 字节）无关
+2. **WCET 确定性**：质量传播代码在编译期插入，运行时不引入条件分支，从而满足 WCET 确定性分析
+3. **向后兼容**：非 Q* 基础类型不占用影子区，已有代码无需修改
+
+---
+
+### 3.6 良构程序 (Well-formed Program)
+
+一个 SafeST 程序 $P$ 是**良构的**，当且仅当以下所有条件成立：
+
+**WF1（无重名声明）**：所有 POU 名称两两不同；同一作用域内所有变量名两两不同。
+
+**WF2（变量引用合法）**：所有被引用的变量必须在作用域内已声明。
+
+**WF3（函数纯性）**：$\mathtt{FUNCTION}$ 体内不修改全局变量或 VAR_OUTPUT 变量。
+
+**WF4（静态实例化）**：所有 FB 实例必须在 VAR 块中静态声明，禁止运行时创建。
+
+**WF5（循环有界性）**：所有 $\mathtt{FOR}$ 循环的上下界为编译期常量或可静态推导的表达式；所有 $\mathtt{WHILE}$/$\mathtt{REPEAT}$ 循环必须带有编译期可验证的 Loop Variant 注解。
+
+**WF6（无递归）**：禁止直接或间接递归调用。
+
+**WF7（数组边界安全）**：所有数组访问的索引必须在编译期或运行时边界内。
+
+**WF8（初始化完备）**：所有变量必须有默认初始化值，禁止未初始化使用。
+
+**WF9（FOR 循环变量不变性）**：在 $\mathtt{FOR}$ 循环体内禁止对循环变量赋值。
+
+---
+
+### 3.7 表达式剪裁的形式化分析 (Formal Analysis of Expression Trimming)
+
+第 3.1.2 节定义的抽象语法已给出 SafeST 支持的表达式全集。本节系统性地列出被排除的 IEC 61131-3 表达式构造，以 P1-P4 四条剪裁判据逐条分析其排除理由，并给出结论性判定。
+
+#### 3.7.1 排除的表达式构造
+
+##### 取地址与间接引用（ADR / REF / ^）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 安全级控制逻辑无需间接寻址；所有 I/O 信号通过符号变量名直接引用，不存在通过地址间接访问传感器的场景 |
+| **P2** 静态可决策性 | 精确指向分析（alias analysis）在最一般情况下不可判定（Landi 1992），等价于停机问题 |
+| **P3** 形式化可建模 | 指针需偏序堆模型 $\text{Heap} = \text{Addr} \rightharpoonup \text{Value}$ + 分离逻辑（Reynolds 2002），证明复杂度远超安全级程序的实际需要 |
+| **P4** WCET 可计算 | 间接访存的取指时间 $t_{\text{fetch}}(c)$ 因地址动态绑定无法在编译期确定 |
+
+**结论**：排除。所有四条件均被违反。
+
+##### 直接地址访问（%IW / %QW / %IX 等）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 硬件地址与逻辑变量的绑定属于系统集成层的配置问题，不应出现在控制逻辑的表达式中 |
+| **P2** 静态可决策性 | 地址解析依赖运行时的 I/O 配置表，编译期不可判定 |
+| **P3** 形式化可建模 | 可在 Coq 中建模为外部配置参数，但增大了语义模型的复杂度 |
+| **P4** WCET 可计算 | 间接地址访问导致内存访问时间不确定 |
+
+**结论**：排除。编译器通过 IOMap Section 在 SafeASM 层处理地址映射，ST 代码中使用符号变量名。
+
+##### 字符串表达式（CONCAT / LEFT / MID / STRING_TO_* 等）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 安全级逻辑无需字符串操作；人机交互字符串由上层的 HMI 系统管理 |
+| **P2** 静态可决策性 | 字符串操作结果长度在运行前不可确定（如 CONCAT 的结果长度取决于运行时输入） |
+| **P3** 形式化可建模 | 字符串语义可在 Coq 中建模，但需要依赖外部字符串库，增加证明负担 |
+| **P4** WCET 可计算 | 字符串操作的执行时间与运行时数据相关，无法确定上界 |
+
+**结论**：排除。同字符串类型 $\mathtt{STRING}$ / $\mathtt{WSTRING}$ 一并排除。
+
+##### 位串移位与循环移位（SHL / SHR / ROL / ROR）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 位操作在安全级系统中确有需求（如状态字解析、位掩码配置），但可通过 AND/OR/NOT 组合或内置函数替代 |
+| **P2** 静态可决策性 | 移位位数若为运行时变量，结果不可在编译期确定；若为常量，可通过编译期常量折叠优化 |
+| **P3** 形式化可建模 | 可在 Coq 中建模为 $\text{shl}(v, n) = v \cdot 2^{n}$，但移位语义的证明需处理溢出和符号扩展 |
+| **P4** WCET 可计算 | 固定宽度移位的执行时间是确定性的 |
+
+**结论**：**当前版本排除**，计划在后续扩展中通过内置函数形式引入（而非运算符重载）。在当前 SafeST 中，固定位宽的状态字操作可通过组合 AND/OR/NOT 实现。
+
+##### 运行时类型查询（__ISVALID / __ISOPEN / TYPEOF 等）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 运行时类型查询的本质是运行时诊断，已被 Q* 类型的静态质量码覆盖 |
+| **P2** 静态可决策性 | 运行时类型查询的结果显然不能在编译期确定 |
+| **P3** 形式化可建模 | 需要反射语义（reflective semantics），Coq 的依赖类型理论不直接支持 |
+| **P4** WCET 可计算 | 运行时查询的执行时间与运行时数据相关 |
+
+**结论**：排除。由 $\mathtt{Q\_STATUS}()$ 和 $\mathtt{Q\_GOOD}()$ 等质量内置函数替代。
+
+#### 3.7.2 表达式剪裁的完备性结论
+
+SafeST 保留的表达式构造覆盖了安全级仪控系统所需的全部表达范畴：算术运算（控制算法）、比较运算（联锁逻辑）、逻辑运算（保护系统）、数组索引（批量数据）以及函数调用（模块化）。被排除的构造均可通过 P1-P4 中的至少两条给出形式化排除理由，且存在语义等价的替代方案。
+
+---
+
+### 3.8 语句剪裁的形式化分析 (Formal Analysis of Statement Trimming)
+
+第 3.1.3 节定义的抽象语法已给出 SafeST 支持的语句全集。本节系统性地列出被排除的 IEC 61131-3 语句构造，以 P1-P4 逐条分析其排除理由。
+
+#### 3.8.1 排除的语句构造
+
+##### 顺序功能图语句（STEP / TRANSITION / ACTION）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | SFC 适合批处理流程描述，但安全级仪控的连锁保护逻辑更适合用状态机 + CASE 表达 |
+| **P2** 静态可决策性 | SFC 的步进语义包含冲突分支选择，多个转换条件可能同时满足，导致非确定性 |
+| **P3** 形式化可建模 | SFC 的并发步进语义需要交织模型（interleaving semantics），状态空间呈指数增长 |
+| **P4** WCET 可计算 | 并行分支的执行路径数不可在编译期确定 |
+
+**结论**：排除。所有四条件均被违反。推荐使用 $\mathtt{CASE}$ + $\mathtt{IF}$ 实现状态机替代。
+
+##### 无条件跳转（JMP / 标签）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | JMP 破坏结构化编程原则，安全关键系统禁止非结构化控制流（IEC 61508-3 第 5.2 节） |
+| **P2** 静态可决策性 | 跳转目标的静态可达性分析在存在间接 JMP 时不可判定 |
+| **P3** 形式化可建模 | JMP 的程序计数器赋值语义可在 Coq 中建模，但破坏了良基归纳的结构化证明 |
+| **P4** WCET 可计算 | 非结构化跳转导致控制流图包含不可达边和回边，WCET 路径分析需处理循环嵌套的任意组合 |
+
+**结论**：排除。所有四条件均被违反。
+
+##### 动态内存分配（__NEW / __DELETE）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 安全级系统中所有资源在启动时静态分配，运行时无需动态创建或销毁变量 |
+| **P2** 静态可决策性 | 堆分配的返回值在编译期不可预测 |
+| **P3** 形式化可建模 | 需要带堆的运行时模型 $\Sigma_{\text{heap}} = (\text{local}, \text{global}, \text{heap})$，堆的不变量证明复杂度高 |
+| **P4** WCET 可计算 | 堆分配的执行时间取决于碎片化程度，无确定性上界 |
+
+**结论**：排除。所有四条件均被违反。
+
+##### 异常处理（TRY / CATCH / __QUERY_EXCEPTION）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 安全级系统采用故障-安全（fail-safe）原则，异常应导致系统进入安全态而非捕获后继续执行 |
+| **P2** 静态可决策性 | 异常是否抛出依赖运行时数据，静态不可预测 |
+| **P3** 形式化可建模 | 异常的形式化语义需要异常状态 $\Sigma_{\text{exn}}$ 和展开规则，证明需处理异常控制流的非局部性 |
+| **P4** WCET 可计算 | 异常处理的执行时间因栈展开深度而异，无法在编译期确定上界 |
+
+**结论**：排除。所有四条件均被违反。
+
+##### 多目标赋值（a, b := c, d）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 多目标赋值是语法糖，不存在单目标赋值无法表达的安全用例 |
+| **P2** 静态可决策性 | 多目标赋值的求值顺序在 IEC 61131-3 中有明确定义，因此静态可判定 |
+| **P3** 形式化可建模 | 可在 Coq 中建模为语法糖展开为多个单赋值语句 |
+| **P4** WCET 可计算 | 可计算 |
+
+**结论**：排除。原则 P1 不满足（无不可替代的安全用例），且会增加编译器复杂度而不增加表达能力。通过展开为多个单赋值语句替代。
+
+##### 内联非 ST 代码（__codedescriptor / 内联 C）
+
+| 判据 | 分析 |
+|------|------|
+| **P1** 安全关键适配 | 在安全级系统中插入非验证代码违反了整条信任链的闭合性 |
+| **P2** 静态可决策性 | 非 ST 代码的语义不属于 SafeST 的形式化范畴 |
+| **P3** 形式化可建模 | 外部代码的语义在 Coq 中不可建模（否则可以形式化任意 C 程序） |
+| **P4** WCET 可计算 | 非 ST 代码的 WCET 不可由 SafeST 编译器保障 |
+
+**结论**：排除。所有四条件均被违反。
+
+#### 3.8.2 语句剪裁的完备性结论
+
+SafeST 保留的语句构造构成了一个**结构化控制流的最小完备集**：
+
+$$
+\{\text{赋值}, \text{IF}, \text{CASE}, \text{FOR}, \text{WHILE}, \text{REPEAT}, \text{FB 调用}, \text{RETURN}, \text{EXIT}\}
+$$
+
+Böhm-Jacopini 定理（1966）已经证明，任何程序都可以用这三种基本控制结构表达：顺序执行、条件分支（$\mathtt{IF}$ / $\mathtt{CASE}$）和循环（$\mathtt{FOR}$ / $\mathtt{WHILE}$ / $\mathtt{REPEAT}$）。SafeST 的语句集正是该定理在安全关键领域的工程实例——额外增加了 FB 调用以支持模块化、RETURN 以支持提前退出、EXIT 以支持循环内中断，但这些扩展均可约简为基本控制结构。被排除的构造（SFC、JMP、异常、动态内存、多目标赋值、内联代码）均可通过 P1-P4 给出形式化排除理由，且存在结构化语义等价的替代方案。
+
+---
+
+## 4. 词法规范 (Lexical Structure)
+
+### 4.1 字符集
 
 SafeST 源文件使用 **UTF-8 编码**（仅限 ASCII 子集用于关键字和标识符，字面量可使用 Unicode）。
 
-### 3.2 关键字
+### 4.2 关键字
 
 以下为 SafeST 保留关键字，不可用作标识符：
 
@@ -178,7 +721,7 @@ METHOD, PROPERTY, INTERFACE, CLASS, ACTION, TRANSITION, STEP,
 SFC 相关全部关键字
 ```
 
-### 3.3 标识符
+### 4.3 标识符
 
 ```
 标识符 := 字母 (字母 | 数字 | 下划线)*
@@ -192,7 +735,7 @@ SFC 相关全部关键字
 - 以下划线开头保留给系统变量
 - 关键字不可用作标识符
 
-### 3.4 字面量
+### 4.4 字面量
 
 ```
 整数字面量  := 十进制数字序列 (例: 42, -5, 0)
@@ -205,7 +748,7 @@ SFC 相关全部关键字
 	       (例: T#5s, T#100ms, T#1h30m)
 ```
 
-### 3.5 运算符
+### 4.5 运算符
 
 ```
 算术:      +  -  *  /  MOD
@@ -217,9 +760,9 @@ SFC 相关全部关键字
 
 ---
 
-## 4. 语法规范 (Syntax / AST)
+## 5. 语法规范 (Syntax / AST)
 
-### 4.1 基本类型
+### 5.1 基本类型
 
 ```ebnf
 <type> ::= BOOL
@@ -269,7 +812,7 @@ SFC 相关全部关键字
 - 最多 **3 维**
 - 禁止可变长度数组
 
-### 4.2 表达式 (Expressions)
+### 5.2 表达式 (Expressions)
 
 ```ebnf
 <literal>     ::= <integer_literal> | <real_literal> | <bool_literal> | <time_literal>
@@ -313,7 +856,7 @@ SFC 相关全部关键字
 | 6 | `XOR` | 左 |
 | 7 (最低) | `OR` | 左 |
 
-### 4.3 语句 (Statements)
+### 5.3 语句 (Statements)
 
 ```ebnf
 <stmt> ::= <identifier> ':=' <expr> ';'                      (* 赋值 *)
@@ -342,7 +885,7 @@ SFC 相关全部关键字
 <case_value> ::= <literal> | <literal> '..' <literal>
 ```
 
-### 4.4 程序组织单元 (POU)
+### 5.4 程序组织单元 (POU)
 
 ```ebnf
 <program> ::= PROGRAM <identifier>
@@ -379,7 +922,7 @@ SFC 相关全部关键字
                        END_VAR
 ```
 
-### 4.5 完整程序结构
+### 5.5 完整程序结构
 
 ```ebnf
 <safe_st_program> ::= <global_var_decl_section>*
@@ -388,9 +931,9 @@ SFC 相关全部关键字
 
 ---
 
-## 5. 类型系统 (Type System)
+## 6. 类型系统 (Type System)
 
-### 5.1 类型兼容性规则
+### 6.1 类型兼容性规则
 
 #### 5.1.1 隐式提升方向
 
@@ -440,7 +983,7 @@ SFC 相关全部关键字
 | `-` (负号) | INT/DINT/**LINT**/REAL/**LREAL** | 同操作数类型 |
 | `ABS` | INT/DINT/**LINT**/REAL/**LREAL** | 同操作数类型 |
 
-### 5.2 带质量类型的兼容性规则
+### 6.2 带质量类型的兼容性规则
 
 #### 5.2.1 质量值定义
 
@@ -501,7 +1044,7 @@ QUALITY        ❌        ✅③   ✅
 ③ Q(T) → QUALITY: 通过 Q_STATUS() 提取
 ```
 
-### 5.3 类型检查规则（语义）
+### 6.3 类型检查规则（语义）
 
 类型检查规则采用**自然演绎 (Natural Deduction)** 格式：
 
@@ -628,11 +1171,11 @@ QUALITY        ❌        ✅③   ✅
 
 ---
 
-## 6. SafeST 操作语义 (Operational Semantics)
+## 7. SafeST 操作语义 (Operational Semantics)
 
 SafeST 的操作语义采用**小步语义 (small-step semantics)** 定义，与 Coq 文件 `veristc/spec/compiler_correctness.v` 中的形式化定义一致。
 
-### 6.1 运行时状态
+### 7.1 运行时状态
 
 ```
 ST 运行时状态 σ = (vars, quality, pou_idx, stmt_idx, call_stack, cycle_cnt)
@@ -645,7 +1188,7 @@ ST 运行时状态 σ = (vars, quality, pou_idx, stmt_idx, call_stack, cycle_cnt
   cycle_cnt:  Z                          当前扫描周期的执行步数
 ```
 
-### 6.2 运行时值
+### 7.2 运行时值
 
 ```
 ST 运行时值 v ::= ST_V_BOOL(b)     b: bool
@@ -665,7 +1208,7 @@ ST 运行时质量 q ::= Q_GOOD | Q_BAD
 带质量的值 (Q 类型) = (st_value, quality) 二元组
 ```
 
-### 6.3 表达式求值规则（大步语义）
+### 7.3 表达式求值规则（大步语义）
 
 表达式求值为一个纯函数 `eval_expr(σ, e) → option (st_value × quality)`，无副作用。
 
@@ -762,7 +1305,7 @@ worst(q, Q_GOOD)           = q
 worst(q1, q2)              = q1  如果 q1 ≥ q2 (按质量序)
 ```
 
-### 6.4 语句小步语义
+### 7.4 语句小步语义
 
 小步语义用 `step_st(p, σ) → σ'` 表示 ST 程序 p 从状态 σ 执行一步到 σ'。
 
@@ -817,7 +1360,7 @@ step_st(p, σ[S_EXIT])
   = 跳出当前最内层循环                                               (St_Exit)
 ```
 
-### 6.5 多步执行与终态
+### 7.5 多步执行与终态
 
 ```
 -- 多步执行的自反传递闭包
@@ -832,7 +1375,7 @@ terminal_state(σ) := σ.call_stack = nil
 
 ---
 
-## 7. 安全约束 (Safety Constraints)
+## 8. 安全约束 (Safety Constraints)
 
 ### S1: 循环有界性
 
@@ -891,7 +1434,7 @@ FUNCTION_BLOCK 可以修改自身实例的 VAR_OUTPUT。
 
 ---
 
-## 8. 内置函数 (Built-in Functions)
+## 9. 内置函数 (Built-in Functions)
 
 SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 
@@ -905,7 +1448,7 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 | `SEL` | `BOOL, T, T → T` | 选择器 (SEL(g,a,b) = g?a:b) |
 | `MUX` | `INT, T... → T` | 多路选择 |
 
-### 8.1 质量操作内置函数（v1.1 新增）
+### 9.1 质量操作内置函数（v1.1 新增）
 
 | 函数 | 签名 | 说明 | WCET |
 |------|------|------|------|
@@ -920,14 +1463,14 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 
 所有质量函数的 WCET 均为固定指令数（无分支、无循环、无递归）。
 
-### 8.2 质量常量
+### 9.2 质量常量
 
 | 常量 | 编码值 | 含义 |
 |------|--------|------|
 | `GOOD` | 0 | 信号正常 |
 | `BAD` | 1 | 信号无效 |
 
-### 8.3 类型转换函数（v1.1 新增，LINT/LREAL）
+### 9.3 类型转换函数（v1.1 新增，LINT/LREAL）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
@@ -940,7 +1483,7 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 
 ---
 
-## 9. SafeST 语法限制总结
+## 10. SafeST 语法限制总结
 
 | 特性 | IEC 61131-3 ST | SafeST |
 |------|---------------|--------|
