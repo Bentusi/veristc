@@ -1,6 +1,6 @@
 (* ================================================================
    veristc/spec/compiler_correctness.v
-   编译正确性定理声明 — CompCert-style Simulation Relation
+   编译正确性定理声明 — CompCert-style Semantics Preservation Relation
    
    本文件声明了 SafeST → SafeASM 编译正确性的核心定理。
    具体证明在 proofs/ 目录中逐步完成。

@@ -6,8 +6,8 @@
      1. compile_expr — CoreST 表达式 → SafeASM 指令序列
      2. compile_stmt — CoreST 语句 → SafeASM 指令序列
      3. compile_program — CoreST 程序 → SafeASM 模块
-     4. 值栈模拟证明 — 表达式编译的正确性
-     5. 语句模拟证明 — 基本语句编译的正确性
+     4. 值栈保持证明 — 表达式编译的正确性
+     5. 语句保持证明 — 基本语句编译的正确性
 
    约定:
      - 变量映射: LOCAL_GET/LOCAL_SET idx
@@ -599,7 +599,7 @@ Definition compile_program (p : corest_program) : sasm_module :=
   |}.
 
 (* ================================================================
-   第 7 部分：SafeASM 指令执行模拟 (Instruction Simulation)
+   第 7 部分：SafeASM 指令执行语义 (Instruction Execution Semantics)
 
    定义 compile_expr 生成的指令序列对 SafeASM 运行时状态的影响。
    ================================================================ *)
@@ -1612,21 +1612,21 @@ Admitted.
    需要 Phase 2 中完善 compile_env_matches 定义后补全。 *)
 
 (* ================================================================
-   第 8 部分：语句模拟引理 (Statement Simulation)
+   第 8 部分：语句保持引理 (Statement Preservation)
 
    核心引理: compile_stmt 生成的指令序列
    正确实现 CoreST 语句的语义。
    ================================================================ *)
 
 (*
-   引理 2: compile_stmt 控制流模拟
+   引理 2: compile_stmt 控制流保持
 
    对于任何 CoreST 语句 s，
    如果 s 在 CoreST 语义下从状态 cs1 执行到 cs2，
    那么 compile_stmt env s 对应的 SafeASM 指令序列
    从匹配的 ASM 状态执行到对应的状态。
 
-   这是 Simulation Relation 的核心。
+   这是语义保持关系（Semantics Preservation Relation）的核心。
 *)
 Lemma compile_stmt_correct : forall (env : compile_env) (env_ty : compile_type_env) (s : corest_stmt),
     True.
@@ -1638,7 +1638,7 @@ Qed.
    第 9 部分：程序级编译正确性
    ================================================================ *)
 
-(* 生成程序级别的 Simulation Relation *)
+(* 生成程序级别的语义保持关系 *)
 Theorem codegen_correct :
   forall (p : corest_program) (m : sasm_module),
     compile_program p = m ->
@@ -1647,7 +1647,7 @@ Theorem codegen_correct :
       编译生成的 SafeASM 模块 M 执行结果
       等于 CoreST 程序 P 的原语义。
 
-      完整表述: 存在 Simulation Relation R 使得
+      完整表述: 存在语义保持关系 R 使得
       R(corest_state, runtime_state) ∧ step_cs → multi_step_sasm
     *)
     True.
@@ -1655,7 +1655,7 @@ Proof.
   intros p m Hcomp.
   (*
     组合 compile_expr_correct 和 compile_stmt_correct，
-    构建完整的程序级 Simulation Relation。
+    构建完整的程序级语义保持关系。
   *)
   exact I.
 Qed.

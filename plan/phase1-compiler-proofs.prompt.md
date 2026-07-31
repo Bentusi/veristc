@@ -15,7 +15,7 @@ description: 'Phase 1: implement VeriSTC compiler passes with Coq correctness pr
 |------|------|---------|-----------|
 | 1.1 | `veristc/src/typechecker.v` | 类型检查器 + 类型推理规则 | `type_safety` (progress + preservation) |
 | 1.2 | `veristc/src/desugar.v` | 脱糖（AST → CoreST IR） | `desugar_semantics_preservation` |
-| 1.3 | `veristc/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_simulation` **（核心定理）** |
+| 1.3 | `veristc/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_preservation` **（核心定理）** |
 | 1.4 | `veristc/src/analysis.v` | 静态分析（WCET/循环上限/栈深度） | 无证明（工具性质） |
 | 1.5 | `veristc/extraction/` | Coq Extraction → OCaml 配置 | 无（工具链配置） |
 
@@ -38,10 +38,10 @@ description: 'Phase 1: implement VeriSTC compiler passes with Coq correctness pr
 
 ### 代码生成（周 9-12）— 核心工作
 1. 实现 `codegen : CoreST → SafeASM Module`
-2. 逐构造证明 Simulation Relation：
-   - 表达式编译 → 值栈模拟
-   - 语句编译 → 控制流模拟
-   - 函数编译 → CALL/RETURN 模拟
+2. 逐构造证明语义保持关系（Semantics Preservation Relation）：
+   - 表达式编译 → 值栈保持
+   - 语句编译 → 控制流保持
+   - 函数编译 → CALL/RETURN 保持
 3. 这是整个项目**最关键的定理**，需要最多的证明工作量
 
 ### 编码器完善（周 13-14）
@@ -62,4 +62,4 @@ description: 'Phase 1: implement VeriSTC compiler passes with Coq correctness pr
 ## 关键决策
 
 - **实现+证明同文件**：每个阶段与其证明在同一 `.v` 文件中（CompCert 风格）
-- **证明策略**：优先使用 `omega`/`lia`/`auto` 自动化策略，核心 Simulation Relation 需手动引导
+- **证明策略**：优先使用 `omega`/`lia`/`auto` 自动化策略，核心语义保持关系需手动引导

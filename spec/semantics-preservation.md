@@ -425,7 +425,7 @@ ST:  b := (x > 0) AND (y / x > 5)
       LOCAL_SET b_idx        ; b := 结果
       
       │
-      ▼  模拟证明:
+      ▼  保持证明:
      情况 1: x ≤ 0
        ST:    (x > 0)=false → 逻辑，不计算右侧 → b:=false
        ASM:   BR_IF 跳转到 false_br → I32_CONST 0 → b:=0
@@ -505,7 +505,7 @@ ST:  CASE mode OF
        ST: mode=v → 选择匹配分支 → state := 对应值
        ASM: 级联 BR_IF → 命中匹配分支 → state := 对应值
        
-     关键保证: 级联条件链精确模拟了 CASE 的"依次匹配-执行-跳出"语义 ✅
+     关键保证: 级联条件链精确保持了 CASE 的"依次匹配-执行-跳出"语义 ✅
      多值分支 (3,4) 和范围分支 (5..10) 通过多条比较指令实现，效果等价 ✅
 ```
 
@@ -854,9 +854,9 @@ ST:  IF a > b THEN
   after_if:
 
      │
-     ▼  语义保持（模拟证明的关键）:
+     ▼  语义保持（保持证明的关键）:
      
-     模拟关系需要证明: 对任意嵌套深度 d,
+     保持关系需要证明: 对任意嵌套深度 d,
      如果 ST 执行到嵌套深度 d 的位置，
      则 ASM 的 pc 也指向对应的嵌套深度 d 的位置。
      
@@ -1159,7 +1159,7 @@ R(st_state, asm_state) 定义为:
    ASM 世界:       t1 ──多步──→ t2
     
    不管 ST 中怎么跳，ASM 总能"跟上"并保持状态一致。
-   编译没有改变程序的语义。这叫作 Simulation Relation。
+   编译没有改变程序的语义。这叫作语义保持关系（Semantics Preservation Relation）。
 ```
 
 ### 7.3 安全保持定理
@@ -1253,31 +1253,31 @@ A: 通过 CALL/RETURN 指令机制和栈帧管理。参数在调用前压入值�
 |---------|-------------|-------------|---------------|
 | 字面量 | `codegen.v` | `compile_literal_correct` | `simpl; auto` |
 | 变量引用 | `codegen.v` | `compile_var_correct` | `unfold var_to_sasm_offset` |
-| 二元运算 | `codegen.v` | `compile_binop_simulation` | `induction; step_simpl` |
-| 一元运算 | `codegen.v` | `compile_unop_simulation` | `case analysis on op` |
-| 比较运算 | `codegen.v` | `compile_compare_simulation` | `case analysis; omega` |
-| 逻辑 AND/OR | `codegen.v` | `compile_shortcircuit_simulation` | `case analysis on cond; eauto` |
-| XOR | `codegen.v` | `compile_xor_simulation` | `unfold xorb; auto` |
-| 数组访问 | `codegen.v` | `compile_array_access_simulation` | `lia; apply bounds_check_correct` |
-| 赋值 | `codegen.v` | `compile_assign_simulation` | `eapply compile_expr_correct` |
-| IF-THEN-ELSE | `codegen.v` | `compile_if_simulation` | `case analysis; eauto 3` |
-| CASE | `codegen.v` | `compile_case_simulation` | `induction on branches; eauto` |
-| FOR 循环 | `codegen.v` | `compile_for_simulation` | `invariant induction; omega` |
-| WHILE 循环 | `codegen.v` | `compile_while_simulation` | `invariant induction; omega` |
-| REPEAT 循环 | `codegen.v` | `compile_repeat_simulation` | `invariant induction; omega` |
-| EXIT | `codegen.v` | `compile_exit_simulation` | `unfold br_depth; auto` |
-| RETURN | `codegen.v` | `compile_return_simulation` | `unfold pop_frame; auto` |
-| 函数调用 | `codegen.v` | `compile_call_simulation` | `eapply frame_push_correct` |
-| FB 调用 | `codegen.v` | `compile_fb_simulation` | `eapply fb_memory_layout_correct` |
-| 类型转换 | `codegen.v` | `compile_typecast_simulation` | `case analysis on conversion type` |
-| **质量传播（二元运算）** | `codegen.v` | `compile_quality_binop_simulation` | **`destruct q1, q2; auto` (v1.1)** |
-| **质量传播（一元运算）** | `codegen.v` | `compile_quality_unop_simulation` | **`destruct q; auto` (v1.1)** |
-| **Q_STATUS 提取** | `codegen.v` | `compile_qstatus_simulation` | **`unfold lookup_quality` (v1.1)** |
-| **Q_SET 写入** | `codegen.v` | `compile_qset_simulation` | **`unfold update_quality` (v1.1)** |
-| **Q_WITH 构造** | `codegen.v` | `compile_qwith_simulation` | **`split; auto` (v1.1)** |
-| **Q_GOOD/Q_BAD 检查** | `codegen.v` | `compile_qcheck_simulation` | **`destruct q; auto` (v1.1)** |
-| **T→QT 转换** | `codegen.v` | `compile_t_to_qt_simulation` | **`split; reflexivity` (v1.1)** |
-| **QT→T 转换** | `codegen.v` | `compile_qt_to_t_simulation` | **`simpl; auto` (v1.1)** |
+| 二元运算 | `codegen.v` | `compile_binop_preservation` | `induction; step_simpl` |
+| 一元运算 | `codegen.v` | `compile_unop_preservation` | `case analysis on op` |
+| 比较运算 | `codegen.v` | `compile_compare_preservation` | `case analysis; omega` |
+| 逻辑 AND/OR | `codegen.v` | `compile_shortcircuit_preservation` | `case analysis on cond; eauto` |
+| XOR | `codegen.v` | `compile_xor_preservation` | `unfold xorb; auto` |
+| 数组访问 | `codegen.v` | `compile_array_access_preservation` | `lia; apply bounds_check_correct` |
+| 赋值 | `codegen.v` | `compile_assign_preservation` | `eapply compile_expr_correct` |
+| IF-THEN-ELSE | `codegen.v` | `compile_if_preservation` | `case analysis; eauto 3` |
+| CASE | `codegen.v` | `compile_case_preservation` | `induction on branches; eauto` |
+| FOR 循环 | `codegen.v` | `compile_for_preservation` | `invariant induction; omega` |
+| WHILE 循环 | `codegen.v` | `compile_while_preservation` | `invariant induction; omega` |
+| REPEAT 循环 | `codegen.v` | `compile_repeat_preservation` | `invariant induction; omega` |
+| EXIT | `codegen.v` | `compile_exit_preservation` | `unfold br_depth; auto` |
+| RETURN | `codegen.v` | `compile_return_preservation` | `unfold pop_frame; auto` |
+| 函数调用 | `codegen.v` | `compile_call_preservation` | `eapply frame_push_correct` |
+| FB 调用 | `codegen.v` | `compile_fb_preservation` | `eapply fb_memory_layout_correct` |
+| 类型转换 | `codegen.v` | `compile_typecast_preservation` | `case analysis on conversion type` |
+| **质量传播（二元运算）** | `codegen.v` | `compile_quality_binop_preservation` | **`destruct q1, q2; auto` (v1.1)** |
+| **质量传播（一元运算）** | `codegen.v` | `compile_quality_unop_preservation` | **`destruct q; auto` (v1.1)** |
+| **Q_STATUS 提取** | `codegen.v` | `compile_qstatus_preservation` | **`unfold lookup_quality` (v1.1)** |
+| **Q_SET 写入** | `codegen.v` | `compile_qset_preservation` | **`unfold update_quality` (v1.1)** |
+| **Q_WITH 构造** | `codegen.v` | `compile_qwith_preservation` | **`split; auto` (v1.1)** |
+| **Q_GOOD/Q_BAD 检查** | `codegen.v` | `compile_qcheck_preservation` | **`destruct q; auto` (v1.1)** |
+| **T→QT 转换** | `codegen.v` | `compile_t_to_qt_preservation` | **`split; reflexivity` (v1.1)** |
+| **QT→T 转换** | `codegen.v` | `compile_qt_to_t_preservation` | **`simpl; auto` (v1.1)** |
 | 脱糖 (Desugar) | `desugar.v` | `desugar_semantics_preservation` | `induction; simpl; auto` |
 | 类型检查 (Type Safety) | `typechecker.v` | `progress` + `preservation` | `induction; inversion; auto` |
 | 整体编译 | `compiler_correctness.v` | `total_semantics_preservation` | `apply multi_step_sasm_trans` |
@@ -1287,35 +1287,35 @@ A: 通过 CALL/RETURN 指令机制和栈帧管理。参数在调用前压入值�
 ```
 total_semantics_preservation (整体语义保持定理)
   │
-  ├── semantics_preservation (单步模拟)
+  ├── semantics_preservation (单步保持)
   │     │
   │     ├── compile_expr_correct (表达式求值保持) 
   │     │     ├── compile_literal_correct
   │     │     ├── compile_var_correct
-  │     │     ├── compile_binop_simulation
-  │     │     ├── compile_shortcircuit_simulation
-  │     │     ├── compile_typecast_simulation
+  │     │     ├── compile_binop_preservation
+  │     │     ├── compile_shortcircuit_preservation
+  │     │     ├── compile_typecast_preservation
   │     │     └── quality层 (v1.1):
-  │     │           ├── compile_quality_binop_simulation
-  │     │           ├── compile_quality_unop_simulation
-  │     │           ├── compile_qstatus_simulation
-  │     │           ├── compile_qset_simulation
-  │     │           ├── compile_qwith_simulation
-  │     │           ├── compile_qcheck_simulation
-  │     │           ├── compile_t_to_qt_simulation
-  │     │           └── compile_qt_to_t_simulation
+  │     │           ├── compile_quality_binop_preservation
+  │     │           ├── compile_quality_unop_preservation
+  │     │           ├── compile_qstatus_preservation
+  │     │           ├── compile_qset_preservation
+  │     │           ├── compile_qwith_preservation
+  │     │           ├── compile_qcheck_preservation
+  │     │           ├── compile_t_to_qt_preservation
+  │     │           └── compile_qt_to_t_preservation
   │     │
-  │     └── compile_stmt_simulation (语句执行保持)
-  │           ├── compile_assign_simulation
-  │           ├── compile_if_simulation
-  │           ├── compile_case_simulation
-  │           ├── compile_for_simulation
-  │           ├── compile_while_simulation
-  │           ├── compile_repeat_simulation
-  │           ├── compile_call_simulation
-  │           ├── compile_fb_simulation
-  │           ├── compile_exit_simulation
-  │           └── compile_return_simulation
+  │     └── compile_stmt_preservation (语句执行保持)
+  │           ├── compile_assign_preservation
+  │           ├── compile_if_preservation
+  │           ├── compile_case_preservation
+  │           ├── compile_for_preservation
+  │           ├── compile_while_preservation
+  │           ├── compile_repeat_preservation
+  │           ├── compile_call_preservation
+  │           ├── compile_fb_preservation
+  │           ├── compile_exit_preservation
+  │           └── compile_return_preservation
   │
   └── desugar_semantics_preservation (脱糖保持)
   

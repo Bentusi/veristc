@@ -18,7 +18,7 @@ description: 'Phase 0: define SafeST/SafeASM specifications and build project sk
 | SafeASM 规范（文档） | `spec/safeasm-spec.md` | 指令集 + 固定宽度二进制格式（开发可读） |
 | SafeASM 规范（Coq） | `veristc/spec/safeasm.v` | 指令/模块/语义的 Coq Inductive 定义 |
 | 语义保持说明 | `spec/semantics-preservation.md` | ST→ASM 映射 + 正确性定理（开发可读） |
-| 编译正确性定理 | `veristc/spec/compiler_correctness.v` | Simulation Relation 的 Coq 定理声明 |
+| 编译正确性定理 | `veristc/spec/compiler_correctness.v` | 语义保持关系（Semantics Preservation Relation）的 Coq 定理声明 |
 | 词法分析器 | `veristc/src/lexer.v` | Gallina 手写，含完备性/健全性证明 |
 | 递归下降解析器 | `veristc/src/parser.v` | Gallina 手写，含良构性证明 |
 | 二进制编码器 | `veristc/src/encoder.v` | SafeASM IR → `.sasm` 字节序列 |
