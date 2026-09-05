@@ -23,6 +23,35 @@ VM_Interface g_vm_interface = { 0 };
 #include "../../vm/safeasm_interp.c"
 
 /* ================================================================
+   从真实 .sasm 文件加载并执行
+   验证 Phase 0 里程碑: loader + interpreter 端到端可用。
+   ================================================================ */
+
+static void test_load_return42_sasm(void) {
+    const char *path = "tests/sasm-examples/return42.sasm";
+    FILE *fp = fopen(path, "rb");
+    assert(fp != NULL);
+
+    uint8_t buf[256];
+    size_t len = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    assert(len >= 8 && len < sizeof(buf));
+
+    SasmModule module;
+    assert(sasm_load(buf, (uint32_t)len, &module) == 0);
+    assert(sasm_validate(&module) == true);
+
+    VM vm;
+    assert(vm_init(&vm, &module, 256) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    assert(vm_get_result(&vm) == 42);
+
+    printf("测试 2: 从 return42.sasm 加载执行...\n");
+    printf("  结果: %d (期望: 42)\n", vm_get_result(&vm));
+    printf("测试 2: 通过 ✅\n");
+}
+
+/* ================================================================
    手写最小 .sasm 二进制
    等效功能: int main() { return 42; }
    
@@ -575,6 +604,7 @@ int main(void) {
     printf("========================================\n\n");
     
     test_return_42();
+    test_load_return42_sasm();
     test_arithmetic();
     test_div_by_zero();
     test_conditional();
@@ -585,7 +615,7 @@ int main(void) {
     test_i64_arith();
     
     printf("\n========================================\n");
-    printf("  全部 9 个测试通过 ✅\n");
+    printf("  全部 10 个测试通过 ✅\n");
     printf("  里程碑验证完成\n");
     printf("========================================\n");
     return 0;

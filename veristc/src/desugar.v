@@ -221,7 +221,6 @@ Fixpoint corest_eval_expr (env : corest_eval_env) (e : corest_expr) : option st_
           end
       | Q_GOOD => Some (ST_V_BOOL true)
       | Q_BAD => Some (ST_V_BOOL false)
-      | Q_UNCERTAIN => Some (ST_V_BOOL false)
       | _ => Some (ST_V_INT 0)
       end
   end.

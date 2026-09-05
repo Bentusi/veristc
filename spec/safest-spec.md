@@ -1457,7 +1457,6 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 | `Q_WITH(v, q)` | `(T, QUALITY) → QT` | 用值 v 和质量 q 构造 Q 值 | 4 条指令 ✅ |
 | `Q_GOOD(x)` | `QT → BOOL` | 检查质量是否 GOOD | 4 条指令 ✅ |
 | `Q_BAD(x)` | `QT → BOOL` | 检查质量是否 BAD | 4 条指令 ✅ |
-| `Q_UNCERTAIN(x)` | `QT → BOOL` | 检查质量是否 UNCERTAIN | 4 条指令 ✅ |
 | `Q_SET(x, q)` | `(QT, QUALITY) → void` | 强制设置 Q 变量的质量 | 3 条指令 ✅ |
 | `Q_FORCE(x, v, q)` | `(QT, T, QUALITY) → void` | 强制设值 v 和质量 q | 7 条指令 ✅ |
 

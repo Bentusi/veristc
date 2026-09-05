@@ -42,9 +42,13 @@ RTTHREAD_SRCS = $(RTTHREAD_DIR)/vm_rtthread.c
 RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
-.PHONY: all coq vm-lib vm-io vm-hs vm-test sasm-dump rtthread clean
+.PHONY: all coq vm-lib vm-io vm-hs vm-test sasm-dump rtthread clean verify
 
 all: coq vm-lib vm-hs vm-test sasm-dump
+
+# Phase 0 验收入口：Coq 规范/骨架编译 + C VM 全量构建 + 里程碑测试
+verify: all
+	@echo "Phase 0 verification passed: Coq files compiled, VM libraries built, milestone tests passed."
 
 # ================================================================
 # VM 核心库编译
@@ -123,11 +127,8 @@ rtthread: $(VM_CORE_LIB) $(VM_IO_LIB)
 # Coq/Rocq 编译器
 # ================================================================
 
-# 自动检测 Rocq 标准库路径（如 /home/wei/.opam/default/bin/coqc 找不到 Stdlib 则尝试 COQLIB）
-COQC := /home/wei/.opam/default/bin/coqc
-ifndef COQLIB
-COQLIB := $(shell $(COQC) -where 2>/dev/null || echo "/usr/lib/rocq")
-endif
+# 自动检测 Rocq/Coq 编译器路径；仍可通过 make COQC=/path/to/coqc 覆盖。
+COQC ?= $(shell command -v coqc 2>/dev/null || command -v rocq 2>/dev/null || echo coqc)
 
 VERISTC_DIR = veristc
 ROQC = $(COQC)
