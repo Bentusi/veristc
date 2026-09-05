@@ -21,7 +21,7 @@ From Stdlib Require Import String.
 Require Import veristc_spec.safest.
 Require Import veristc_spec.safeasm.
 Require Import veristc_src.desugar.
-Require Import veristc_spec.compiler_correctness.
+Require Import veristc_spec.st_semantics.
 Local Open Scope Z_scope.
 Import ListNotations.
 
@@ -1552,8 +1552,38 @@ Proof.
       rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
     -- (* Q_BAD *)
       rewrite Forall_app; split; [apply compile_quality_status_no_return | repeat constructor; try congruence].
-    -- admit. (* 其他质量操作的情况可以类似处理 *)
-Admitted.
+    -- (* Q_SET *)
+      destruct args as [|a1 [|a2 [|a3 rest]]]; simpl.
+      all: try solve [repeat constructor; discriminate].
+      all: destruct a1; simpl.
+      all: try solve [repeat constructor; discriminate].
+      all: try solve [repeat constructor; discriminate].
+      destruct (lookup_var_idx env i) as [idx|]; simpl;
+        [ rewrite Forall_app; split;
+          [ apply IH; exact a2
+          | repeat constructor; try congruence ]
+        | repeat constructor; try congruence ].
+    -- (* Q_WITH *)
+      destruct args as [|a1 [|a2 [|a3 rest]]]; simpl.
+      all: try solve [repeat constructor; discriminate].
+      rewrite Forall_app; split.
+      + apply IH; exact a1.
+      + apply IH; exact a2.
+    -- (* Q_FORCE *)
+      destruct args as [|a1 [|a2 [|a3 [|a4 rest]]]]; simpl.
+      all: try solve [repeat constructor; discriminate].
+      all: destruct a1; simpl.
+      all: try solve [repeat constructor; discriminate].
+      all: try solve [repeat constructor; discriminate].
+      destruct (lookup_var_idx env i) as [idx|]; simpl;
+        [ rewrite Forall_app; split;
+          [ apply IH; exact a2
+          | repeat constructor; try congruence;
+            rewrite Forall_app; split;
+            [ apply IH; exact a3
+            | repeat constructor; try congruence ] ]
+        | repeat constructor; try congruence ].
+Qed.
 
 (* ================================================================
    第 7e 节：compile_expr_preserves_frame_count
@@ -1572,9 +1602,10 @@ Proof.
 Qed.
 
 (* ================================================================
-   第 7e 节：compile_expr_correct — 原始引理（栈引理的特例）
+   第 7e 节：表达式逐构造保持引理
 
-   compile_expr_correct_stack 在 extra = [] 时的特例。
+   当前提供 compile_literal_correct / compile_var_correct /
+   compile_int_binop_literal_correct；整体命题待 frame/memory 不变量重构。
    ================================================================ *)
 
 (* 编译环境与求值环境的一致性 *)
@@ -1583,33 +1614,69 @@ Definition compile_env_matches (env : compile_env) (env_s : corest_eval_env) : P
     lookup_var_idx env x = Some idx ->
     exists (v : st_value), List.In (x, v) env_s.
 
-(* 编译正确性定理（基础版）：若 corest_eval_expr 求值得 v，
-   则 compile_expr 生成的指令序列执行后值栈顶为 st_val_to_sasm_val v。
-   CE_LIT 和 CE_VAR 已证明，其余为骨架（后续填充）。 *)
-Lemma compile_expr_correct : forall (env : compile_env) (env_ty : compile_type_env) (e : corest_expr)
-                              (env_s : corest_eval_env) (v : st_value),
-    corest_eval_expr env_s e = Some v ->
+(* 字面量编译保持：corest_eval_expr (CE_LIT l) = v
+   等价于 I32/I64/F32/F64_CONST 执行后值栈顶 = st_val_to_sasm_val v。 *)
+Lemma compile_literal_correct : forall (env : compile_env) (l : st_literal)
+                                 (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s (CE_LIT l) = Some v ->
     forall (st0 : runtime_state),
       exists (st' : runtime_state),
-        exec_instrs st0 (compile_expr env e) = Some st' /\
+        exec_instrs st0 (compile_expr env (CE_LIT l)) = Some st' /\
         List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
 Proof.
-  intros env env_ty e env_s v Heval st0.
-  induction e; simpl in Heval; try discriminate.
-  - (* CE_VAR *) admit.
-  - (* CE_UNARY_OP *) admit.
-  - (* CE_BIN_OP *) admit.
-  - (* CE_COMP *) admit.
-  - (* CE_AND *) admit.
-  - (* CE_OR *) admit.
-  - (* CE_XOR *) admit.
-  - (* CE_FUNC_CALL *) admit.
-  - (* CE_QUALITY_OP *) admit.
-Admitted.
+  intros env l env_s v Heval st0.
+  destruct l; simpl in Heval; try discriminate;
+    inversion Heval; subst.
+  all: eexists; split.
+  all: try reflexivity.
+  all: reflexivity.
+Qed.
 
-(* 注意: compile_expr_correct 需要 compile_env_matches env env_s 作为前提条件，
-   才能证明 CE_VAR 以及依赖 CE_VAR 的复合表达式。当前 9 个 case 的 admit
-   需要 Phase 2 中完善 compile_env_matches 定义后补全。 *)
+(* 变量引用保持：当前帧 locals[idx] 与 env_s 中的值一致时，
+   LOCAL_GET idx 执行后值栈顶为该值。 *)
+Lemma compile_var_correct :
+  forall (env : compile_env) (x : ident) (v : st_value) (idx : Z)
+         (st0 : runtime_state) (f : sasm_frame),
+    lookup_var_idx env x = Some idx ->
+    st0.(rt_frames) = f :: nil ->
+    List.nth_error f.(frame_locals) (Z.to_nat idx) = Some (st_val_to_sasm_val v) ->
+    exists (st' : runtime_state),
+      exec_instrs st0 (compile_expr env (CE_VAR x)) = Some st' /\
+      List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env x v idx st0 f Hidx Hfr Hframe.
+  simpl.
+  rewrite Hidx. simpl.
+  rewrite Hfr. simpl.
+  rewrite Hframe. simpl.
+  eexists; split; reflexivity.
+Qed.
+
+(* 32 位整数字面量二元运算：CoreST 求值结果与编译后的 I32 指令序列一致。 *)
+Lemma compile_int_binop_literal_correct :
+  forall (env : compile_env) (op : binary_op) (n1 n2 : Z)
+         (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s
+      (CE_BIN_OP op (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env
+             (CE_BIN_OP op (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env op n1 n2 env_s v Heval st0.
+  destruct op; simpl in Heval; inversion Heval; subst.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
+(* 旧的整体命题 compile_expr_correct 缺少帧一致性、内存/质量区初始化和
+   类型分派前提，对任意 st0 并不成立，不能以 Admitted 保留。
+   当前以逐构造闭合引理替代：
+   - compile_literal_correct
+   - compile_var_correct
+   - compile_int_binop_literal_correct
+   完整语义保持定理需在引入 frame/memory/type 一致性不变量后重建。 *)
 
 (* ================================================================
    第 8 部分：语句保持引理 (Statement Preservation)
@@ -1654,7 +1721,7 @@ Theorem codegen_correct :
 Proof.
   intros p m Hcomp.
   (*
-    组合 compile_expr_correct 和 compile_stmt_correct，
+    组合逐构造表达式保持引理和 compile_stmt_correct，
     构建完整的程序级语义保持关系。
   *)
   exact I.

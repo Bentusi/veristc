@@ -135,7 +135,7 @@ ROQC = $(COQC)
 ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 
 # Spec files (compile in order due to dependencies)
-SPEC_FILES = spec/safeasm.v spec/safest.v spec/compiler_correctness.v
+SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/compiler_correctness.v
 
 # Src files (depend on spec files)
 SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/desugar.v src/analysis.v src/typechecker.v src/codegen.v
@@ -166,15 +166,15 @@ $(VERISTC_DIR)/extraction/%.vo: $(VERISTC_DIR)/extraction/%.v
 	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) extraction/$*.v
 
 # ── 依赖关系 ──
-$(VERISTC_DIR)/spec/compiler_correctness.vo: $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo
+$(VERISTC_DIR)/spec/compiler_correctness.vo: $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
 
 $(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo
 $(VERISTC_DIR)/src/parser.vo:        $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/lexer.vo
-$(VERISTC_DIR)/src/desugar.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/compiler_correctness.vo
+$(VERISTC_DIR)/src/desugar.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
 $(VERISTC_DIR)/src/analysis.vo:      $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/desugar.vo
-$(VERISTC_DIR)/src/typechecker.vo:   $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/compiler_correctness.vo
-$(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/compiler_correctness.vo $(VERISTC_DIR)/src/desugar.vo
+$(VERISTC_DIR)/src/typechecker.vo:   $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
+$(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/st_semantics.vo $(VERISTC_DIR)/src/desugar.vo
 
 $(VERISTC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
 

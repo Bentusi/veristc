@@ -16,7 +16,7 @@ From Stdlib Require Import ZArith.
 From Stdlib Require Import Bool.
 From Stdlib Require Import String.
 Require Import veristc_spec.safest.
-Require Import veristc_spec.compiler_correctness.
+Require Import veristc_spec.st_semantics.
 Local Open Scope Z_scope.
 Import ListNotations.
 
@@ -343,7 +343,14 @@ Fixpoint type_check_expr (fenv : type_env_func) (env : type_env) (e : st_expr) :
   | E_QUALITY_OP Q_WITH args =>
       match args with
       | [e1; e2] => match type_check_expr nil env e2 with
-                   | Some T_QUALITY => type_check_expr nil env e1
+                   | Some T_QUALITY =>
+                       match type_check_expr nil env e1 with
+                       | Some ty1 =>
+                           if is_plain_base_type ty1
+                           then Some (add_quality ty1)
+                           else None
+                       | None => None
+                       end
                    | _ => None
                    end
       | _ => None
@@ -628,45 +635,249 @@ Qed.
 
 
 
-(* 核心定理: type_check_expr 的正确性（soundness） *)
-Theorem type_check_expr_sound : forall fenv env e ty,
+(* 核心定理: type_check_expr 的正确性（soundness）
+   论文 §7.1 的公式以空函数环境 ∅ 为规范，编译器在程序级检查
+   函数调用前先把程序级函数环境展开到 AST，因此这里统一为 ∅。 *)
+Theorem type_check_expr_sound : forall env e ty,
     type_check_expr nil env e = Some ty ->
-    has_type fenv env e ty.
+    has_type nil env e ty.
 Proof.
-  intro fenv; intro env; induction e; intro ty; simpl; try discriminate.
-  all: admit.
-Admitted.
+  intro env.
+  fix IH 1.
+  intros e ty Hty.
+  destruct e; simpl in Hty; try discriminate.
+  - (* E_LIT *)
+    apply T_Literal; exact Hty.
+  - (* E_VAR *)
+    apply T_Var; exact Hty.
+  - (* E_ARRAY_ACCESS *)
+    destruct (type_check_expr nil env e1) as [t_arr|] eqn:Harr; simpl in Hty; try discriminate.
+    destruct t_arr; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t_idx|] eqn:Hidx; simpl in Hty; try discriminate.
+    destruct t_idx; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    match goal with
+    | Harr : type_check_expr nil env e1 = Some (T_ARRAY ?elem_ty ?lo ?hi)
+      |- _ =>
+        apply (T_ArrayAccess nil env e1 e2 elem_ty lo hi);
+        [ exact (IH e1 (T_ARRAY elem_ty lo hi) Harr)
+        | exact (IH e2 T_INT Hidx) ]
+    end.
+  - (* E_UNARY_OP *)
+    destruct (type_check_expr nil env e) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct (is_valid_unary_dec u t1) eqn:Hvalid; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply (T_Unary nil env e u ty).
+    + exact (IH e ty H1).
+    + apply is_valid_unary_dec_sound; exact Hvalid.
+  - (* E_BIN_OP *)
+    destruct (type_check_expr nil env e1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+    destruct (promote_type_dec t1 t2) as [t3|] eqn:Hprom; simpl in Hty; try discriminate.
+    destruct (is_valid_binary_dec b t3) eqn:Hvalid; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply (T_BinOp nil env e1 e2 b t1 t2 ty).
+    + exact (IH e1 t1 H1).
+    + exact (IH e2 t2 H2).
+    + apply promote_type_dec_sound.
+      exact Hprom.
+    + apply is_valid_binary_dec_sound.
+      exact Hvalid.
+  - (* E_COMP *)
+    destruct (type_check_expr nil env e1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+    destruct (type_comparable_dec t1 t2) eqn:Hcomp; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply (T_Compare nil env e1 e2 c t1 t2).
+    + exact (IH e1 t1 H1).
+    + exact (IH e2 t2 H2).
+    + apply orb_true_iff in Hcomp.
+      destruct Hcomp as [Hc1|Hc2].
+      * left; apply type_compatible_dec_sound; exact Hc1.
+      * right; apply type_compatible_dec_sound; exact Hc2.
+  - (* E_AND *)
+    destruct (type_check_expr nil env e1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply T_And with (e1 := e1) (e2 := e2).
+    + exact (IH e1 T_BOOL H1).
+    + exact (IH e2 T_BOOL H2).
+  - (* E_OR *)
+    destruct (type_check_expr nil env e1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply T_Or with (e1 := e1) (e2 := e2).
+    + exact (IH e1 T_BOOL H1).
+    + exact (IH e2 T_BOOL H2).
+  - (* E_XOR *)
+    destruct (type_check_expr nil env e1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty; subst.
+    apply T_Xor with (e1 := e1) (e2 := e2).
+    + exact (IH e1 T_BOOL H1).
+    + exact (IH e2 T_BOOL H2).
+  - (* E_QUALITY_OP *)
+    destruct q; simpl in Hty.
+    + (* Q_STATUS *)
+      destruct l as [|arg [|args']]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg) as [t_arg|] eqn:Harg; simpl in Hty; try discriminate.
+      destruct (is_quality_type t_arg) eqn:Hq; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QStatus nil env arg t_arg).
+      * exact (IH arg t_arg Harg).
+      * exact Hq.
+    + (* Q_VALUE *)
+      destruct l as [|arg [|args']]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg) as [t_arg|] eqn:Harg; simpl in Hty; try discriminate.
+      destruct (is_quality_type t_arg) eqn:Hq; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QValue nil env arg t_arg).
+      * exact (IH arg t_arg Harg).
+      * exact Hq.
+    + (* Q_GOOD *)
+      destruct l as [|arg [|args']]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg) as [t_arg|] eqn:Harg; simpl in Hty; try discriminate.
+      destruct (is_quality_type t_arg) eqn:Hq; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QCheck nil env arg t_arg Q_GOOD).
+      * exact (IH arg t_arg Harg).
+      * exact Hq.
+      * left; reflexivity.
+    + (* Q_BAD *)
+      destruct l as [|arg [|args']]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg) as [t_arg|] eqn:Harg; simpl in Hty; try discriminate.
+      destruct (is_quality_type t_arg) eqn:Hq; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QCheck nil env arg t_arg Q_BAD).
+      * exact (IH arg t_arg Harg).
+      * exact Hq.
+      * right; reflexivity.
+    + (* Q_SET *)
+      destruct l as [|arg1 [|arg2 [|args']]]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+      destruct t2; simpl in Hty; try discriminate.
+      destruct (is_quality_type t1) eqn:Hq; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QSet nil env arg1 arg2 t1).
+      * exact (IH arg1 t1 H1).
+      * exact Hq.
+      * exact (IH arg2 T_QUALITY H2).
+    + (* Q_WITH *)
+      destruct l as [|arg1 [|arg2 [|args']]]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+      destruct t2; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+      destruct (is_plain_base_type t1) eqn:Hplain; simpl in Hty; try discriminate.
+      inversion Hty; subst.
+      apply (T_QWith nil env arg1 arg2 t1 (add_quality t1)).
+      * exact (IH arg1 t1 H1).
+      * exact Hplain.
+      * reflexivity.
+      * exact (IH arg2 T_QUALITY H2).
+    + (* Q_FORCE *)
+      destruct l as [|arg1 [|arg2 [|arg3 [|args']]]]; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg1) as [t1|] eqn:H1; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg2) as [t2|] eqn:H2; simpl in Hty; try discriminate.
+      destruct (type_check_expr nil env arg3) as [t3|] eqn:H3; simpl in Hty; try discriminate.
+      destruct t3; simpl in Hty; try discriminate.
+      destruct (is_quality_type t1) eqn:Hq; simpl in Hty; try discriminate.
+      destruct (type_eqb (strip_quality t1) t2) eqn:Heq; simpl in Hty; try discriminate.
+      apply type_eqb_sound in Heq.
+      inversion Hty; subst.
+      apply (T_QForce nil env arg1 arg2 arg3 ty).
+      * exact (IH arg1 ty H1).
+      * exact Hq.
+      * match goal with
+        | H2 : type_check_expr nil env arg2 = Some ?vt |- _ =>
+            pose proof (IH arg2 vt H2) as Hty2
+        end.
+        match goal with
+        | He : strip_quality ty = ?vt |- _ => rewrite He in Hty2
+        | He : ?vt = strip_quality ty |- _ => rewrite <- He in Hty2
+        | _ => idtac
+        end.
+        exact Hty2.
+      * exact (IH arg3 T_QUALITY H3).
+Qed.
 
 
 
 (* 核心定理: type_check_expr 的完备性（completeness） *)
-Theorem type_check_expr_complete : forall fenv env e ty,
-    has_type fenv env e ty ->
+Theorem type_check_expr_complete : forall env e ty,
+    has_type nil env e ty ->
     type_check_expr nil env e = Some ty.
 Proof.
-  intros fenv env e ty H.
-  induction H; simpl; auto.
+  intros env e ty H.
+  remember nil as fenv eqn:Heqfenv.
+  induction H; subst.
+  - (* T_Literal *)
+    simpl.
+    exact H.
+  - (* T_Var *)
+    simpl.
+    exact H.
   - (* T_ArrayAccess *)
-    rewrite IHhas_type1. rewrite IHhas_type2. auto.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl). auto.
   - (* T_Unary *)
-    rewrite IHhas_type. apply is_valid_unary_dec_complete in H0. rewrite H0. auto.
+    simpl.
+    rewrite (IHhas_type eq_refl). apply is_valid_unary_dec_complete in H0. rewrite H0. auto.
   - (* T_BinOp *)
-    rewrite IHhas_type1. rewrite IHhas_type2.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl).
     apply promote_type_dec_complete in H1. rewrite H1.
     apply is_valid_binary_dec_complete in H2. rewrite H2. auto.
   - (* T_Compare *)
-    rewrite IHhas_type1. rewrite IHhas_type2.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl).
     unfold type_comparable_dec.
     destruct H1 as [Hcomp|Hcomp].
     + rewrite (type_compatible_dec_complete ty1 ty2 Hcomp). reflexivity.
     + rewrite (type_compatible_dec_complete ty2 ty1 Hcomp). rewrite orb_true_r. reflexivity.
   - (* T_And *)
-    rewrite IHhas_type1. rewrite IHhas_type2. auto.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl). auto.
   - (* T_Or *)
-    rewrite IHhas_type1. rewrite IHhas_type2. auto.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl). auto.
   - (* T_Xor *)
-    rewrite IHhas_type1. rewrite IHhas_type2. auto.
-Admitted.
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl). auto.
+  - (* T_FuncCall: 空函数环境无函数可查，推导不存在 *)
+    simpl in H.
+    discriminate H.
+  - (* T_QStatus *)
+    simpl.
+    rewrite (IHhas_type eq_refl). rewrite H0. auto.
+  - (* T_QValue *)
+    simpl.
+    rewrite (IHhas_type eq_refl). rewrite H0. auto.
+  - (* T_QCheck *)
+    simpl.
+    rewrite (IHhas_type eq_refl).
+    destruct H1 as [Hgo|Hbad]; subst; rewrite H0; auto.
+  - (* T_QSet *)
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl). rewrite H0. auto.
+  - (* T_QWith *)
+    simpl.
+    rewrite (IHhas_type2 eq_refl).
+    rewrite (IHhas_type1 eq_refl).
+    rewrite H0.
+    congruence.
+  - (* T_QForce *)
+    simpl.
+    rewrite (IHhas_type1 eq_refl). rewrite (IHhas_type2 eq_refl).
+    rewrite (IHhas_type3 eq_refl).
+    rewrite type_eqb_refl. rewrite H0. auto.
+Qed.
 
 
 (* ================================================================

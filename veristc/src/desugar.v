@@ -11,7 +11,7 @@ From Stdlib Require Import ZArith.
 From Stdlib Require Import String.
 From Stdlib Require Import Floats.
 Require Import veristc_spec.safest.
-Require Import veristc_spec.compiler_correctness.
+Require Import veristc_spec.st_semantics.
 Local Open Scope Z_scope.
 Import ListNotations.
 

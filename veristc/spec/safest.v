@@ -415,6 +415,32 @@ Definition strip_quality (ty : st_type) : st_type :=
   | ty => ty
   end.
 
+(* 普通基础类型 → 对应 Q* 类型（Q_WITH 的返回类型，v1.1） *)
+Fixpoint add_quality (ty : st_type) : st_type :=
+  match ty with
+  | T_BOOL => T_QBOOL
+  | T_BYTE => T_QBYTE
+  | T_WORD => T_QWORD
+  | T_DWORD => T_QDWORD
+  | T_SINT => T_QSINT
+  | T_INT => T_QINT
+  | T_DINT => T_QDINT
+  | T_LINT => T_QLINT
+  | T_REAL => T_QREAL
+  | T_LREAL => T_QLREAL
+  | T_TIME => T_QTIME
+  | ty => ty
+  end.
+
+(* 可被 Q_WITH 包装成 Q* 类型的普通基础类型 *)
+Definition is_plain_base_type (ty : st_type) : bool :=
+  match ty with
+  | T_BOOL | T_BYTE | T_WORD | T_DWORD
+  | T_SINT | T_INT | T_DINT | T_LINT
+  | T_REAL | T_LREAL | T_TIME => true
+  | _ => false
+  end.
+
 Inductive has_type : type_env_func -> type_env -> st_expr -> st_type -> Prop :=
   | T_Literal : forall fenv ctx l ty,
       literal_type l = Some ty ->
@@ -475,11 +501,12 @@ Inductive has_type : type_env_func -> type_env -> st_expr -> st_type -> Prop :=
       is_quality_type ty1 = true ->
       has_type fenv ctx e2 T_QUALITY ->
       has_type fenv ctx (E_QUALITY_OP Q_SET [e1; e2]) T_QUALITY
-  | T_QWith : forall fenv ctx e1 e2 ty1,
+  | T_QWith : forall fenv ctx e1 e2 ty1 tyq,
       has_type fenv ctx e1 ty1 ->
+      is_plain_base_type ty1 = true ->
+      tyq = add_quality ty1 ->
       has_type fenv ctx e2 T_QUALITY ->
-      (is_quality_type ty1 = true \/ ty1 = T_QUALITY) ->
-      has_type fenv ctx (E_QUALITY_OP Q_WITH [e1; e2]) ty1
+      has_type fenv ctx (E_QUALITY_OP Q_WITH [e1; e2]) tyq
   | T_QForce : forall fenv ctx e1 e2 e3 ty1,
       has_type fenv ctx e1 ty1 ->
       is_quality_type ty1 = true ->

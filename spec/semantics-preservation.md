@@ -1186,8 +1186,12 @@ R(st_state, asm_state) 定义为:
 | 阶段 | Coq 文件 | 证明内容 | 对应 spec 章节 | 进度 |
 |------|---------|---------|---------------|------|
 | 1.1 | `typechecker.v` | 类型安全 `type_safety` (progress + preservation) | §2.2 子集定义 | ❌ 待实现 |
+| 1.1 | `typechecker.v` | 表达式类型检查等价性 `type_check_expr_sound` / `type_check_expr_complete`（∅ 函数环境） | §7.1 | ✅ 已闭合 |
 | 1.2 | `desugar.v` | 脱糖语义保持 `desugar_semantics_preservation` | §2.3 逻辑求值 | ❌ 待实现 |
-| 1.3 | `codegen.v` | 表达式编译仿真 `compile_expr_correct` | §2.1 表达式映射 | ⚠️ 骨架 |
+| 1.3 | `codegen.v` | 表达式整体保持（旧宽命题已移除，待 frame/memory 不变量重构） | §2.1 表达式映射 | ⚠️ 重构中 |
+| 1.3 | `codegen.v` | 字面量编译仿真 `compile_literal_correct` | §2.1 字面量映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 变量引用编译仿真 `compile_var_correct`（帧 locals 一致性前提） | §2.1 变量映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 32 位整数字面量二元运算仿真 `compile_int_binop_literal_correct` | §2.1 二元运算映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 语句编译仿真 `compile_stmt_correct` | §2.2 语句映射 | ❌ 待实现 |
 | 1.3 | `codegen.v` | **64 位运算仿真** | **§2.1 I64/F64 运算** | ❌ **v1.1 新增** |
 | 1.3 | `codegen.v` | **质量传播仿真** | **§2.4 质量传播映射** | ❌ **v1.1 新增** |

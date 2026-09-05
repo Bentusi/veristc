@@ -7,6 +7,7 @@
 # Spec 文件（按依赖顺序）
 veristc/spec/safeasm.v
 veristc/spec/safest.v
+veristc/spec/st_semantics.v
 veristc/spec/compiler_correctness.v
 
 # Src 文件（按依赖顺序）
