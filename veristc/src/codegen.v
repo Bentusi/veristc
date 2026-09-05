@@ -1670,6 +1670,32 @@ Proof.
   all: eexists; split; [reflexivity | reflexivity].
 Qed.
 
+(* 赋值语句最小垂直切片：x := 42 在“x 是 0 号局部、类型 DINT”时，
+   compile_stmt 生成的 I32_CONST + LOCAL_SET 0 会更新帧 locals[0]。 *)
+Lemma compile_int_assign_local0_correct :
+  forall (n old : Z) (st0 : runtime_state) (v : st_value),
+    st0 = {| rt_values := nil;
+             rt_frames := (Build_sasm_frame [V_I32 old] 0 0 []) :: nil;
+             rt_memory := nil;
+             rt_cycle_cnt := 0 |} ->
+    corest_eval_expr nil (CE_LIT (L_INT n)) = Some v ->
+    exists (st' : runtime_state),
+      exec_instrs st0
+        (compile_stmt ((ID "x", 0) :: nil)
+           ((ID "x", T_DINT) :: nil)
+           (CS_ASSIGN (ID "x") (CE_LIT (L_INT n)))) = Some st' /\
+      match st'.(rt_frames) with
+      | f :: _ => List.nth_error f.(frame_locals) 0 = Some (V_I32 n)
+      | nil => False
+      end.
+Proof.
+  intros n old st0 v Hst Heval.
+  rewrite Hst.
+  simpl in Heval.
+  inversion Heval; subst.
+  eexists; split; simpl; reflexivity.
+Qed.
+
 (* 旧的整体命题 compile_expr_correct 缺少帧一致性、内存/质量区初始化和
    类型分派前提，对任意 st0 并不成立，不能以 Admitted 保留。
    当前以逐构造闭合引理替代：

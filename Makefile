@@ -135,7 +135,7 @@ ROQC = $(COQC)
 ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 
 # Spec files (compile in order due to dependencies)
-SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/compiler_correctness.v
+SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/asm_semantics.v
 
 # Src files (depend on spec files)
 SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/desugar.v src/analysis.v src/typechecker.v src/codegen.v
@@ -148,9 +148,11 @@ EXTRACTION_FILE = extraction/extraction.v
 SPEC_VO = $(addprefix $(VERISTC_DIR)/, $(SPEC_FILES:.v=.vo))
 SRC_VO  = $(addprefix $(VERISTC_DIR)/, $(SRC_FILES:.v=.vo))
 EXTR_VO = $(addprefix $(VERISTC_DIR)/, $(EXTRACTION_FILE:.v=.vo))
+COMPILER_VO = $(VERISTC_DIR)/spec/compiler_correctness.vo
+COMPILER_SRC = $(VERISTC_DIR)/spec/compiler_correctness.v
 
 # 顶层目标：构建所有 .vo 文件
-coq: $(SPEC_VO) $(SRC_VO) $(EXTR_VO)
+coq: $(SPEC_VO) $(SRC_VO) $(COMPILER_VO) $(EXTR_VO)
 
 # ── 泛型模式规则：.v → .vo ──
 $(VERISTC_DIR)/spec/%.vo: $(VERISTC_DIR)/spec/%.v
@@ -166,7 +168,9 @@ $(VERISTC_DIR)/extraction/%.vo: $(VERISTC_DIR)/extraction/%.v
 	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) extraction/$*.v
 
 # ── 依赖关系 ──
-$(VERISTC_DIR)/spec/compiler_correctness.vo: $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
+$(COMPILER_VO): $(COMPILER_SRC) $(SPEC_VO) $(SRC_VO)
+	@echo "  [ROQC] $<"
+	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) spec/compiler_correctness.v
 
 $(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo

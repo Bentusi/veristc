@@ -1735,6 +1735,3 @@ Proof.
   - exact Hstack.
   - exact Hmem.
 Qed.
-
-
-
