@@ -372,7 +372,11 @@ Fixpoint compile_expr_typed (env : compile_env) (env_ty : compile_type_env) (ty 
           | B_ADD => [F32_ADD] | B_SUB => [F32_SUB] | B_MUL => [F32_MUL]
           | B_DIV => [F32_DIV] | _ => [F32_ADD]
           end
-      | _ => compile_expr env e
+      | _ =>
+          match op with
+          | B_ADD => [I32_ADD] | B_SUB => [I32_SUB] | B_MUL => [I32_MUL]
+          | B_DIV => [I32_DIV_S] | B_MOD => [I32_REM_S]
+          end
       end
   | CE_COMP op e1 e2 =>
       compile_expr env e1 ++ compile_expr env e2 ++
@@ -387,7 +391,11 @@ Fixpoint compile_expr_typed (env : compile_env) (env_ty : compile_type_env) (ty 
           | C_EQ => [F64_EQ] | C_NE => [F64_NE] | C_LT => [F64_LT]
           | C_LE => [F64_LE] | C_GT => [F64_GT] | C_GE => [F64_GE]
           end
-      | _ => compile_expr env e
+      | _ =>
+          match op with
+          | C_EQ => [I32_EQ] | C_NE => [I32_NE] | C_LT => [I32_LT_S]
+          | C_LE => [I32_LE_S] | C_GT => [I32_GT_S] | C_GE => [I32_GE_S]
+          end
       end
   | _ => compile_expr env e
   end.
@@ -456,9 +464,10 @@ Fixpoint compile_stmt (env : compile_env) (env_ty : compile_type_env) (s : cores
       let br_to_else := BR_IF 0 in   (* 0: exit inner block *)
       let inner_block_instrs := compiled_cond ++ [I32_EQZ] ++
                                 [br_to_else] ++ compiled_then ++ [br_to_end] in
-      let outer_block_instrs := inner_block_instrs ++ compiled_else in
+      let outer_block_instrs :=
+        [BLOCK (instr_seq_size inner_block_instrs)] ++
+        inner_block_instrs ++ compiled_else in
       [BLOCK (instr_seq_size outer_block_instrs)] ++
-      [BLOCK (instr_seq_size inner_block_instrs)] ++
       outer_block_instrs
 
   | CS_WHILE cond body =>
@@ -498,7 +507,7 @@ Fixpoint compile_stmt (env : compile_env) (env_ty : compile_type_env) (s : cores
    ================================================================ *)
 
 Definition compile_function (env : compile_env) (env_ty : compile_type_env) (f : corest_function) : sasm_function :=
-  let body := List.concat (List.map (compile_stmt env env_ty) f.(cfunc_body)) in
+  let body := List.concat (List.map (compile_stmt env env_ty) f.(cfunc_body)) ++ [RETURN] in
   let local_types := List.map (fun p => snd p) env_ty in
   let safeasm_types := List.map (fun ty => st_type_to_sasm ty) local_types in
   {| sasm_func_type_idx := 0;
@@ -1652,6 +1661,126 @@ Proof.
   eexists; split; reflexivity.
 Qed.
 
+(* 整数负号字面量：-n 编译为 0 - n。 *)
+Lemma compile_int_neg_literal_correct :
+  forall (env : compile_env) (n : Z) (env_s : corest_eval_env)
+         (v : st_value),
+    corest_eval_expr env_s
+      (CE_UNARY_OP U_NEG (CE_LIT (L_INT n))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env (CE_UNARY_OP U_NEG (CE_LIT (L_INT n)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env n env_s v Heval st0.
+  simpl in Heval; inversion Heval; subst.
+  eexists; split; [reflexivity | reflexivity].
+Qed.
+
+(* 布尔非字面量：NOT b 编译为 EQZ。 *)
+Lemma compile_bool_not_literal_correct :
+  forall (env : compile_env) (b : bool) (env_s : corest_eval_env)
+         (v : st_value),
+    corest_eval_expr env_s
+      (CE_UNARY_OP U_NOT (CE_LIT (L_BOOL b))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env (CE_UNARY_OP U_NOT (CE_LIT (L_BOOL b)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env b env_s v Heval st0.
+  simpl in Heval; inversion Heval; subst.
+  destruct b; simpl.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
+Lemma compile_bool_and_literal_correct :
+  forall (env : compile_env) (b1 b2 : bool)
+         (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s
+      (CE_AND (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env
+             (CE_AND (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env b1 b2 env_s v Heval st0.
+  destruct b1, b2; simpl in Heval; inversion Heval; subst.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
+Lemma compile_bool_or_literal_correct :
+  forall (env : compile_env) (b1 b2 : bool)
+         (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s
+      (CE_OR (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env
+             (CE_OR (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env b1 b2 env_s v Heval st0.
+  destruct b1, b2; simpl in Heval; inversion Heval; subst.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
+Lemma compile_bool_xor_literal_correct :
+  forall (env : compile_env) (b1 b2 : bool)
+         (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s
+      (CE_XOR (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env
+             (CE_XOR (CE_LIT (L_BOOL b1)) (CE_LIT (L_BOOL b2)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env b1 b2 env_s v Heval st0.
+  destruct b1, b2; simpl in Heval; inversion Heval; subst.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
+(* 32 位整数字面量比较：编译后的 I32 比较指令与 CoreST 求值一致。 *)
+Lemma compile_int_compare_literal_correct :
+  forall (env : compile_env) (c : compare_op) (n1 n2 : Z)
+         (env_s : corest_eval_env) (v : st_value),
+    corest_eval_expr env_s
+      (CE_COMP c (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2))) = Some v ->
+    forall (st0 : runtime_state),
+      exists (st' : runtime_state),
+        exec_instrs st0
+          (compile_expr env
+             (CE_COMP c (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2)))) = Some st' /\
+        List.hd (V_I32 0) st'.(rt_values) = st_val_to_sasm_val v.
+Proof.
+  intros env c n1 n2 env_s v Heval st0.
+  destruct c; simpl in Heval; inversion Heval; subst.
+  - (* C_EQ *)
+    eexists; split; [reflexivity | reflexivity].
+  - (* C_NE *)
+    eexists; split; [reflexivity |].
+    destruct (Z.eqb n1 n2); reflexivity.
+  - (* C_LT *)
+    eexists; split; [reflexivity | reflexivity].
+  - (* C_LE *)
+    eexists; split; [reflexivity | reflexivity].
+  - (* C_GT *)
+    eexists; split; [reflexivity |].
+    rewrite Z.gtb_ltb.
+    reflexivity.
+  - (* C_GE *)
+    eexists; split; [reflexivity |].
+    rewrite Z.geb_leb.
+    reflexivity.
+Qed.
+
 (* 32 位整数字面量二元运算：CoreST 求值结果与编译后的 I32 指令序列一致。 *)
 Lemma compile_int_binop_literal_correct :
   forall (env : compile_env) (op : binary_op) (n1 n2 : Z)
@@ -1696,8 +1825,35 @@ Proof.
   eexists; split; simpl; reflexivity.
 Qed.
 
+(* 布尔字面量赋值垂直切片：x := FALSE/TRUE 在 x 为 0 号 BOOL 局部时，
+   I32_CONST 0/1 + LOCAL_SET 0 会更新帧 locals[0]。 *)
+Lemma compile_bool_assign_local0_correct :
+  forall (b : bool) (old : Z) (st0 : runtime_state) (v : st_value),
+    st0 = {| rt_values := nil;
+             rt_frames := (Build_sasm_frame [V_I32 old] 0 0 []) :: nil;
+             rt_memory := nil;
+             rt_cycle_cnt := 0 |} ->
+    corest_eval_expr nil (CE_LIT (L_BOOL b)) = Some v ->
+    exists (st' : runtime_state),
+      exec_instrs st0
+        (compile_stmt ((ID "x", 0) :: nil)
+           ((ID "x", T_BOOL) :: nil)
+           (CS_ASSIGN (ID "x") (CE_LIT (L_BOOL b)))) = Some st' /\
+      match st'.(rt_frames) with
+      | f :: _ =>
+          List.nth_error f.(frame_locals) 0 = Some (V_I32 (if b then 1 else 0))
+      | nil => False
+      end.
+Proof.
+  intros b old st0 v Hst Heval.
+  rewrite Hst.
+  simpl in Heval; inversion Heval; subst.
+  destruct b; simpl.
+  all: eexists; split; [reflexivity | reflexivity].
+Qed.
+
 (* 旧的整体命题 compile_expr_correct 缺少帧一致性、内存/质量区初始化和
-   类型分派前提，对任意 st0 并不成立，不能以 Admitted 保留。
+   类型分派前提，对任意 st0 并不成立。
    当前以逐构造闭合引理替代：
    - compile_literal_correct
    - compile_var_correct

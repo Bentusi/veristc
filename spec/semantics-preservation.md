@@ -1192,7 +1192,11 @@ R(st_state, asm_state) 定义为:
 | 1.3 | `codegen.v` | 字面量编译仿真 `compile_literal_correct` | §2.1 字面量映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 变量引用编译仿真 `compile_var_correct`（帧 locals 一致性前提） | §2.1 变量映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 32 位整数字面量二元运算仿真 `compile_int_binop_literal_correct` | §2.1 二元运算映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 整数负号/布尔非字面量仿真 `compile_int_neg_literal_correct`、`compile_bool_not_literal_correct` | §2.1 一元运算映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 32 位整数字面量比较仿真 `compile_int_compare_literal_correct` | §2.1 比较映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 布尔 AND/OR/XOR 字面量仿真 `compile_bool_{and,or,xor}_literal_correct` | §2.1 逻辑运算映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 字面量赋值语句垂直切片 `compile_int_assign_local0_correct` | §2.2 赋值映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | BOOL 字面量赋值垂直切片 `compile_bool_assign_local0_correct` | §2.2 赋值映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 语句编译仿真 `compile_stmt_correct` | §2.2 语句映射 | ❌ 待实现 |
 | 1.3 | `codegen.v` | **64 位运算仿真** | **§2.1 I64/F64 运算** | ❌ **v1.1 新增** |
 | 1.3 | `codegen.v` | **质量传播仿真** | **§2.4 质量传播映射** | ❌ **v1.1 新增** |

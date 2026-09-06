@@ -6,6 +6,8 @@
 # ================================================================
 # 可执行文件
 vm/sasm_dump
+vm/sasm_run
+tests/veristc-tests/out/
 tests/vm-tests/test_minimal
 
 # 目标文件

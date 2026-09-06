@@ -1,0 +1,4 @@
+type float = Float.t
+
+let one : float = 1.0
+let zero : float = 0.0

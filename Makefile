@@ -43,6 +43,7 @@ RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
 .PHONY: all coq vm-lib vm-io vm-hs vm-test sasm-dump rtthread clean verify
+.PHONY: sasm-run e2e
 
 all: coq vm-lib vm-hs vm-test sasm-dump
 
@@ -104,6 +105,29 @@ sasm-dump: $(VM_CORE_LIB) $(SASM_DUMP_BIN)
 
 $(SASM_DUMP_BIN): $(SASM_DUMP_SRC) $(VM_CORE_LIB) -lm
 	$(CC) $(CFLAGS) -o $@ $< -Lvm -lvm_core -lm
+
+# 端到端 CLI: 直接编译 .st → .sasm → C VM
+SASM_RUN_BIN = vm/sasm_run
+
+sasm-run: $(SASM_RUN_BIN)
+
+$(SASM_RUN_BIN): vm/sasm_run.c vm/loader.c vm/safeasm_interp.c vm/vm.h
+	$(CC) $(CFLAGS) -o $@ vm/sasm_run.c vm/loader.c vm/safeasm_interp.c -lm
+
+E2E_OUT_DIR = tests/veristc-tests/out
+
+e2e: veristc sasm-run
+	@mkdir -p $(E2E_OUT_DIR)
+	./veristc/extraction/veristc compile tests/st-examples/core_assign.st \
+		-o $(E2E_OUT_DIR)/core_assign.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_if.st \
+		-o $(E2E_OUT_DIR)/core_if.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_while.st \
+		-o $(E2E_OUT_DIR)/core_while.sasm
+	./vm/sasm_run $(E2E_OUT_DIR)/core_assign.sasm 42
+	./vm/sasm_run $(E2E_OUT_DIR)/core_if.sasm 2
+	./vm/sasm_run $(E2E_OUT_DIR)/core_while.sasm 5
+	@echo "E2E passed: core_assign/if/while .st -> .sasm -> VM"
 
 # ================================================================
 # RT-Thread 适配层 (需要 RT-Thread SDK)
@@ -192,15 +216,19 @@ ROQC_EXTRACT = rocq extract
 extract: coq
 	@echo "  [EXTRACT] Extracting OCaml code..."
 	@cd $(VERISTC_DIR) && $(ROQC) -Q spec veristc_spec -Q src veristc_src $(EXTRACTION_FILE) 2>&1
+	@cp $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat_support_impl.ocaml $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat.ml
+	@cp $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat_support_iface.ocaml $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat.mli
 	@echo "  [EXTRACT] Extraction complete"
 
 # 编译提取后的 OCaml 可执行程序
 veristc: extract
 	@echo "  [OCAML] Compiling veristc executable..."
 	@cd $(VERISTC_DIR)/$(EXTRACTION_DIR) && \
-		ocamlfind ocamlopt -o veristc -package str -linkpkg \
-		extraction.ml veristc_main.ml 2>&1 || \
-		ocamlopt -o veristc str.cmxa extraction.ml veristc_main.ml 2>&1
+		ocamlfind ocamlopt -package str -linkpkg -c $$(ocamldep -sort *.mli 2>/dev/null) && \
+		OCAML_FILES="$$(ocamldep -sort *.ml 2>/dev/null)" && \
+		ocamlfind ocamlopt -o veristc -package str -linkpkg $$OCAML_FILES 2>&1 || \
+		(ocamlopt -c $$(ocamldep -sort *.mli 2>/dev/null) && \
+		 ocamlopt -o veristc str.cmxa $$OCAML_FILES) 2>&1
 	@echo "  [OCAML] veristc executable built: $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc"
 
 # ================================================================
@@ -210,6 +238,7 @@ veristc: extract
 clean:
 	rm -f $(VM_TEST_BIN)
 	rm -f $(SASM_DUMP_BIN)
+	rm -f $(SASM_RUN_BIN)
 	rm -f $(VM_CORE_LIB) $(VM_CORE_OBJS)
 	rm -f $(VM_IO_LIB) $(VM_IO_OBJS)
 	rm -f $(VM_HS_LIB) $(VM_HS_OBJS)

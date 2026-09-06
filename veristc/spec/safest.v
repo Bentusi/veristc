@@ -205,7 +205,7 @@ Inductive st_literal : Type :=
 Definition literal_type (l : st_literal) : option st_type :=
   match l with
   | L_BOOL _ => Some T_BOOL
-  | L_INT _  => Some T_DINT    (* 默认整数类型 *)
+  | L_INT _  => Some T_INT     (* core subset: unsuffixed integer is INT, may widen to DINT *)
   | L_REAL _ => Some T_REAL
   | L_TIME _ => Some T_TIME
   | L_LINT _ => Some T_LINT

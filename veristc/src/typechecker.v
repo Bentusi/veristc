@@ -169,22 +169,6 @@ Fixpoint var_decl_names (decls : list st_var_decl) : list ident :=
   | d :: rest => d.(var_name) :: var_decl_names rest
   end.
 
-(* 从 POU 中提取名称 *)
-Definition pou_name (p : st_pou) : ident :=
-  match p with
-  | P_PROGRAM name _ _ => name
-  | P_FUNCTION name _ _ _ => name
-  | P_FUNCTION_BLOCK name _ _ => name
-  end.
-
-(* 从 POU 中提取变量声明 *)
-Definition pou_var_decls (p : st_pou) : list st_var_decl :=
-  match p with
-  | P_PROGRAM _ decls _ => decls
-  | P_FUNCTION _ _ decls _ => decls
-  | P_FUNCTION_BLOCK _ decls _ => decls
-  end.
-
 (* 无重复声明检查 *)
 Definition no_duplicate_declarations (p : st_program) : Prop :=
   let global_names := var_decl_names p.(global_vars) in
@@ -212,24 +196,6 @@ Definition lookup_function_type (f : ident) (p : st_program) : option (list st_t
       Some (param_types, ret_type)
   | _ => None
   end.
-
-(* ================================================================
-   第 4 部分：类型环境构建 (Type Environment Construction)
-   ================================================================ *)
-
-(* 从变量声明列表构建类型环境 *)
-Fixpoint build_env_from_decls (decls : list st_var_decl) : type_env :=
-  match decls with
-  | nil => nil
-  | d :: rest => (d.(var_name), d.(var_type)) :: build_env_from_decls rest
-  end.
-
-(* 从程序构建完整类型环境（全局变量 + 所有 POU 的局部变量） *)
-Definition build_program_env (p : st_program) : type_env :=
-  let global_env := build_env_from_decls p.(global_vars) in
-  List.fold_right (fun pou acc =>
-    build_env_from_decls (pou_var_decls pou) ++ acc
-  ) global_env p.(pou_list).
 
 (* ================================================================
    第 5 部分：表达式类型检查函数 (Expression Type Checking)
@@ -400,7 +366,7 @@ Fixpoint type_check_stmt (fenv : type_env_func) (env : type_env) (s : st_stmt) :
   match s with
   | S_ASSIGN x e =>
       match lookup env x, type_check_expr nil env e with
-      | Some lhs_ty, Some rhs_ty => type_compatible_dec lhs_ty rhs_ty
+      | Some lhs_ty, Some rhs_ty => type_compatible_dec rhs_ty lhs_ty
       | _, _ => false
       end
 
@@ -425,7 +391,7 @@ Fixpoint type_check_stmt (fenv : type_env_func) (env : type_env) (s : st_stmt) :
 
   | S_CASE sel branches default =>
       let sel_ok := match type_check_expr nil env sel with
-                    | Some T_INT => true
+                    | Some T_INT | Some T_DINT => true
                     | _ => false
                     end in
       let branches_ok := List.forallb (fun ce =>
@@ -881,61 +847,1197 @@ Qed.
 
 
 (* ================================================================
-   第 9 部分：Progress 定理
-   
-   良类型非终态程序至少可以执行一步。
-   注意：当前 version 使用简化的 step_st（仅 St_assign 改变状态，
-   其他由 St_skip 覆盖），因此 Progress 总是成立。
-   Phase 1 中将随 step_st 细化而完善此证明。
+   第 9 部分：核心子集与配置式类型关系
    ================================================================ *)
 
-(* terminal_state 定义在 compiler_correctness.v 中 *)
-(*   terminal_state s := s.(st_call_stack) = nil *)
+(* 核心子集使用的运行时类型 *)
+Definition core_ty_dec (ty : st_type) : bool :=
+  match ty with
+  | T_BOOL | T_INT | T_DINT => true
+  | _ => false
+  end.
 
-Lemma progress_assign : forall (p : st_program) (s : st_state) (x : ident) (v : st_value),
-    exists s', step_st p (update_var s x v) s'.
+Definition core_ty (ty : st_type) : Prop :=
+  core_ty_dec ty = true.
+
+Lemma core_ty_cases :
+  forall t : st_type,
+    core_ty t ->
+    t = T_BOOL \/ t = T_INT \/ t = T_DINT.
 Proof.
-  intros. eexists; apply St_skip.
+  intros t H.
+  unfold core_ty, core_ty_dec in H.
+  destruct t; simpl in H; try discriminate; auto.
 Qed.
 
-Theorem progress : forall (p : st_program) (s : st_state),
-    well_typed_program p ->
-    ~ terminal_state s ->
-    exists s', step_st p s s'.
+Lemma promote_type_core_result :
+  forall t1 t2 t3 : st_type,
+    core_ty t1 -> core_ty t2 -> promote_type t1 t2 t3 -> core_ty t3.
 Proof.
-  intros p s Hwt Hnoterm.
-  (* 当前简化：所有状态（包括非终态）都可以通过 St_skip 执行一步。
-     在 Phase 1 细化的 step_st 中，此证明需对语句结构做归纳。 *)
-  exists s. apply St_skip.
+  intros t1 t2 t3 Hc1 Hc2 Hp.
+  destruct (core_ty_cases t1 Hc1) as [H1 | [H1 | H1]]; subst.
+  - destruct (core_ty_cases t2 Hc2) as [H2 | [H2 | H2]]; subst.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
+  - destruct (core_ty_cases t2 Hc2) as [H2 | [H2 | H2]]; subst.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
+  - destruct (core_ty_cases t2 Hc2) as [H2 | [H2 | H2]]; subst.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
+    + inversion Hp; subst; reflexivity.
 Qed.
 
+(* 变量声明都在核心类型内 *)
+Definition core_env (env : type_env) : Prop :=
+  forall (x : ident) (ty : st_type),
+    lookup env x = Some ty -> core_ty ty.
+
+Fixpoint core_expr (e : st_expr) : bool :=
+  match e with
+  | E_LIT l =>
+      match l with
+      | L_BOOL _ | L_INT _ => true
+      | _ => false
+      end
+  | E_VAR _ => true
+  | E_UNARY_OP _ e1 => core_expr e1
+  | E_BIN_OP _ e1 e2 => core_expr e1 && core_expr e2
+  | E_COMP _ e1 e2 => core_expr e1 && core_expr e2
+  | E_AND e1 e2 | E_OR e1 e2 | E_XOR e1 e2 => core_expr e1 && core_expr e2
+  | _ => false
+  end.
+
+Fixpoint core_stmt (s : st_stmt) : bool :=
+  match s with
+  | S_ASSIGN _ e => core_expr e
+  | S_IF cond then_stmts else_stmts =>
+      core_expr cond &&
+      List.forallb core_stmt then_stmts &&
+      match else_stmts with
+      | Some es => List.forallb core_stmt es
+      | None => true
+      end
+  | S_WHILE cond body => core_expr cond && List.forallb core_stmt body
+  | S_REPEAT body cond => List.forallb core_stmt body && core_expr cond
+  | S_FOR _ start end_ step body =>
+      core_expr start && core_expr end_ &&
+      (match step with Some e => core_expr e | None => true end) &&
+      List.forallb core_stmt body
+  | S_CASE sel branches default =>
+      core_expr sel &&
+      List.forallb (fun ce =>
+        match ce with CASE_ELEM _ stmts => List.forallb core_stmt stmts end) branches &&
+      match default with
+      | Some ds => List.forallb core_stmt ds
+      | None => true
+      end
+  | _ => false
+  end.
+
+Definition core_pou (p : st_pou) : bool :=
+  List.forallb (fun d => core_ty_dec d.(var_type)) (pou_var_decls p) &&
+  (match p with
+   | P_FUNCTION _ _ _ _ | P_FUNCTION_BLOCK _ _ _ => false
+   | P_PROGRAM _ _ body => List.forallb core_stmt body
+   end).
+
+Definition core_program (p : st_program) : bool :=
+  match p.(pou_list) with
+  | pou :: nil =>
+      core_pou pou &&
+      (match p.(global_vars) with nil => true | _ => false end) &&
+      (match p.(io_mapping) with nil => true | _ => false end)
+  | _ => false
+  end.
+
+(* 配置式良类型语句列表。
+   只覆盖核心子集，且把复合语句的子块一并纳入类型关系。 *)
+Inductive typed_stmts (fenv : type_env_func) (env : type_env)
+          : list st_stmt -> Prop :=
+  | TS_nil : typed_stmts fenv env nil
+  | TS_assign : forall (x : ident) (e : st_expr) (lhs_ty rhs_ty : st_type)
+                       (rest : list st_stmt),
+      lookup env x = Some lhs_ty ->
+      type_check_expr fenv env e = Some rhs_ty ->
+      type_compatible_dec rhs_ty lhs_ty = true ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_ASSIGN x e :: rest)
+  | TS_if : forall (cond : st_expr) (then_stmts : list st_stmt)
+                   (else_stmts : option (list st_stmt)) (rest : list st_stmt),
+      type_check_expr fenv env cond = Some T_BOOL ->
+      typed_stmts fenv env then_stmts ->
+      typed_opt_stmts fenv env else_stmts ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_IF cond then_stmts else_stmts :: rest)
+  | TS_while : forall (cond : st_expr) (body : list st_stmt)
+                       (rest : list st_stmt),
+      type_check_expr fenv env cond = Some T_BOOL ->
+      typed_stmts fenv env body ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_WHILE cond body :: rest)
+  | TS_repeat : forall (body : list st_stmt) (cond : st_expr)
+                        (rest : list st_stmt),
+      typed_stmts fenv env body ->
+      type_check_expr fenv env cond = Some T_BOOL ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_REPEAT body cond :: rest)
+  | TS_for : forall (v : ident) (start end_ : st_expr) (step : option st_expr)
+                     (body : list st_stmt) (rest : list st_stmt),
+      lookup env v = Some T_INT ->
+      type_check_expr fenv env start = Some T_INT ->
+      type_check_expr fenv env end_ = Some T_INT ->
+      (match step with
+       | Some e => type_check_expr fenv env e = Some T_INT
+       | None => True end) ->
+      typed_stmts fenv env body ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_FOR v start end_ step body :: rest)
+  | TS_case_int : forall (sel : st_expr) (branches : list case_element)
+                          (default : option (list st_stmt)) (rest : list st_stmt),
+      type_check_expr fenv env sel = Some T_INT ->
+      typed_case_elements fenv env branches ->
+      typed_opt_stmts fenv env default ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_CASE sel branches default :: rest)
+  | TS_case_dint : forall (sel : st_expr) (branches : list case_element)
+                           (default : option (list st_stmt)) (rest : list st_stmt),
+      type_check_expr fenv env sel = Some T_DINT ->
+      typed_case_elements fenv env branches ->
+      typed_opt_stmts fenv env default ->
+      typed_stmts fenv env rest ->
+      typed_stmts fenv env (S_CASE sel branches default :: rest)
+with typed_case_elements (fenv : type_env_func) (env : type_env)
+     : list case_element -> Prop :=
+  | TCE_nil : typed_case_elements fenv env nil
+  | TCE_cons : forall (vals : list case_value) (stmts : list st_stmt)
+                       (brs : list case_element),
+      typed_stmts fenv env stmts ->
+      typed_case_elements fenv env brs ->
+      typed_case_elements fenv env (CASE_ELEM vals stmts :: brs)
+with typed_opt_stmts (fenv : type_env_func) (env : type_env)
+     : option (list st_stmt) -> Prop :=
+  | TO_none : typed_opt_stmts fenv env None
+  | TO_some : forall (stmts : list st_stmt),
+      typed_stmts fenv env stmts ->
+      typed_opt_stmts fenv env (Some stmts).
+
+(* 声明类型、运行时值与表达式求值结果的基础值构造引理 *)
+Lemma value_type_bool : forall v : st_value,
+    st_value_type v = T_BOOL -> exists b : bool, v = ST_V_BOOL b.
+Proof.
+  destruct v; simpl; intros H; try discriminate; eexists; reflexivity.
+Qed.
+
+Lemma value_type_int : forall v : st_value,
+    st_value_type v = T_INT -> exists n : Z, v = ST_V_INT n.
+Proof.
+  destruct v; simpl; intros H; try discriminate; eexists; reflexivity.
+Qed.
+
+Lemma value_type_dint : forall v : st_value,
+    st_value_type v = T_DINT ->
+    exists n : Z, v = ST_V_DINT n \/ v = ST_V_INT n.
+Proof.
+  destruct v; simpl; intros H; try discriminate; eexists; auto.
+Qed.
+
+Lemma value_shape_core :
+  forall (ty : st_type) (v : st_value),
+    core_ty ty ->
+    st_value_type v = ty ->
+    (exists b : bool, ty = T_BOOL /\ v = ST_V_BOOL b) \/
+    (exists n : Z, ty = T_INT /\ v = ST_V_INT n) \/
+    (exists n : Z, ty = T_DINT /\ v = ST_V_DINT n).
+Proof.
+  intros ty v Hc Hvt.
+  unfold core_ty in Hc.
+  destruct v; simpl in Hvt;
+    try (rewrite <- Hvt in Hc; simpl in Hc; discriminate);
+    eauto 6.
+Qed.
+
+Lemma eval_unop_result_type :
+  forall (op : unary_op) (s : st_state) (e : st_expr)
+         (v : st_value) (ty : st_type),
+    eval_expr s e = Some v ->
+    st_value_type v = ty ->
+    core_ty ty ->
+    is_valid_unary op ty ->
+    exists v', eval_expr s (E_UNARY_OP op e) = Some v' /\
+               st_value_type v' = ty.
+Proof.
+  intros op s e v ty He Hvty Hcore Hvalid.
+  destruct (value_shape_core ty v Hcore Hvty)
+    as [[b [Htyb Hvb]] | [[n [Htyi Hvi]] | [n [Htyd Hvd]]]];
+    subst ty v.
+  - destruct op.
+    + unfold is_valid_unary in Hvalid.
+      destruct Hvalid as [Hs | [Hi | [Hd | [Hl | [Hr | Hlr]]]]]; congruence.
+    + simpl. rewrite He. eexists; split; reflexivity.
+    + unfold is_valid_unary in Hvalid.
+      destruct Hvalid as [Hs | [Hi | [Hd | [Hl | [Hr | Hlr]]]]]; congruence.
+  - destruct op.
+    + simpl. rewrite He. eexists; split; reflexivity.
+    + unfold is_valid_unary in Hvalid. congruence.
+    + simpl. rewrite He. eexists; split; reflexivity.
+  - destruct op.
+    + simpl. rewrite He. eexists; split; reflexivity.
+    + unfold is_valid_unary in Hvalid. congruence.
+    + simpl. rewrite He. eexists; split; reflexivity.
+Qed.
+
+Lemma eval_binop_result_type :
+  forall (op : binary_op) (s : st_state) (e1 e2 : st_expr)
+         (v1 v2 : st_value) (ty1 ty2 ty3 : st_type),
+    eval_expr s e1 = Some v1 ->
+    eval_expr s e2 = Some v2 ->
+    st_value_type v1 = ty1 ->
+    st_value_type v2 = ty2 ->
+    core_ty ty1 ->
+    core_ty ty2 ->
+    promote_type ty1 ty2 ty3 ->
+    is_valid_binary op ty3 ->
+    core_ty ty3 ->
+    exists v', eval_expr s (E_BIN_OP op e1 e2) = Some v' /\
+               st_value_type v' = ty3.
+Proof.
+  intros op s e1 e2 v1 v2 ty1 ty2 ty3 He1 He2
+         Htype1 Htype2 Hcore1 Hcore2 Hprom Hvalid Hcore3.
+  revert He1 He2.
+  destruct (value_shape_core ty1 v1 Hcore1 Htype1)
+    as [[b1 [Ht1 Hvv1]] | [[n1 [Ht1 Hvv1]] | [n1 [Ht1 Hvv1]]]];
+    subst ty1 v1.
+  - destruct (value_shape_core ty2 v2 Hcore2 Htype2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + inversion Hprom; subst.
+      unfold is_valid_binary in Hvalid.
+      destruct op; unfold is_valid_binary in Hvalid;
+        repeat match goal with H : _ \/ _ |- _ => destruct H end;
+        congruence.
+    + inversion Hprom.
+    + inversion Hprom.
+  - destruct (value_shape_core ty2 v2 Hcore2 Htype2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + inversion Hprom.
+    + inversion Hprom; subst.
+      intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+    + inversion Hprom; subst.
+      intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+  - destruct (value_shape_core ty2 v2 Hcore2 Htype2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + inversion Hprom.
+    + inversion Hprom; subst.
+      intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+    + inversion Hprom; subst.
+      intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+Qed.
+
+Lemma eval_compare_result_type :
+  forall (op : compare_op) (s : st_state) (e1 e2 : st_expr)
+         (v1 v2 : st_value) (ty1 ty2 : st_type),
+    eval_expr s e1 = Some v1 ->
+    eval_expr s e2 = Some v2 ->
+    st_value_type v1 = ty1 ->
+    st_value_type v2 = ty2 ->
+    core_ty ty1 ->
+    core_ty ty2 ->
+    (type_compatible ty1 ty2 \/ type_compatible ty2 ty1) ->
+    exists v', eval_expr s (E_COMP op e1 e2) = Some v' /\
+               st_value_type v' = T_BOOL.
+Proof.
+  intros op s e1 e2 v1 v2 ty1 ty2 He1 He2 Hv1 Hv2 Hc1 Hc2 Hcomp.
+  revert He1 He2.
+  destruct (value_shape_core ty1 v1 Hc1 Hv1)
+    as [[b1 [Ht1 Hvv1]] | [[n1 [Ht1 Hvv1]] | [n1 [Ht1 Hvv1]]]];
+    subst ty1 v1.
+  - destruct (value_shape_core ty2 v2 Hc2 Hv2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+    + destruct Hcomp as [h | h]; inversion h.
+    + destruct Hcomp as [h | h]; inversion h.
+  - destruct (value_shape_core ty2 v2 Hc2 Hv2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + destruct Hcomp as [h | h]; inversion h.
+    + intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+    + intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+  - destruct (value_shape_core ty2 v2 Hc2 Hv2)
+      as [[b2 [Ht2 Hvv2]] | [[n2 [Ht2 Hvv2]] | [n2 [Ht2 Hvv2]]]];
+      subst ty2 v2.
+    + destruct Hcomp as [h | h]; inversion h.
+    + intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+    + intros He1 He2.
+      destruct op; simpl; rewrite He1; rewrite He2;
+        eexists; split; reflexivity.
+Qed.
+
+Lemma eval_and_result_type :
+  forall (s : st_state) (e1 e2 : st_expr) (v1 v2 : st_value),
+    eval_expr s e1 = Some v1 ->
+    eval_expr s e2 = Some v2 ->
+    st_value_type v1 = T_BOOL ->
+    st_value_type v2 = T_BOOL ->
+    exists v',
+      eval_expr s (E_AND e1 e2) = Some v' /\
+      st_value_type v' = T_BOOL.
+Proof.
+  intros s e1 e2 v1 v2 He1 He2 Hv1 Hv2.
+  destruct v1; simpl in Hv1; try discriminate.
+  destruct v2; simpl in Hv2; try discriminate.
+  simpl; rewrite He1; rewrite He2;
+    eexists; split; reflexivity.
+Qed.
+
+Lemma eval_or_result_type :
+  forall (s : st_state) (e1 e2 : st_expr) (v1 v2 : st_value),
+    eval_expr s e1 = Some v1 ->
+    eval_expr s e2 = Some v2 ->
+    st_value_type v1 = T_BOOL ->
+    st_value_type v2 = T_BOOL ->
+    exists v',
+      eval_expr s (E_OR e1 e2) = Some v' /\
+      st_value_type v' = T_BOOL.
+Proof.
+  intros s e1 e2 v1 v2 He1 He2 Hv1 Hv2.
+  destruct v1; simpl in Hv1; try discriminate.
+  destruct v2; simpl in Hv2; try discriminate.
+  simpl; rewrite He1; rewrite He2;
+    eexists; split; reflexivity.
+Qed.
+
+Lemma eval_xor_result_type :
+  forall (s : st_state) (e1 e2 : st_expr) (v1 v2 : st_value),
+    eval_expr s e1 = Some v1 ->
+    eval_expr s e2 = Some v2 ->
+    st_value_type v1 = T_BOOL ->
+    st_value_type v2 = T_BOOL ->
+    exists v',
+      eval_expr s (E_XOR e1 e2) = Some v' /\
+      st_value_type v' = T_BOOL.
+Proof.
+  intros s e1 e2 v1 v2 He1 He2 Hv1 Hv2.
+  destruct v1; simpl in Hv1; try discriminate.
+  destruct v2; simpl in Hv2; try discriminate.
+  simpl; rewrite He1; rewrite He2;
+      eexists; split; reflexivity.
+Qed.
 
 (* ================================================================
-   第 10 部分：Preservation 定理
-   
-   ST 程序执行一步后，类型保持。
-   当前为简化版本——well_typed_program 是纯程序属性，不依赖运行时状态，
-   因此任何一步执行后都保持。Phase 1 中将引入运行时类型一致性。
+   第 10 部分：核心子集配置式类型安全
    ================================================================ *)
 
-Theorem preservation : forall (p : st_program) (s s' : st_state),
-    well_typed_program p ->
-    step_st p s s' ->
-    well_typed_program p.
+Lemma core_ty_bool : core_ty T_BOOL.
+Proof. reflexivity. Qed.
+
+Lemma core_ty_int : core_ty T_INT.
+Proof. reflexivity. Qed.
+
+Lemma core_ty_dint : core_ty T_DINT.
+Proof. reflexivity. Qed.
+
+(* 核心表达式在类型检查成功时，其类型必为核心类型。 *)
+Lemma core_expr_type_is_core :
+  forall (env : type_env) (e : st_expr) (ty : st_type),
+    core_env env ->
+    core_expr e = true ->
+    type_check_expr nil env e = Some ty ->
+    core_ty ty.
 Proof.
-  intros p s s' Hwt Hstep. exact Hwt.
+  intros env e; induction e as [lit | x | arr idx | uop e IHe
+      | bop e1 IHe1 e2 IHe2 | cop e1 IHe1 e2 IHe2
+      | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2
+      | f args | q args]; intros ty Henv Hcore Hty.
+  - destruct lit; simpl in Hcore; try discriminate;
+      simpl in Hty; inversion Hty; reflexivity.
+  - simpl in Hty.
+    exact (Henv x ty Hty).
+  - simpl in Hcore; discriminate.
+  - simpl in Hcore.
+    simpl in Hty.
+    destruct (type_check_expr nil env e) as [t1|] eqn:Ht;
+      simpl in Hty; try discriminate.
+    destruct (is_valid_unary_dec uop t1) eqn:Hvalid;
+      simpl in Hty; try discriminate.
+    pose proof (IHe ty Henv Hcore Hty) as Hct1.
+    inversion Hty; subst.
+    exact Hct1.
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct (promote_type_dec t1 t2) as [t3|] eqn:Hp;
+      simpl in Hty; try discriminate.
+    destruct (is_valid_binary_dec bop t3) eqn:Hvalid;
+      simpl in Hty; try discriminate.
+    pose proof (IHe1 t1 Henv Hc1 eq_refl) as Hcore1.
+    pose proof (IHe2 t2 Henv Hc2 eq_refl) as Hcore2.
+    pose proof (promote_type_dec_sound t1 t2 t3 Hp) as Hprom.
+    inversion Hty; subst.
+    eapply promote_type_core_result;
+      [exact Hcore1 | exact Hcore2 | exact Hprom].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct (type_comparable_dec t1 t2) eqn:Hcomp;
+      simpl in Hty; try discriminate.
+    inversion Hty.
+    reflexivity.
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    reflexivity.
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    reflexivity.
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    reflexivity.
+  - simpl in Hcore; discriminate.
+  - simpl in Hcore; discriminate.
 Qed.
 
-(* ================================================================
-   第 11 部分：Type Safety 定理
-   
-   Well-typed 程序不会卡住——要么执行完毕，要么可继续执行。
-   ================================================================ *)
+(* 核心语句列表不变量：每条顶层语句都属于核心子集。 *)
+Definition core_stmts (stmts : list st_stmt) : Prop :=
+  List.forallb core_stmt stmts = true.
 
-Theorem type_safety : forall (p : st_program) (s s' : st_state),
-    well_typed_program p ->
-    star_step_st p s s' ->
-    terminal_state s' \/ exists s'', step_st p s' s''.
+Definition core_opt_stmts (o : option (list st_stmt)) : Prop :=
+  match o with
+  | Some stmts => core_stmts stmts
+  | None => True
+  end.
+
+Definition core_case_elements (cs : list case_element) : Prop :=
+  List.forallb (fun ce =>
+    match ce with
+    | CASE_ELEM _ stmts => List.forallb core_stmt stmts
+    end) cs = true.
+
+Lemma core_stmts_app :
+  forall (l1 l2 : list st_stmt),
+    core_stmts l1 ->
+    core_stmts l2 ->
+    core_stmts (l1 ++ l2).
 Proof.
-  intros p s s' Hwt Hstar. right. exists s'. apply St_skip.
+  intros l1 l2 H1 H2.
+  unfold core_stmts in *.
+  induction l1 as [|s rest IH]; simpl in *.
+  - exact H2.
+  - apply andb_true_iff in H1.
+    destruct H1 as [Hs Hrest].
+    apply andb_true_iff.
+    split.
+    + exact Hs.
+    + exact (IH Hrest).
+Qed.
+
+(* 类型保持的列表拼接：复合语句展开后的后继列表仍是良类型列表。 *)
+Lemma typed_stmts_app :
+  forall (fenv : type_env_func) (env : type_env) (l1 l2 : list st_stmt),
+    typed_stmts fenv env l1 ->
+    typed_stmts fenv env l2 ->
+    typed_stmts fenv env (l1 ++ l2).
+Proof.
+  intros fenv env l1 l2.
+  induction l1 as [|s rest IH]; intros H1 H2; simpl.
+  - exact H2.
+  - destruct s; inversion H1; subst; simpl;
+      try solve [econstructor; eauto; apply IH; assumption].
+Qed.
+
+Lemma ident_eq_sound :
+  forall (x y : ident), ident_eq x y = true -> x = y.
+Proof.
+  intros [sx] [sy]; simpl.
+  intro H.
+  pose proof (proj1 (String.eqb_eq sx sy) H) as E.
+  subst.
+  reflexivity.
+Qed.
+
+Lemma lookup_var_update_head :
+  forall (x : ident) (v : st_value) (vars : list (ident * st_value)),
+    lookup_var ((x, v) :: vars) x = Some v.
+Proof.
+  intros [s] v vars.
+  simpl.
+  rewrite String.eqb_refl.
+  reflexivity.
+Qed.
+
+Lemma lookup_var_update_other :
+  forall (x y : ident) (v : st_value) (vars : list (ident * st_value)),
+    ident_eq x y = false ->
+    lookup_var ((x, v) :: vars) y = lookup_var vars y.
+Proof.
+  intros [sx] [sy] v vars H.
+  simpl.
+  unfold ident_eq in H.
+  rewrite (String.eqb_sym sy sx).
+  rewrite H.
+  reflexivity.
+Qed.
+
+(* 核心类型赋值经过 coerce 后仍与左值声明类型一致。 *)
+Lemma coerce_value_to_type_preserves_type :
+  forall (lhs_ty rhs_ty : st_type) (v : st_value),
+    core_ty lhs_ty ->
+    core_ty rhs_ty ->
+    type_compatible rhs_ty lhs_ty ->
+    st_value_type v = rhs_ty ->
+    st_value_type (coerce_value_to_type lhs_ty v) = lhs_ty.
+Proof.
+  intros lhs_ty rhs_ty v Hcl Hcr Hcomp Hv.
+  destruct lhs_ty; simpl in Hcl; try discriminate;
+    destruct rhs_ty; simpl in Hcr; try discriminate;
+    try (inversion Hcomp).
+  all: try (destruct (value_type_bool v Hv); subst; reflexivity).
+  all: try (destruct (value_type_int v Hv); subst; reflexivity).
+  all: destruct v; simpl in Hv; try discriminate; subst; reflexivity.
+Qed.
+
+Lemma update_var_preserves_state_consistent :
+  forall (env : type_env) (s : st_state) (x : ident) (ty : st_type)
+         (v : st_value),
+    state_consistent env s ->
+    lookup env x = Some ty ->
+    st_value_type v = ty ->
+    state_consistent env (update_var s x v).
+Proof.
+  intros env s x ty v Hstate Hlook Htype.
+  unfold state_consistent in *.
+  destruct Hstate as [Hvals Hpresent].
+  split.
+  - intros y ty' w Hlook2 Hfind.
+    unfold update_var in Hfind.
+    simpl in Hfind.
+    destruct (ident_eq y x) eqn:Heq.
+    + injection Hfind as Hvw.
+      pose proof (ident_eq_sound y x Heq) as Hyx.
+      subst y.
+      assert (Htyeq : ty' = ty).
+      { rewrite Hlook in Hlook2.
+        inversion Hlook2.
+        reflexivity. }
+      subst ty'.
+      rewrite Hvw in Htype.
+      exact Htype.
+    + exact (Hvals y ty' w Hlook2 Hfind).
+  - intros y ty' Hlook2.
+    destruct (ident_eq x y) eqn:Heq.
+    + apply ident_eq_sound in Heq.
+      subst y.
+      exists v.
+      change (lookup_var ((x, v) :: s.(st_vars)) x = Some v).
+      apply lookup_var_update_head.
+    + destruct (Hpresent y ty' Hlook2) as [w Hw].
+      exists w.
+      change (lookup_var ((x, v) :: s.(st_vars)) y = Some w).
+      rewrite lookup_var_update_other by exact Heq.
+      exact Hw.
+Qed.
+
+Lemma core_stmts_cons :
+  forall (s : st_stmt) (rest : list st_stmt),
+    core_stmts (s :: rest) ->
+    core_stmt s = true /\ core_stmts rest.
+Proof.
+  intros s rest H.
+  unfold core_stmts in *.
+  simpl in H.
+  apply andb_true_iff.
+  exact H.
+Qed.
+
+Lemma core_stmts_single :
+  forall (s : st_stmt), core_stmt s = true -> core_stmts (s :: nil).
+Proof.
+  intros s H.
+  unfold core_stmts.
+  simpl.
+  rewrite H.
+  reflexivity.
+Qed.
+
+Lemma core_opt_stmts_some :
+  forall (o : option (list st_stmt)) (stmts : list st_stmt),
+    core_opt_stmts o ->
+    o = Some stmts ->
+    core_stmts stmts.
+Proof.
+  intros o stmts H Hsome.
+  rewrite Hsome in H.
+  exact H.
+Qed.
+
+(* 配置式核心程序不变量 *)
+Definition core_cfg (p : st_program) (stmts : list st_stmt) (s : st_state) : Prop :=
+  core_program p = true /\
+  core_env (build_program_env p) /\
+  core_stmts stmts /\
+  typed_stmts (build_fenv_from_pous p.(pou_list)) (build_program_env p) stmts /\
+  state_consistent (build_program_env p) s.
+
+Lemma core_stmt_if_core_exprs :
+  forall (cond : st_expr) (then_stmts : list st_stmt)
+         (else_stmts : option (list st_stmt)),
+    core_stmt (S_IF cond then_stmts else_stmts) = true ->
+    core_expr cond = true /\
+    core_stmts then_stmts /\
+    core_opt_stmts else_stmts.
+Proof.
+  intros cond then_stmts else_stmts H.
+  unfold core_stmt in H.
+  apply andb_true_iff in H.
+  destruct H as [H1 Helse].
+  apply andb_true_iff in H1.
+  destruct H1 as [Hcond Hthen].
+  split; [exact Hcond |].
+  split.
+  - exact Hthen.
+  - destruct else_stmts as [es |].
+    + unfold core_opt_stmts, core_stmts in *.
+      exact Helse.
+    + unfold core_opt_stmts.
+      exact I.
+Qed.
+
+Lemma core_stmt_while_core_exprs :
+  forall (cond : st_expr) (body : list st_stmt),
+    core_stmt (S_WHILE cond body) = true ->
+    core_expr cond = true /\ core_stmts body.
+Proof.
+  intros cond body H.
+  unfold core_stmt in H.
+  apply andb_true_iff in H.
+  destruct H.
+  split.
+  - assumption.
+  - unfold core_stmts.
+    assumption.
+Qed.
+
+Lemma core_stmt_repeat_core_exprs :
+  forall (body : list st_stmt) (cond : st_expr),
+    core_stmt (S_REPEAT body cond) = true ->
+    core_stmts body /\ core_expr cond = true.
+Proof.
+  intros body cond H.
+  unfold core_stmt in H.
+  apply andb_true_iff in H.
+  destruct H.
+  split.
+  - unfold core_stmts.
+    assumption.
+  - assumption.
+Qed.
+
+Lemma core_stmt_for_core_exprs :
+  forall (v : ident) (start end_ : st_expr) (step : option st_expr)
+         (body : list st_stmt),
+    core_stmt (S_FOR v start end_ step body) = true ->
+    core_expr start = true /\
+    core_expr end_ = true /\
+    core_stmts body.
+Proof.
+  intros v start end_ step body H.
+  unfold core_stmt in H.
+  apply andb_true_iff in H.
+  destruct H as [H1 Hbody].
+  apply andb_true_iff in H1.
+  destruct H1 as [H2 Hstep].
+  apply andb_true_iff in H2.
+  destruct H2 as [Hstart Hend].
+  split; [exact Hstart |].
+  split; [exact Hend |].
+  exact Hbody.
+Qed.
+
+Lemma core_expr_type_check_fenv_indep :
+  forall (fenv : type_env_func) (env : type_env) (e : st_expr),
+    core_expr e = true ->
+    type_check_expr fenv env e = type_check_expr nil env e.
+Proof.
+  intros fenv env e.
+  induction e as [lit | x | arr idx | uop e1
+    | bop e1 e2 | cop e1 e2
+    | e1 e2 | e1 e2 | e1 e2
+    | f args | q args]; intros Hc; simpl in Hc; try discriminate.
+  all: try destruct lit; simpl; reflexivity.
+Qed.
+
+Lemma typed_assign_inv :
+  forall (fenv : type_env_func) (env : type_env) (x : ident)
+         (e : st_expr) (rest : list st_stmt),
+    typed_stmts fenv env (S_ASSIGN x e :: rest) ->
+    exists lhs_ty rhs_ty,
+      lookup env x = Some lhs_ty /\
+      type_check_expr fenv env e = Some rhs_ty /\
+      type_compatible_dec rhs_ty lhs_ty = true /\
+      typed_stmts fenv env rest.
+Proof.
+  intros fenv env x e rest H.
+  inversion H; subst.
+  eauto 7.
+Qed.
+
+Lemma typed_if_inv :
+  forall (fenv : type_env_func) (env : type_env) (cond : st_expr)
+         (then_stmts : list st_stmt) (else_stmts : option (list st_stmt))
+         (rest : list st_stmt),
+    typed_stmts fenv env (S_IF cond then_stmts else_stmts :: rest) ->
+    type_check_expr fenv env cond = Some T_BOOL /\
+    typed_stmts fenv env then_stmts /\
+    typed_opt_stmts fenv env else_stmts /\
+    typed_stmts fenv env rest.
+Proof.
+  intros fenv env cond then_stmts else_stmts rest H.
+  inversion H; subst.
+  auto.
+Qed.
+
+Lemma typed_while_inv :
+  forall (fenv : type_env_func) (env : type_env) (cond : st_expr)
+         (body : list st_stmt) (rest : list st_stmt),
+    typed_stmts fenv env (S_WHILE cond body :: rest) ->
+    type_check_expr fenv env cond = Some T_BOOL /\
+    typed_stmts fenv env body /\
+    typed_stmts fenv env rest.
+Proof.
+  intros fenv env cond body rest H.
+  inversion H; subst.
+  auto.
+Qed.
+
+Lemma typed_repeat_inv :
+  forall (fenv : type_env_func) (env : type_env) (body : list st_stmt)
+         (cond : st_expr) (rest : list st_stmt),
+    typed_stmts fenv env (S_REPEAT body cond :: rest) ->
+    typed_stmts fenv env body /\
+    type_check_expr fenv env cond = Some T_BOOL /\
+    typed_stmts fenv env rest.
+Proof.
+  intros fenv env body cond rest H.
+  inversion H; subst.
+  auto.
+Qed.
+
+Lemma typed_for_inv :
+  forall (fenv : type_env_func) (env : type_env) (v : ident)
+         (start end_ : st_expr) (step : option st_expr)
+         (body : list st_stmt) (rest : list st_stmt),
+    typed_stmts fenv env (S_FOR v start end_ step body :: rest) ->
+    lookup env v = Some T_INT /\
+    type_check_expr fenv env start = Some T_INT /\
+    type_check_expr fenv env end_ = Some T_INT /\
+    typed_stmts fenv env body /\
+    typed_stmts fenv env rest.
+Proof.
+  intros fenv env v start end_ step body rest H.
+  inversion H; subst.
+  auto.
+Qed.
+
+
+(* 核心子集中的良类型表达式求值必有结果，且结果的基础类型与声明类型一致。 *)
+Theorem typed_eval_total :
+  forall (env : type_env) (s : st_state) (e : st_expr) (ty : st_type),
+    core_env env ->
+    core_expr e = true ->
+    state_consistent env s ->
+    type_check_expr nil env e = Some ty ->
+    core_ty ty ->
+    exists v : st_value, eval_expr s e = Some v /\ st_value_type v = ty.
+Proof.
+  intros env s e; induction e as [lit | x | arr idx | uop e IHe
+      | bop e1 IHe1 e2 IHe2 | cop e1 IHe1 e2 IHe2
+      | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2 | e1 IHe1 e2 IHe2
+      | f args | q args]; intros ty Henv Hcore Hstate Hty Hcorety.
+  - destruct lit; simpl in Hcore; try discriminate;
+      simpl in Hty; inversion Hty; subst;
+      eexists; split; reflexivity.
+  - unfold state_consistent in Hstate.
+    destruct Hstate as [Hvals Hpresent].
+    simpl in Hty.
+    pose proof (Hpresent x ty Hty) as [v Hlook].
+    exists v.
+    split.
+    + simpl.
+      exact Hlook.
+    + exact (Hvals x ty v Hty Hlook).
+  - simpl in Hcore; discriminate.
+  - simpl in Hcore.
+    simpl in Hty.
+    destruct (type_check_expr nil env e) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct (is_valid_unary_dec uop t1) eqn:Hvalid;
+      simpl in Hty; try discriminate.
+    pose proof (core_expr_type_is_core env e t1 Henv Hcore Ht1) as Hct1.
+    destruct (IHe t1 Henv Hcore Hstate eq_refl Hct1)
+      as [v1 [He1 Hv1]].
+    destruct (eval_unop_result_type uop s e v1 t1 He1 Hv1 Hct1
+               (is_valid_unary_dec_sound uop t1 Hvalid))
+      as [v' [He' Hv']].
+    injection Hty as Ht1eq.
+    rewrite Ht1eq in Hv'.
+    exists v'.
+    split; [exact He' | exact Hv'].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct (promote_type_dec t1 t2) as [t3|] eqn:Hp;
+      simpl in Hty; try discriminate.
+    destruct (is_valid_binary_dec bop t3) eqn:Hvalid;
+      simpl in Hty; try discriminate.
+    pose proof (core_expr_type_is_core env e1 t1 Henv Hc1 Ht1) as Hct1.
+    pose proof (core_expr_type_is_core env e2 t2 Henv Hc2 Ht2) as Hct2.
+    pose proof (promote_type_core_result t1 t2 t3 Hct1 Hct2
+                 (promote_type_dec_sound t1 t2 t3 Hp)) as Hcore3.
+    destruct (IHe1 t1 Henv Hc1 Hstate eq_refl Hct1)
+      as [v1 [He1 Hv1]].
+    destruct (IHe2 t2 Henv Hc2 Hstate eq_refl Hct2)
+      as [v2 [He2 Hv2]].
+    destruct (eval_binop_result_type bop s e1 e2 v1 v2 t1 t2 t3
+               He1 He2 Hv1 Hv2 Hct1 Hct2
+               (promote_type_dec_sound t1 t2 t3 Hp)
+               (is_valid_binary_dec_sound bop t3 Hvalid)
+               Hcore3)
+      as [v' [He' Hv']].
+    injection Hty as Ht3eq.
+    rewrite Ht3eq in Hv'.
+    exists v'.
+    split; [exact He' | exact Hv'].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct (type_comparable_dec t1 t2) eqn:Hcomp;
+      simpl in Hty; try discriminate.
+    inversion Hty.
+    pose proof (core_expr_type_is_core env e1 t1 Henv Hc1 Ht1) as Hct1.
+    pose proof (core_expr_type_is_core env e2 t2 Henv Hc2 Ht2) as Hct2.
+    destruct (IHe1 t1 Henv Hc1 Hstate eq_refl Hct1)
+      as [v1 [He1 Hv1]].
+    destruct (IHe2 t2 Henv Hc2 Hstate eq_refl Hct2)
+      as [v2 [He2 Hv2]].
+    unfold type_comparable_dec in Hcomp.
+    apply orb_true_iff in Hcomp.
+    destruct Hcomp as [Hleft | Hright].
+    + destruct (eval_compare_result_type cop s e1 e2 v1 v2 t1 t2
+                 He1 He2 Hv1 Hv2 Hct1 Hct2
+                 (or_introl (type_compatible_dec_sound t1 t2 Hleft)))
+        as [v' [He' Hv']].
+      exists v'.
+      split; [exact He' | exact Hv'].
+    + destruct (eval_compare_result_type cop s e1 e2 v1 v2 t1 t2
+                 He1 He2 Hv1 Hv2 Hct1 Hct2
+                 (or_intror (type_compatible_dec_sound t2 t1 Hright)))
+        as [v' [He' Hv']].
+      exists v'.
+      split; [exact He' | exact Hv'].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    destruct (IHe1 T_BOOL Henv Hc1 Hstate eq_refl core_ty_bool)
+      as [v1 [He1 Hv1]].
+    destruct (IHe2 T_BOOL Henv Hc2 Hstate eq_refl core_ty_bool)
+      as [v2 [He2 Hv2]].
+    destruct (eval_and_result_type s e1 e2 v1 v2 He1 He2 Hv1 Hv2)
+      as [v' [He' Hv']].
+    exists v'.
+    split; [exact He' | exact Hv'].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    destruct (IHe1 T_BOOL Henv Hc1 Hstate eq_refl core_ty_bool)
+      as [v1 [He1 Hv1]].
+    destruct (IHe2 T_BOOL Henv Hc2 Hstate eq_refl core_ty_bool)
+      as [v2 [He2 Hv2]].
+    destruct (eval_or_result_type s e1 e2 v1 v2 He1 He2 Hv1 Hv2)
+      as [v' [He' Hv']].
+    exists v'.
+    split; [exact He' | exact Hv'].
+  - simpl in Hcore.
+    apply andb_true_iff in Hcore.
+    destruct Hcore as [Hc1 Hc2].
+    simpl in Hty.
+    destruct (type_check_expr nil env e1) as [t1|] eqn:Ht1;
+      simpl in Hty; try discriminate.
+    destruct t1; simpl in Hty; try discriminate.
+    destruct (type_check_expr nil env e2) as [t2|] eqn:Ht2;
+      simpl in Hty; try discriminate.
+    destruct t2; simpl in Hty; try discriminate.
+    inversion Hty.
+    destruct (IHe1 T_BOOL Henv Hc1 Hstate eq_refl core_ty_bool)
+      as [v1 [He1 Hv1]].
+    destruct (IHe2 T_BOOL Henv Hc2 Hstate eq_refl core_ty_bool)
+      as [v2 [He2 Hv2]].
+    destruct (eval_xor_result_type s e1 e2 v1 v2 He1 He2 Hv1 Hv2)
+      as [v' [He' Hv']].
+    exists v'.
+    split; [exact He' | exact Hv'].
+  - simpl in Hcore; discriminate.
+  - simpl in Hcore; discriminate.
+Qed.
+
+Lemma typed_sel_eval_bool :
+  forall (env : type_env) (s : st_state) (fenv : type_env_func)
+         (e : st_expr),
+    core_env env ->
+    core_expr e = true ->
+    state_consistent env s ->
+    type_check_expr fenv env e = Some T_BOOL ->
+    exists b : bool, eval_expr s e = Some (ST_V_BOOL b).
+Proof.
+  intros env s fenv e Henv Hcore Hstate Hty.
+  rewrite (core_expr_type_check_fenv_indep fenv env e Hcore) in Hty.
+  destruct (typed_eval_total env s e T_BOOL Henv Hcore Hstate Hty
+             core_ty_bool) as [v [He Htype]].
+  destruct v; simpl in Htype; try discriminate.
+  eexists.
+  exact He.
+Qed.
+
+Lemma typed_sel_eval_int :
+  forall (env : type_env) (s : st_state) (fenv : type_env_func)
+         (e : st_expr),
+    core_env env ->
+    core_expr e = true ->
+    state_consistent env s ->
+    type_check_expr fenv env e = Some T_INT ->
+    exists n : Z, eval_expr s e = Some (ST_V_INT n).
+Proof.
+  intros env s fenv e Henv Hcore Hstate Hty.
+  rewrite (core_expr_type_check_fenv_indep fenv env e Hcore) in Hty.
+  destruct (typed_eval_total env s e T_INT Henv Hcore Hstate Hty
+             core_ty_int) as [v [He Htype]].
+  destruct v; simpl in Htype; try discriminate.
+  eexists.
+  exact He.
+Qed.
+
+Lemma typed_sel_eval_dint :
+  forall (env : type_env) (s : st_state) (fenv : type_env_func)
+         (e : st_expr),
+    core_env env ->
+    core_expr e = true ->
+    state_consistent env s ->
+    type_check_expr fenv env e = Some T_DINT ->
+    exists n : Z, eval_expr s e = Some (ST_V_DINT n).
+Proof.
+  intros env s fenv e Henv Hcore Hstate Hty.
+  rewrite (core_expr_type_check_fenv_indep fenv env e Hcore) in Hty.
+  destruct (typed_eval_total env s e T_DINT Henv Hcore Hstate Hty
+             core_ty_dint) as [v [He Htype]].
+  destruct v; simpl in Htype; try discriminate.
+  eexists.
+  exact He.
+Qed.
+
+Lemma typed_case_inv :
+  forall (fenv : type_env_func) (env : type_env) (sel : st_expr)
+         (branches : list case_element) (default : option (list st_stmt))
+         (rest : list st_stmt),
+    typed_stmts fenv env (S_CASE sel branches default :: rest) ->
+    (type_check_expr fenv env sel = Some T_INT \/
+     type_check_expr fenv env sel = Some T_DINT) /\
+    typed_case_elements fenv env branches /\
+    typed_opt_stmts fenv env default /\
+    typed_stmts fenv env rest.
+Proof.
+  intros fenv env sel branches default rest H.
+  inversion H; subst; auto.
+Qed.
+
+Lemma core_stmt_case_core_sel :
+  forall (sel : st_expr) (branches : list case_element)
+         (default : option (list st_stmt)),
+    core_stmt (S_CASE sel branches default) = true ->
+    core_expr sel = true.
+Proof.
+  intros sel branches default H.
+  unfold core_stmt in H.
+  apply andb_true_iff in H.
+  destruct H as [H1 _].
+  apply andb_true_iff in H1.
+  destruct H1 as [Hsel _].
+  exact Hsel.
+Qed.
+
+(* 配置式核心程序的单步可推进性。 *)
+Theorem progress_cfg :
+  forall (p : st_program) (stmts : list st_stmt) (s : st_state),
+    core_cfg p stmts s ->
+    stmts <> nil ->
+    exists (stmts' : list st_stmt) (s' : st_state),
+      stmts_step p stmts s stmts' s'.
+Proof.
+  intros p stmts s Hcfg Hnon.
+  destruct Hcfg as [Hprog [Henv [Hcore [Htyped Hstate]]]].
+  destruct stmts as [|st rest].
+  - exfalso.
+    apply Hnon.
+    reflexivity.
+  - destruct (core_stmts_cons st rest Hcore) as [Hcore_st Hcore_rest].
+    destruct st as [x e | x idx e | cond then_stmts else_stmts
+      | sel branches default | v start end_ step body | cond body
+      | body cond | inst params | |].
+    + (* S_ASSIGN *)
+      destruct (typed_assign_inv (build_fenv_from_pous p.(pou_list))
+                 (build_program_env p) x e rest Htyped)
+        as [lhs [rhs [Hlook [Htc [Hcomp Hrest]]]]].
+      simpl in Hcore_st.
+      rewrite (core_expr_type_check_fenv_indep
+                 (build_fenv_from_pous p.(pou_list))
+                 (build_program_env p) e Hcore_st) in Htc.
+      pose proof (core_expr_type_is_core (build_program_env p) e rhs
+                   Henv Hcore_st Htc) as Hcrhs.
+      destruct (typed_eval_total (build_program_env p) s e rhs
+                 Henv Hcore_st Hstate Htc Hcrhs)
+        as [v [He Htype]].
+      exact (ss_assign_step_exists p x e rest s v lhs Hlook He).
+    + (* S_ARRAY_ASSIGN *)
+      inversion Htyped.
+    + (* S_IF *)
+      destruct (typed_if_inv (build_fenv_from_pous p.(pou_list))
+                 (build_program_env p) cond then_stmts else_stmts rest
+                 Htyped) as [Htc [Hthen [Helse Hrest]]].
+      simpl in Hcore_st.
+      destruct (core_stmt_if_core_exprs cond then_stmts else_stmts
+                 Hcore_st) as [Hcc [_ _]].
+      destruct (typed_sel_eval_bool (build_program_env p) s
+                 (build_fenv_from_pous p.(pou_list)) cond
+                 Henv Hcc Hstate Htc) as [b He].
+      destruct b.
+      * eapply ss_if_true_step_exists.
+        exact He.
+      * eapply ss_if_false_step_exists.
+        exact He.
+    + (* S_CASE *)
+      destruct (typed_case_inv (build_fenv_from_pous p.(pou_list))
+                 (build_program_env p) sel branches default rest Htyped)
+        as [[Htc | Htc] [Hbranches [Hdefault Hrest]]].
+      * pose proof (core_stmt_case_core_sel sel branches default Hcore_st)
+          as Hcsel.
+        destruct (typed_sel_eval_int (build_program_env p) s
+                   (build_fenv_from_pous p.(pou_list)) sel
+                   Henv Hcsel Hstate Htc) as [n He].
+        eexists (select_case_stmts n branches default ++ rest).
+        eexists s.
+        eapply Ss_case.
+        exact He.
+      * pose proof (core_stmt_case_core_sel sel branches default Hcore_st)
+          as Hcsel.
+        destruct (typed_sel_eval_dint (build_program_env p) s
+                   (build_fenv_from_pous p.(pou_list)) sel
+                   Henv Hcsel Hstate Htc) as [n He].
+        eexists (select_case_stmts n branches default ++ rest).
+        eexists s.
+        eapply Ss_case_dint.
+        exact He.
+    + (* S_FOR *)
+      apply ss_for_step_exists.
+    + (* S_WHILE *)
+      destruct (typed_while_inv (build_fenv_from_pous p.(pou_list))
+                 (build_program_env p) cond body rest Htyped)
+        as [Htc [Hbody Hrest]].
+      simpl in Hcore_st.
+      destruct (core_stmt_while_core_exprs cond body Hcore_st)
+        as [Hcc _].
+      destruct (typed_sel_eval_bool (build_program_env p) s
+                 (build_fenv_from_pous p.(pou_list)) cond
+                 Henv Hcc Hstate Htc) as [b He].
+      destruct b.
+      * eapply ss_while_true_step_exists.
+        exact He.
+      * eapply ss_while_false_step_exists.
+        exact He.
+    + (* S_REPEAT *)
+      apply ss_repeat_step_exists.
+    + (* S_FB_CALL *)
+      inversion Htyped.
+    + inversion Htyped.
+    + inversion Htyped.
 Qed.

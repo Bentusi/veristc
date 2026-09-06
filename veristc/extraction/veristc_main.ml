@@ -1,14 +1,12 @@
 (* ================================================================
    veristc/extraction/veristc_main.ml
-   veristc 编译器命令行入口 — 提取后的 OCaml 代码
-   
-   用法:
-     veristc compile input.st -o output.sasm
-     veristc compile input.st --dump > output.txt
-     veristc analyze input.st
+   Compiler command line: .st -> .sasm
+
+   This file is compiled after the OCaml code extracted from Coq.
+   The extracted modules shadow several Stdlib names, so all native
+   list/string operations use Stdlib.List / Stdlib.String.
    ================================================================ *)
 
-(* 从 Coq Extraction 生成的模块 *)
 module L = Lexer
 module P = Parser
 module D = Desugar
@@ -17,7 +15,24 @@ module C = Codegen
 module A = Analysis
 module E = Encoder
 
-(* 简单文件读取 *)
+(* Ascii constructor bit order: Ascii a0..a7, a0 is the low bit. *)
+let ascii_of_char (c : char) : Ascii.ascii =
+  let n = Char.code c in
+  let bit i = (n lsr i) land 1 <> 0 in
+  let cb b = if b then Datatypes.Coq_true else Datatypes.Coq_false in
+  Ascii.Ascii (cb (bit 0), cb (bit 1), cb (bit 2), cb (bit 3),
+               cb (bit 4), cb (bit 5), cb (bit 6), cb (bit 7))
+
+let rec coq_string_of_native (s : string) : String.string =
+  let len = Stdlib.String.length s in
+  let rec go i acc =
+    if i < 0 then acc
+    else
+      let c = Stdlib.String.get s i in
+      go (i - 1) (String.String (ascii_of_char c, acc))
+  in
+  go (len - 1) String.EmptyString
+
 let read_file (path : string) : string =
   let ch = open_in path in
   let n = in_channel_length ch in
@@ -25,89 +40,101 @@ let read_file (path : string) : string =
   close_in ch;
   s
 
-(* 编译流程: .st → .sasm *)
-let compile_st_to_sasm (source_path : string) : string =
-  let source = read_file source_path in
+let rec pos_to_int (p : BinNums.positive) : int =
+  match p with
+  | BinNums.Coq_xI rest -> 1 + 2 * pos_to_int rest
+  | BinNums.Coq_xO rest -> 2 * pos_to_int rest
+  | BinNums.Coq_xH -> 1
 
-  (* Step 1: 词法分析 *)
+let z_to_int (z : BinNums.coq_Z) : int =
+  match z with
+  | BinNums.Z0 -> 0
+  | BinNums.Zpos p -> pos_to_int p
+  | BinNums.Zneg p -> - pos_to_int p
+
+let rec z_bytes_to_string (zs : BinNums.coq_Z Datatypes.list) : string =
+  match zs with
+  | Datatypes.Coq_nil -> ""
+  | Datatypes.Coq_cons (z, rest) ->
+      let c = Char.chr (z_to_int z land 0xff) in
+      let tail = z_bytes_to_string rest in
+      Stdlib.String.make 1 c ^ tail
+
+let rec coq_list_len (l : 'a Datatypes.list) : int =
+  match l with
+  | Datatypes.Coq_nil -> 0
+  | Datatypes.Coq_cons (_, rest) -> 1 + coq_list_len rest
+
+let compile_st_to_sasm (source_path : string) : string =
+  let source = coq_string_of_native (read_file source_path) in
   let tokens = match L.lex source with
     | Some ts -> ts
-    | None -> failwith "词法分析失败"
+    | None -> failwith "lexer failed"
   in
-
-  (* Step 2: 语法分析 *)
   let ast = match P.parse tokens with
     | Some p -> p
-    | None -> failwith "语法分析失败"
+    | None -> failwith "parser failed"
   in
-
-  (* Step 3: 脱糖 *)
+  if coq_list_len ast.Safest.pou_list = 0 then
+    failwith "parser produced empty program";
+  (match T.type_check_program ast with
+   | Some _ -> ()
+   | None -> failwith "type check failed");
   let corest = D.desugar_program ast in
-
-  (* Step 4: 类型检查（可选，可注释掉以跳过） *)
-  let _ = match T.type_check_program ast with
-    | Some _ -> ()  (* 类型检查通过 *)
-    | None -> failwith "类型检查失败"
-  in
-
-  (* Step 5: 静态分析 *)
-  let _analysis = A.analyze corest in
-
-  (* Step 6: 代码生成 *)
+  if coq_list_len corest.Desugar.cprog_functions = 0 then
+    failwith "desugar produced empty function list";
   let sasm_module = C.compile_program corest in
+  z_bytes_to_string (E.encode_module sasm_module)
 
-  (* Step 7: 编码为二进制 *)
-  let encoded = E.encode_module sasm_module in
-  encoded
-
-(* 保存 .sasm 文件 *)
-let write_sasm (path : string) (data : string) : unit =
+let write_file (path : string) (data : string) : unit =
   let ch = open_out path in
   output_string ch data;
   close_out ch
 
-(* 主入口 *)
+let rec nat_to_int (n : Datatypes.nat) : int =
+  match n with
+  | Datatypes.O -> 0
+  | Datatypes.S rest -> 1 + nat_to_int rest
+
+let bool_to_string (b : Datatypes.bool) : string =
+  match b with
+  | Datatypes.Coq_true -> "true"
+  | Datatypes.Coq_false -> "false"
+
 let () =
   let args = Sys.argv in
   if Array.length args < 3 then begin
-    Printf.eprintf "用法: %s compile <input.st> -o <output.sasm>\n" args.(0);
-    Printf.eprintf "       %s compile <input.st> --dump\n" args.(0);
+    Printf.eprintf "usage: %s compile <input.st> [-o <output.sasm>]\n" args.(0);
     Printf.eprintf "       %s analyze <input.st>\n" args.(0);
     exit 1
   end;
   match args.(1) with
   | "compile" ->
-    let source = args.(2) in
-    if Array.length args >= 4 && args.(3) = "-o" then begin
-      let output = if Array.length args >= 5 then args.(4) else "output.sasm" in
+      let source = args.(2) in
       let sasm_data = compile_st_to_sasm source in
-      write_sasm output sasm_data;
-      Printf.printf "✓ 编译成功: %s → %s\n" source output
-    end else if Array.length args >= 4 && args.(3) = "--dump" then begin
-      let sasm_data = compile_st_to_sasm source in
-      (* 以十六进制转储 *)
-      String.iter (fun c -> Printf.printf "%02x " (Char.code c)) sasm_data;
-      print_newline ()
-    end else begin
-      let _ = compile_st_to_sasm source in
-      Printf.printf "✓ 编译成功: %s\n" source
-    end
+      let output =
+        if Array.length args >= 5 && args.(3) = "-o" then args.(4)
+        else "output.sasm"
+      in
+      write_file output sasm_data;
+      Printf.printf "compiled: %s -> %s\n" source output
   | "analyze" ->
-    let source = read_file args.(2) in
-    let tokens = match L.lex source with
-      | Some ts -> ts
-      | None -> failwith "词法分析失败"
-    in
-    let ast = match P.parse tokens with
-      | Some p -> p
-      | None -> failwith "语法分析失败"
-    in
-    let corest = D.desugar_program ast in
-    let result = A.analyze corest in
-    Printf.printf "分析结果:\n";
-    Printf.printf "  最大栈深度: %d\n" result.A.ar_max_stack_depth;
-    Printf.printf "  预估 WCET:  %d\n" result.A.ar_estimated_wcet;
-    Printf.printf "  循环有界:   %b\n" result.A.ar_all_loops_bounded
+      let source = coq_string_of_native (read_file args.(2)) in
+      let tokens = match L.lex source with
+        | Some ts -> ts
+        | None -> failwith "lexer failed"
+      in
+      let ast = match P.parse tokens with
+        | Some p -> p
+        | None -> failwith "parser failed"
+      in
+      if coq_list_len ast.Safest.pou_list = 0 then
+        failwith "parser produced empty program";
+      let result = A.analyze (D.desugar_program ast) in
+      Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
+      Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
+      Printf.printf "loops bounded: %s\n"
+        (bool_to_string result.A.ar_all_loops_bounded)
   | _ ->
-    Printf.eprintf "未知命令: %s\n" args.(1);
-    exit 1
+      Printf.eprintf "unknown command: %s\n" args.(1);
+      exit 1

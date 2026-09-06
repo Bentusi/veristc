@@ -202,8 +202,8 @@ Fixpoint next_token (s : string) : option (token * string) :=
       let n := Ascii.N_of_ascii c in
       (* 数字开头 → 数字字面量 *)
       if is_digit c then
-        let (val, rest') := read_decimal rest 0 in
-        Some (TK_INT_LIT ((Z.of_N (Ascii.N_of_ascii c) - 48) + val), rest')
+        let (val, rest') := read_decimal s' 0 in
+        Some (TK_INT_LIT val, rest')
       
       (* 字母或下划线开头 → 标识符或关键字 *)
       else if is_letter c || is_underscore c then

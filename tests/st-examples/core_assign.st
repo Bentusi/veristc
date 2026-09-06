@@ -1,0 +1,6 @@
+PROGRAM P
+VAR
+    x : DINT;
+END_VAR
+x := 42 + 0;
+END_PROGRAM

@@ -253,9 +253,10 @@ int vm_execute_cycle(VM *vm) {
         case OP_BR: {
             uint32_t depth = read_u32_code(frame, &pc);
             if (depth < frame->block_depth) {
-                /* 跳转到 block_stack[depth] */
-                pc = frame->block_stack[depth];
-                frame->block_depth = depth;
+                /* depth 从栈顶计：0 = 最内层标签 */
+                uint32_t target = frame->block_depth - depth - 1;
+                pc = frame->block_stack[target];
+                frame->block_depth = target;
             }
             break;
         }
@@ -265,8 +266,9 @@ int vm_execute_cycle(VM *vm) {
             sasm_value cond = pop_value(vm);
             if (cond != 0) {
                 if (depth < frame->block_depth) {
-                    pc = frame->block_stack[depth];
-                    frame->block_depth = depth;
+                    uint32_t target = frame->block_depth - depth - 1;
+                    pc = frame->block_stack[target];
+                    frame->block_depth = target;
                 }
             }
             break;

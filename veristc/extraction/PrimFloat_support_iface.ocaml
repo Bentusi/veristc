@@ -1,0 +1,4 @@
+type float = Float.t
+
+val one : float
+val zero : float

@@ -154,7 +154,7 @@ Definition compile_success (p : st_program) (m : sasm_module) : Prop :=
    ================================================================ *)
 
 (* 真实编译链保持：compile_st_to_sasm 当前实现为 desugar + codegen。
-   注意：Step 5 的语义保持定理尚待随 st_semantics.step_st 真实化后重建，
+   注意：Step 5 的语义保持定理尚待基于配置式 stmts_step 重建，
    此处不再保留旧的空真 semantics_preservation 声明。 *)
 
 Theorem compile_st_to_sasm_is_desugar_codegen :

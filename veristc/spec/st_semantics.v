@@ -217,6 +217,10 @@ Fixpoint eval_expr (s : st_state) (e : st_expr) : option st_value :=
           Some (ST_V_BOOL (eval_compare_int op n1 n2))
       | Some (ST_V_DINT n1), Some (ST_V_DINT n2) =>
           Some (ST_V_BOOL (eval_compare_int op n1 n2))
+      | Some (ST_V_INT n1), Some (ST_V_DINT n2) =>
+          Some (ST_V_BOOL (eval_compare_int op n1 n2))
+      | Some (ST_V_DINT n1), Some (ST_V_INT n2) =>
+          Some (ST_V_BOOL (eval_compare_int op n1 n2))
       | Some (ST_V_LINT n1), Some (ST_V_LINT n2) =>          (* v1.1 *)
           Some (ST_V_BOOL (eval_compare_int op n1 n2))
       | Some (ST_V_REAL f1), Some (ST_V_REAL f2) =>
@@ -415,32 +419,320 @@ Definition execute_case (s : st_state) (sel : st_expr) (branches : list case_ele
 Definition execute_fb (s : st_state) (fb_def : st_pou) (params : list (ident * st_expr)) : st_state :=
   let body := match fb_def with P_PROGRAM _ _ b => b | P_FUNCTION _ _ _ b => b | P_FUNCTION_BLOCK _ _ b => b end in
   execute_stmts s body.
-(* ST 小步语义: step_st p s s'
-   ST 程序 p 从状态 s 执行一步到 s'
-   
-   每条语句类型对应一到多条执行规则。
-   复合语句（IF/WHILE/FOR等）用多条规则表达小步语义。 *)
-Inductive step_st : st_program -> st_state -> st_state -> Prop :=
-  (* 赋值语句: x := e, 计算 e 的值后更新 x *)
-  | St_assign : forall p s x e v,
+(* 运行时值的基础类型 *)
+Definition st_value_type (v : st_value) : st_type :=
+  match v with
+  | ST_V_BOOL _  => T_BOOL
+  | ST_V_BYTE _  => T_BYTE
+  | ST_V_WORD _  => T_WORD
+  | ST_V_DWORD _ => T_DWORD
+  | ST_V_SINT _  => T_SINT
+  | ST_V_INT _   => T_INT
+  | ST_V_DINT _  => T_DINT
+  | ST_V_LINT _  => T_LINT
+  | ST_V_REAL _  => T_REAL
+  | ST_V_LREAL _ => T_LREAL
+  | ST_V_TIME _  => T_TIME
+  end.
+
+(* 声明环境构造（与 typechecker 共享，避免语义层反向依赖类型检查器） *)
+Definition pou_name (p : st_pou) : ident :=
+  match p with
+  | P_PROGRAM name _ _ => name
+  | P_FUNCTION name _ _ _ => name
+  | P_FUNCTION_BLOCK name _ _ => name
+  end.
+
+Definition pou_var_decls (p : st_pou) : list st_var_decl :=
+  match p with
+  | P_PROGRAM _ decls _ => decls
+  | P_FUNCTION _ _ decls _ => decls
+  | P_FUNCTION_BLOCK _ decls _ => decls
+  end.
+
+Fixpoint build_env_from_decls (decls : list st_var_decl) : type_env :=
+  match decls with
+  | nil => nil
+  | d :: rest => (d.(var_name), d.(var_type)) :: build_env_from_decls rest
+  end.
+
+Definition build_program_env (p : st_program) : type_env :=
+  let global_env := build_env_from_decls p.(global_vars) in
+  List.fold_right (fun pou acc =>
+    build_env_from_decls (pou_var_decls pou) ++ acc
+  ) global_env p.(pou_list).
+
+(* 赋值时把求值结果归一化为变量的声明类型，使 INT 值可无损存入 DINT。 *)
+Definition coerce_value_to_type (ty : st_type) (v : st_value) : st_value :=
+  match ty, v with
+  | T_DINT, ST_V_INT n => ST_V_DINT n
+  | T_INT, ST_V_DINT n => ST_V_INT n
+  | T_LINT, ST_V_INT n | T_LINT, ST_V_DINT n => ST_V_LINT n
+  | T_LREAL, ST_V_REAL f => ST_V_LREAL f
+  | _, v => v
+  end.
+
+(* 运行时类型一致性：状态中每个变量的实际基础类型与声明类型兼容 *)
+Definition state_consistent (env : type_env) (s : st_state) : Prop :=
+  (forall (x : ident) (ty : st_type) (v : st_value),
+    lookup env x = Some ty ->
+    lookup_var s.(st_vars) x = Some v ->
+    st_value_type v = ty) /\
+  (forall (x : ident) (ty : st_type),
+    lookup env x = Some ty ->
+    exists (v : st_value), lookup_var s.(st_vars) x = Some v).
+
+(* 质量一致性：质量码只能为 GOOD(0) 或 BAD(1) *)
+Definition quality_consistent (s : st_state) : Prop :=
+  forall (x : ident) (q : Z),
+    List.In (x, q) s.(st_quality) ->
+    q = 0 \/ q = 1.
+
+(* ================================================================
+   配置式语句小步语义
+
+   配置 = 当前剩余语句列表 + 运行时状态。
+   每条规则消费列表头部的一条语句，并把复合结构展开到后续列表中。
+   这是 typechecker 与 codegen 后续证明所需的真实语义基准。
+   ================================================================ *)
+
+Definition st_config : Type := (list st_stmt * st_state)%type.
+
+(* FOR 语句展开：先赋初值，再用 WHILE 循环主体 + 自增 *)
+Definition for_to_while (v : ident) (start end_ : st_expr)
+           (step : option st_expr) (body : list st_stmt) : list st_stmt :=
+  let step_expr := match step with
+                   | Some e => e
+                   | None => E_LIT (L_INT 1)
+                   end in
+  S_ASSIGN v start ::
+  S_WHILE (E_COMP C_LE (E_VAR v) end_)
+    (body ++ [S_ASSIGN v (E_BIN_OP B_ADD (E_VAR v) step_expr)]) :: nil.
+
+(* CASE 分支选择：命中分支优先，否则使用 default；两者都缺失时为空列表。 *)
+Definition select_case_stmts (sel_num : Z) (branches : list case_element)
+           (default : option (list st_stmt)) : list st_stmt :=
+  match find_case_branch sel_num branches with
+  | Some stmts => stmts
+  | None =>
+      match default with
+      | Some stmts => stmts
+      | None => nil
+      end
+  end.
+
+Inductive stmts_step : st_program -> list st_stmt -> st_state ->
+                       list st_stmt -> st_state -> Prop :=
+  | Ss_assign : forall (p : st_program) (x : ident) (e : st_expr)
+                       (rest : list st_stmt) (s : st_state)
+                       (v : st_value) (ty : st_type),
+      lookup (build_program_env p) x = Some ty ->
       eval_expr s e = Some v ->
-      step_st p s (update_var s x v)
+      stmts_step p (S_ASSIGN x e :: rest) s rest
+                 (update_var s x (coerce_value_to_type ty v))
 
-  (* IF/WHILE/CASE/FOR/数组赋值/函数调用/返回/EXIT/FB调用:
-     当前版本简化为"一步执行"，不改变状态（St_skip）。
-     Phase 1 中将逐步替换为真实小步语义规则。 *)
-  | St_skip : forall (p : st_program) (s : st_state),
-      step_st p s s
+  | Ss_if_true : forall (p : st_program) (cond : st_expr)
+                        (then_stmts : list st_stmt) (else_opt : option (list st_stmt))
+                        (rest : list st_stmt) (s : st_state),
+      eval_expr s cond = Some (ST_V_BOOL true) ->
+      stmts_step p (S_IF cond then_stmts else_opt :: rest) s
+                 (then_stmts ++ rest) s
+
+  | Ss_if_false : forall (p : st_program) (cond : st_expr)
+                         (then_stmts : list st_stmt) (else_opt : option (list st_stmt))
+                         (rest : list st_stmt) (s : st_state),
+      eval_expr s cond = Some (ST_V_BOOL false) ->
+      stmts_step p (S_IF cond then_stmts else_opt :: rest) s
+                 (match else_opt with Some e => e ++ rest | None => rest end) s
+
+  | Ss_while_true : forall (p : st_program) (cond : st_expr)
+                           (body : list st_stmt) (rest : list st_stmt)
+                           (s : st_state),
+      eval_expr s cond = Some (ST_V_BOOL true) ->
+      stmts_step p (S_WHILE cond body :: rest) s
+                 (body ++ S_WHILE cond body :: rest) s
+
+  | Ss_while_false : forall (p : st_program) (cond : st_expr)
+                            (body : list st_stmt) (rest : list st_stmt)
+                            (s : st_state),
+      eval_expr s cond = Some (ST_V_BOOL false) ->
+      stmts_step p (S_WHILE cond body :: rest) s rest s
+
+  | Ss_repeat : forall (p : st_program) (body : list st_stmt)
+                       (cond : st_expr) (rest : list st_stmt) (s : st_state),
+      stmts_step p (S_REPEAT body cond :: rest) s
+                 (body ++ (S_IF cond nil (Some (S_REPEAT body cond :: nil))) :: rest) s
+
+  | Ss_case : forall (p : st_program) (sel : st_expr)
+                     (branches : list case_element) (default : option (list st_stmt))
+                     (rest : list st_stmt) (s : st_state) (n : Z),
+      eval_expr s sel = Some (ST_V_INT n) ->
+      stmts_step p (S_CASE sel branches default :: rest) s
+                 (select_case_stmts n branches default ++ rest) s
+
+  | Ss_case_dint : forall (p : st_program) (sel : st_expr)
+                          (branches : list case_element) (default : option (list st_stmt))
+                          (rest : list st_stmt) (s : st_state) (n : Z),
+      eval_expr s sel = Some (ST_V_DINT n) ->
+      stmts_step p (S_CASE sel branches default :: rest) s
+                 (select_case_stmts n branches default ++ rest) s
+
+  | Ss_for : forall (p : st_program) (v : ident) (start end_ : st_expr)
+                    (step : option st_expr) (body : list st_stmt)
+                    (rest : list st_stmt) (s : st_state),
+      stmts_step p (S_FOR v start end_ step body :: rest) s
+                 (for_to_while v start end_ step body ++ rest) s
 .
 
-(* ST 多步执行 *)
-Inductive star_step_st : st_program -> st_state -> st_state -> Prop :=
-  | Star_st_refl : forall p s, star_step_st p s s
-  | Star_st_step : forall p s1 s2 s3,
-      step_st p s1 s2 ->
-      star_step_st p s2 s3 ->
-      star_step_st p s1 s3
+(* 配置多步执行 *)
+Inductive star_stmts_step : st_program -> list st_stmt -> st_state ->
+                            list st_stmt -> st_state -> Prop :=
+  | Star_stmts_refl : forall (p : st_program) (stmts : list st_stmt)
+                             (s : st_state),
+      star_stmts_step p stmts s stmts s
+  | Star_stmts_step : forall (p : st_program) (stmts1 stmts2 stmts3 : list st_stmt)
+                             (s1 s2 s3 : st_state),
+      stmts_step p stmts1 s1 stmts2 s2 ->
+      star_stmts_step p stmts2 s2 stmts3 s3 ->
+      star_stmts_step p stmts1 s1 stmts3 s3
 .
-(* 判断 ST 状态是否为终态：帧栈为空（无待执行的 POU） *)
-Definition terminal_state (s : st_state) : Prop :=
-  s.(st_call_stack) = nil.
+
+(* 语句列表执行结束：无剩余语句即终止 *)
+Definition stmts_done (stmts : list st_stmt) (s : st_state) : Prop :=
+  stmts = nil.
+
+(* ================================================================
+   单步存在性引理（Progress 的最小构成单元）
+   每个引理只要求其求值前提成立，后续由类型系统证明这些前提。
+   ================================================================ *)
+
+Lemma ss_assign_step_exists :
+  forall (p : st_program) (x : ident) (e : st_expr)
+         (rest : list st_stmt) (s : st_state) (v : st_value)
+         (ty : st_type),
+    lookup (build_program_env p) x = Some ty ->
+    eval_expr s e = Some v ->
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_ASSIGN x e :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor; [exact H | exact H0].
+Qed.
+
+Lemma ss_if_true_step_exists :
+  forall (p : st_program) (cond : st_expr) (then_stmts : list st_stmt)
+         (else_opt : option (list st_stmt)) (rest : list st_stmt) (s : st_state),
+    eval_expr s cond = Some (ST_V_BOOL true) ->
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_IF cond then_stmts else_opt :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor; exact H.
+Qed.
+
+Lemma ss_if_false_step_exists :
+  forall (p : st_program) (cond : st_expr) (then_stmts : list st_stmt)
+         (else_opt : option (list st_stmt)) (rest : list st_stmt) (s : st_state),
+    eval_expr s cond = Some (ST_V_BOOL false) ->
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_IF cond then_stmts else_opt :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor; exact H.
+Qed.
+
+Lemma ss_while_true_step_exists :
+  forall (p : st_program) (cond : st_expr) (body : list st_stmt)
+         (rest : list st_stmt) (s : st_state),
+    eval_expr s cond = Some (ST_V_BOOL true) ->
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_WHILE cond body :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor; exact H.
+Qed.
+
+Lemma ss_while_false_step_exists :
+  forall (p : st_program) (cond : st_expr) (body : list st_stmt)
+         (rest : list st_stmt) (s : st_state),
+    eval_expr s cond = Some (ST_V_BOOL false) ->
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_WHILE cond body :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor; exact H.
+Qed.
+
+Lemma ss_repeat_step_exists :
+  forall (p : st_program) (body : list st_stmt) (cond : st_expr)
+         (rest : list st_stmt) (s : st_state),
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_REPEAT body cond :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor.
+Qed.
+
+Lemma ss_for_step_exists :
+  forall (p : st_program) (v : ident) (start end_ : st_expr)
+         (step : option st_expr) (body : list st_stmt)
+         (rest : list st_stmt) (s : st_state),
+    exists (rest' : list st_stmt) (s' : st_state),
+      stmts_step p (S_FOR v start end_ step body :: rest) s rest' s'.
+Proof.
+  intros. eexists; eexists; econstructor.
+Qed.
+
+(* 良类型字面量求值总有定义：literal_type l = Some ty 时，
+   eval_expr 对 E_LIT l 一定返回某个值。 *)
+Lemma eval_literal_typed_total :
+  forall (s : st_state) (l : st_literal) (ty : st_type),
+    literal_type l = Some ty ->
+    exists (v : st_value), eval_expr s (E_LIT l) = Some v.
+Proof.
+  intros s l ty H.
+  destruct l; simpl in H; inversion H; subst.
+  all: eexists; reflexivity.
+Qed.
+
+(* 整数字面量算术求值总有定义。 *)
+Lemma eval_int_literal_binop_total :
+  forall (s : st_state) (op : binary_op) (n1 n2 : Z),
+    exists (v : st_value),
+      eval_expr s (E_BIN_OP op (E_LIT (L_INT n1)) (E_LIT (L_INT n2))) = Some v.
+Proof.
+  intros s op n1 n2.
+  destruct op; simpl; eexists; reflexivity.
+Qed.
+
+(* 整数字面量比较求值总有定义。 *)
+Lemma eval_int_literal_compare_total :
+  forall (s : st_state) (c : compare_op) (n1 n2 : Z),
+    exists (v : st_value),
+      eval_expr s (E_COMP c (E_LIT (L_INT n1)) (E_LIT (L_INT n2))) = Some v.
+Proof.
+  intros s c n1 n2.
+  destruct c; simpl; eexists; reflexivity.
+Qed.
+
+(* 布尔逻辑字面量求值总有定义。 *)
+Lemma eval_bool_logic_literal_total :
+  forall (s : st_state) (b1 b2 : bool),
+    exists (v : st_value),
+      eval_expr s (E_AND (E_LIT (L_BOOL b1)) (E_LIT (L_BOOL b2))) = Some v.
+Proof.
+  intros s b1 b2.
+  destruct b1, b2; simpl; eexists; reflexivity.
+Qed.
+
+Lemma eval_bool_or_literal_total :
+  forall (s : st_state) (b1 b2 : bool),
+    exists (v : st_value),
+      eval_expr s (E_OR (E_LIT (L_BOOL b1)) (E_LIT (L_BOOL b2))) = Some v.
+Proof.
+  intros s b1 b2.
+  destruct b1, b2; simpl; eexists; reflexivity.
+Qed.
+
+Lemma eval_bool_xor_literal_total :
+  forall (s : st_state) (b1 b2 : bool),
+    exists (v : st_value),
+      eval_expr s (E_XOR (E_LIT (L_BOOL b1)) (E_LIT (L_BOOL b2))) = Some v.
+Proof.
+  intros s b1 b2.
+  destruct b1, b2; simpl; eexists; reflexivity.
+Qed.
