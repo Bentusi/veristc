@@ -9,6 +9,7 @@ vm/sasm_dump
 vm/sasm_run
 tests/veristc-tests/out/
 tests/vm-tests/test_minimal
+tests/vm-tests/test_engineering
 
 # 目标文件
 *.o
