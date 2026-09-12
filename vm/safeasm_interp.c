@@ -992,15 +992,14 @@ int vm_run(VM *vm) {
     vm->cycle_count = 0;
     
     /* 创建入口函数帧 */
+    vm->frame_stack_ptr = 0;
     if (!push_frame(vm, vm->module->entry_function)) {
         return vm->last_error;
     }
     
     int result = vm_execute_cycle(vm);
     
-    /* 清理帧栈 */
-    vm->frame_stack_ptr = 0;
-    
+    /* 入口程序不追加 RETURN；结束时保留入口帧，由 sasm_run 读取 local0 */
     return result;
 }
 

@@ -11,8 +11,19 @@ From Stdlib Require Import ZArith.
 From Stdlib Require Import List.
 From Stdlib Require Import Floats.
 From Stdlib Require Import String.
+From Stdlib Require Import Lia.
 Local Open Scope Z_scope.
 Import ListNotations.
+
+Lemma app_singleton_cons_safeasm :
+  forall (A : Type) (xs ys : list A) (x : A),
+    (xs ++ [x]) ++ ys = xs ++ x :: ys.
+Proof.
+  intros A xs ys x.
+  induction xs as [|z zs IH]; simpl.
+  - reflexivity.
+  - rewrite IH. reflexivity.
+Qed.
 
 (* ================================================================
    第 1 部分：值类型 (Value Types)
@@ -451,7 +462,7 @@ Fixpoint list_set {A : Type} (l : list A) (n : nat) (x : A) : list A :=
   match l, n with
   | [], _ => x :: List.repeat x n  (* 用 x 填充空缺 *)
   | _ :: l', O => x :: l'
-  | _ :: l', S n' => list_set l' n' x
+  | a :: l', S n' => a :: list_set l' n' x
   end.
 
 (* 将 i32 写入 linear_memory（4 字节小端）*)
@@ -1108,6 +1119,1369 @@ Fixpoint instrs_total_size (instrs : list sasm_instr) : Z :=
   | i :: rest => instr_size i + instrs_total_size rest
   end.
 
+(* 按字节偏移取指：返回当前指令与下一条指令的绝对字节偏移。
+   PC 表示函数体首条指令的字节偏移，普通指令执行后 pc := pc + instr_size i。 *)
+Fixpoint instr_at_offset (instrs : list sasm_instr) (off : Z)
+         {struct instrs} : option (sasm_instr * Z) :=
+  match instrs with
+  | nil => None
+  | i :: rest =>
+      if off =? 0 then
+        Some (i, instr_size i)
+      else if off <? 0 then
+        None
+      else
+        match instr_at_offset rest (off - instr_size i) with
+        | Some (j, next) => Some (j, next + instr_size i)
+        | None => None
+        end
+  end.
+
+Lemma instr_at_offset_head :
+  forall (i : sasm_instr) (rest : list sasm_instr),
+    instr_at_offset (i :: rest) 0 = Some (i, instr_size i).
+Proof.
+  intros i rest.
+  simpl.
+  reflexivity.
+Qed.
+
+Lemma instr_size_pos :
+  forall (i : sasm_instr), 0 < instr_size i.
+Proof.
+  intros i.
+  unfold instr_size.
+  destruct i; simpl; try (destruct s; simpl); lia.
+Qed.
+
+Lemma instrs_total_size_nonneg :
+  forall (instrs : list sasm_instr),
+    0 <= instrs_total_size instrs.
+Proof.
+  induction instrs as [|i rest IH]; simpl.
+  - lia.
+  - pose proof (instr_size_pos i). lia.
+Qed.
+
+Lemma instrs_total_size_app :
+  forall (xs ys : list sasm_instr),
+    instrs_total_size (xs ++ ys) =
+    instrs_total_size xs + instrs_total_size ys.
+Proof.
+  induction xs as [|i rest IH]; intros ys; simpl.
+  - reflexivity.
+  - rewrite IH. lia.
+Qed.
+
+Lemma instr_at_offset_second :
+  forall (i j : sasm_instr) (rest : list sasm_instr),
+    instr_at_offset (i :: j :: rest) (instr_size i) =
+    Some (j, instr_size i + instr_size j).
+Proof.
+  intros i j rest.
+  pose proof (instr_size_pos i) as Hpos.
+  simpl.
+  destruct (instr_size i =? 0) eqn:Hz.
+  - apply Z.eqb_eq in Hz.
+    lia.
+  - destruct (instr_size i <? 0) eqn:Hneg.
+    + apply Z.ltb_lt in Hneg.
+      lia.
+    + replace (instr_size i - instr_size i) with 0 by lia.
+      simpl.
+      f_equal.
+      rewrite Z.add_comm.
+      reflexivity.
+Qed.
+
+Lemma instr_at_offset_app_exact :
+  forall (prefix : list sasm_instr) (i : sasm_instr)
+         (rest : list sasm_instr),
+    instr_at_offset (prefix ++ i :: rest) (instrs_total_size prefix) =
+    Some (i, instrs_total_size prefix + instr_size i).
+Proof.
+  induction prefix as [|j prefix IH]; intros i rest; simpl.
+  - reflexivity.
+  - change (instr_size j + instrs_total_size prefix)
+      with (instrs_total_size (j :: prefix)) in *.
+    destruct (instrs_total_size (j :: prefix) =? 0) eqn:Hzero.
+    + apply Z.eqb_eq in Hzero.
+      pose proof (instr_size_pos j).
+      pose proof (instrs_total_size_nonneg prefix).
+      simpl in Hzero.
+      lia.
+    + destruct (instrs_total_size (j :: prefix) <? 0) eqn:Hneg.
+      * apply Z.ltb_lt in Hneg.
+        pose proof (instrs_total_size_nonneg (j :: prefix)). lia.
+      * replace (instrs_total_size (j :: prefix) - instr_size j)
+          with (instrs_total_size prefix) by
+            (simpl; lia).
+        rewrite IH.
+        simpl.
+        do 2 f_equal.
+        ring.
+Qed.
+
+Definition set_frame_pc (f : sasm_frame) (pc : Z) : sasm_frame :=
+  {| frame_locals := f.(frame_locals);
+     frame_func_idx := f.(frame_func_idx);
+     frame_pc := pc;
+     frame_block_stack := f.(frame_block_stack) |}.
+
+Lemma set_frame_pc_set_frame_pc :
+  forall (f : sasm_frame) (p q : Z),
+    set_frame_pc (set_frame_pc f p) q = set_frame_pc f q.
+Proof.
+  intros f p q.
+  unfold set_frame_pc.
+  reflexivity.
+Qed.
+
+Definition advance_frame_pc (f : sasm_frame) (delta : Z) : sasm_frame :=
+  set_frame_pc f (f.(frame_pc) + delta).
+
+Definition fetch_frame_instr (m : sasm_module) (f : sasm_frame)
+  : option (sasm_instr * Z) :=
+  match lookup_function m f.(frame_func_idx) with
+  | Some fn => instr_at_offset fn.(sasm_body) f.(frame_pc)
+  | None => None
+  end.
+
+Lemma fetch_frame_instr_app_exact :
+  forall (m : sasm_module) (f : sasm_frame) (fn : sasm_function)
+         (prefix : list sasm_instr) (i : sasm_instr)
+         (rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ i :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    fetch_frame_instr m f =
+      Some (i, instrs_total_size prefix + instr_size i).
+Proof.
+  intros m f fn prefix i rest Hlook Hbody Hpc.
+  unfold fetch_frame_instr.
+  rewrite Hlook.
+  rewrite Hbody.
+  rewrite Hpc.
+  apply instr_at_offset_app_exact.
+Qed.
+
+Definition replace_top_frame_noinc (s : runtime_state) (f : sasm_frame)
+  : runtime_state :=
+  match s.(rt_frames) with
+  | _ :: rest =>
+      {| rt_values := s.(rt_values);
+         rt_frames := f :: rest;
+         rt_memory := s.(rt_memory);
+         rt_cycle_cnt := s.(rt_cycle_cnt) |}
+  | nil => s
+  end.
+
+Definition set_top_values_cycle (s : runtime_state) (f : sasm_frame)
+         (vs : value_stack) : runtime_state :=
+  match s.(rt_frames) with
+  | _ :: rest =>
+      {| rt_values := vs;
+         rt_frames := f :: rest;
+         rt_memory := s.(rt_memory);
+         rt_cycle_cnt := s.(rt_cycle_cnt) + 1 |}
+  | nil => s
+  end.
+
+Definition frame_branch_to (f : sasm_frame) (depth target : Z) : sasm_frame :=
+  {| frame_locals := f.(frame_locals);
+     frame_func_idx := f.(frame_func_idx);
+     frame_pc := target;
+     frame_block_stack :=
+       List.skipn (Z.to_nat depth + 1) f.(frame_block_stack) |}.
+
+Definition frame_push_block (f : sasm_frame) (addr : Z) : sasm_frame :=
+  {| frame_locals := f.(frame_locals);
+     frame_func_idx := f.(frame_func_idx);
+     frame_pc := f.(frame_pc);
+     frame_block_stack := addr :: f.(frame_block_stack) |}.
+
+Definition pop_top_frame_cycle (s : runtime_state) : runtime_state :=
+  match s.(rt_frames) with
+  | _ :: rest =>
+      {| rt_values := s.(rt_values);
+         rt_frames := rest;
+         rt_memory := s.(rt_memory);
+         rt_cycle_cnt := s.(rt_cycle_cnt) + 1 |}
+  | nil => s
+  end.
+
+(* 基于 frame_pc 的小步语义：先取指，再按指令推进 PC/值栈/局部变量。 *)
+Inductive pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
+  | Pc_i32_const : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (n next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_CONST n, next) ->
+      pc_step m s
+        (push_value (V_I32 n)
+           (replace_top_frame_noinc s (set_frame_pc f next)))
+  | Pc_local_get : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (idx next : Z) (v : sasm_value),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (LOCAL_GET idx, next) ->
+      List.nth_error f.(frame_locals) (Z.to_nat idx) = Some v ->
+      pc_step m s
+        (push_value v
+           (replace_top_frame_noinc s (set_frame_pc f next)))
+  | Pc_local_set : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (idx next : Z) (v : sasm_value) (vs : value_stack),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (LOCAL_SET idx, next) ->
+      s.(rt_values) = v :: vs ->
+      pc_step m s
+        (set_top_values_cycle s
+           {| frame_locals := list_set f.(frame_locals) (Z.to_nat idx) v;
+              frame_func_idx := f.(frame_func_idx);
+              frame_pc := next;
+              frame_block_stack := f.(frame_block_stack) |}
+           vs)
+  | Pc_i32_add : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_ADD, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (v1 + v2) :: vs))
+  | Pc_i32_sub : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_SUB, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (v1 - v2) :: vs))
+  | Pc_i32_mul : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_MUL, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (v1 * v2) :: vs))
+  | Pc_i32_div_s : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_DIV_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      v2 <> 0 ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (v1 / v2) :: vs))
+  | Pc_i32_rem_s : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_REM_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      v2 <> 0 ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (Z.rem v1 v2) :: vs))
+  | Pc_safe_assert : forall (m : sasm_module) (s : runtime_state)
+                            (f : sasm_frame) (rest : frame_stack)
+                            (a : safety_assertion) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (SAFE_ASSERT a, next) ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next) s.(rt_values))
+  | Pc_i32_eqz : forall (m : sasm_module) (s : runtime_state)
+                       (f : sasm_frame) (rest : frame_stack)
+                       (v : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_EQZ, next) ->
+      s.(rt_values) = V_I32 v :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if Z.eqb v 0 then 1 else 0) :: vs))
+  | Pc_i32_eq : forall (m : sasm_module) (s : runtime_state)
+                       (f : sasm_frame) (rest : frame_stack)
+                       (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_EQ, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if Z.eqb v1 v2 then 1 else 0) :: vs))
+  | Pc_i32_ne : forall (m : sasm_module) (s : runtime_state)
+                       (f : sasm_frame) (rest : frame_stack)
+                       (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_NE, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if negb (Z.eqb v1 v2) then 1 else 0) :: vs))
+  | Pc_i32_lt_s : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_LT_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if v1 <? v2 then 1 else 0) :: vs))
+  | Pc_i32_le_s : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_LE_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if v1 <=? v2 then 1 else 0) :: vs))
+  | Pc_i32_gt_s : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_GT_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if v2 <? v1 then 1 else 0) :: vs))
+  | Pc_i32_ge_s : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_GE_S, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (if v2 <=? v1 then 1 else 0) :: vs))
+  | Pc_i32_and : forall (m : sasm_module) (s : runtime_state)
+                       (f : sasm_frame) (rest : frame_stack)
+                       (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_AND, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (Z.land v1 v2) :: vs))
+  | Pc_i32_or : forall (m : sasm_module) (s : runtime_state)
+                      (f : sasm_frame) (rest : frame_stack)
+                      (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_OR, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (Z.lor v1 v2) :: vs))
+  | Pc_i32_xor : forall (m : sasm_module) (s : runtime_state)
+                       (f : sasm_frame) (rest : frame_stack)
+                       (v1 v2 : Z) (vs : value_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_XOR, next) ->
+      s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (Z.lxor v1 v2) :: vs))
+  | Pc_return : forall (m : sasm_module) (s : runtime_state)
+                      (f : sasm_frame) (rest : frame_stack) (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (RETURN, next) ->
+      pc_step m s (pop_top_frame_cycle s)
+  | Pc_block : forall (m : sasm_module) (s : runtime_state)
+                     (f : sasm_frame) (rest : frame_stack)
+                     (len next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (BLOCK len, next) ->
+      pc_step m s
+        (set_top_values_cycle s
+           (frame_push_block (set_frame_pc f next)
+              (f.(frame_pc) + instr_size (BLOCK len) + len))
+           s.(rt_values))
+  | Pc_loop : forall (m : sasm_module) (s : runtime_state)
+                    (f : sasm_frame) (rest : frame_stack)
+                    (len next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (LOOP len, next) ->
+      pc_step m s
+        (set_top_values_cycle s
+           (frame_push_block (set_frame_pc f next) f.(frame_pc))
+           s.(rt_values))
+  | Pc_br : forall (m : sasm_module) (s : runtime_state)
+                  (f : sasm_frame) (rest : frame_stack)
+                  (depth target next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (BR depth, next) ->
+      List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
+      pc_step m s
+        (set_top_values_cycle s (frame_branch_to f depth target)
+           s.(rt_values))
+  | Pc_br_if_false : forall (m : sasm_module) (s : runtime_state)
+                           (f : sasm_frame) (rest : frame_stack)
+                           (depth c next : Z) (vs : value_stack),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (BR_IF depth, next) ->
+      s.(rt_values) = V_I32 c :: vs ->
+      c = 0 ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next) vs)
+  | Pc_br_if_true : forall (m : sasm_module) (s : runtime_state)
+                          (f : sasm_frame) (rest : frame_stack)
+                          (depth target c next : Z) (vs : value_stack),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (BR_IF depth, next) ->
+      s.(rt_values) = V_I32 c :: vs ->
+      c <> 0 ->
+      List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
+      pc_step m s
+        (set_top_values_cycle s (frame_branch_to f depth target) vs)
+.
+
+Lemma fetch_frame_instr_head :
+  forall (m : sasm_module) (f : sasm_frame) (fn : sasm_function)
+         (i : sasm_instr) (rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = i :: rest ->
+    f.(frame_pc) = 0 ->
+    fetch_frame_instr m f = Some (i, instr_size i).
+Proof.
+  intros m f fn i rest Hlook Hbody Hpc.
+  unfold fetch_frame_instr.
+  rewrite Hlook.
+  rewrite Hbody.
+  rewrite Hpc.
+  rewrite instr_at_offset_head.
+  reflexivity.
+Qed.
+
+Lemma fetch_frame_instr_second :
+  forall (m : sasm_module) (f : sasm_frame) (fn : sasm_function)
+         (i j : sasm_instr) (rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = i :: j :: rest ->
+    f.(frame_pc) = instr_size i ->
+    fetch_frame_instr m f =
+    Some (j, instr_size i + instr_size j).
+Proof.
+  intros m f fn i j rest Hlook Hbody Hpc.
+  unfold fetch_frame_instr.
+  rewrite Hlook.
+  rewrite Hbody.
+  rewrite Hpc.
+  rewrite instr_at_offset_second.
+  reflexivity.
+Qed.
+
+Lemma pc_step_i32_const_exists :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (n next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_CONST n, next) ->
+    exists (s' : runtime_state), pc_step m s s'.
+Proof.
+  intros m s f rest n next Hframe Hfetch.
+  eexists.
+  econstructor; eauto.
+Qed.
+
+Inductive multi_pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
+  | Multi_pc_refl : forall (m : sasm_module) (s : runtime_state),
+      multi_pc_step m s s
+  | Multi_pc_step : forall (m : sasm_module) (s1 s2 s3 : runtime_state),
+      pc_step m s1 s2 ->
+      multi_pc_step m s2 s3 ->
+      multi_pc_step m s1 s3
+.
+
+Definition pc_final (s : runtime_state) : Prop :=
+  s.(rt_frames) = nil.
+
+Definition pc_at_body_end (m : sasm_module) (f : sasm_frame) : Prop :=
+  match lookup_function m f.(frame_func_idx) with
+  | Some fn =>
+      f.(frame_pc) = instrs_total_size fn.(sasm_body) /\
+      f.(frame_block_stack) = nil
+  | None => False
+  end.
+
+Definition pc_final_entry (m : sasm_module) (s : runtime_state) : Prop :=
+  exists f : sasm_frame, s.(rt_frames) = f :: nil /\ pc_at_body_end m f.
+
+Lemma multi_pc_step_trans :
+  forall (m : sasm_module) (s1 s2 s3 : runtime_state),
+    multi_pc_step m s1 s2 ->
+    multi_pc_step m s2 s3 ->
+    multi_pc_step m s1 s3.
+Proof.
+  intros m s1 s2 s_final H12.
+  revert s_final.
+  induction H12 as [m0 s0 | m0 s_a s_b s_c Hstep Hrest IH];
+    intros s_dest H23.
+  - exact H23.
+  - eapply Multi_pc_step.
+    + exact Hstep.
+    + exact (IH s_dest H23).
+Qed.
+
+Lemma pc_i32_const_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (n next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_CONST n, next) ->
+    multi_pc_step m s
+      (push_value (V_I32 n)
+         (replace_top_frame_noinc s (set_frame_pc f next))).
+Proof.
+  intros m s f rest n next Hframe Hfetch.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_const; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_add_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_ADD, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (v1 + v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_add; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_sub_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_SUB, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (v1 - v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_sub; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_mul_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_MUL, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (v1 * v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_mul; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_div_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_DIV_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    v2 <> 0 ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (v1 / v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues Hnz.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_div_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_rem_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_REM_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    v2 <> 0 ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (Z.rem v1 v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues Hnz.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_rem_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_safe_assert_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (a : safety_assertion) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (SAFE_ASSERT a, next) ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next) s.(rt_values)).
+Proof.
+  intros m s f rest a next Hframe Hfetch.
+  eapply Multi_pc_step.
+  - eapply Pc_safe_assert; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_eqz_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_EQZ, next) ->
+    s.(rt_values) = V_I32 v :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if Z.eqb v 0 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_eqz; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_eq_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_EQ, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if Z.eqb v1 v2 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_eq; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_ne_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_NE, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if negb (Z.eqb v1 v2) then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_ne; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_lt_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_LT_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if v1 <? v2 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_lt_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_le_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_LE_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if v1 <=? v2 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_le_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_gt_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_GT_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if v2 <? v1 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_gt_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_ge_s_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_GE_S, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (if v2 <=? v1 then 1 else 0) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_ge_s; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_and_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_AND, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (Z.land v1 v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_and; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_or_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_OR, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (Z.lor v1 v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_or; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_xor_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_XOR, next) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (Z.lxor v1 v2) :: vs)).
+Proof.
+  intros m s f rest v1 v2 vs next Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_i32_xor; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_block_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (len next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (BLOCK len, next) ->
+    multi_pc_step m s
+      (set_top_values_cycle s
+         (frame_push_block (set_frame_pc f next)
+            (f.(frame_pc) + instr_size (BLOCK len) + len))
+         s.(rt_values)).
+Proof.
+  intros m s f rest len next Hframe Hfetch.
+  eapply Multi_pc_step.
+  - eapply Pc_block; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_loop_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (len next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (LOOP len, next) ->
+    multi_pc_step m s
+      (set_top_values_cycle s
+         (frame_push_block (set_frame_pc f next) f.(frame_pc))
+         s.(rt_values)).
+Proof.
+  intros m s f rest len next Hframe Hfetch.
+  eapply Multi_pc_step.
+  - eapply Pc_loop; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_br_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (depth target next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (BR depth, next) ->
+    List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
+    multi_pc_step m s
+      (set_top_values_cycle s (frame_branch_to f depth target)
+         s.(rt_values)).
+Proof.
+  intros m s f rest depth target next Hframe Hfetch Hnth.
+  eapply Multi_pc_step.
+  - eapply Pc_br; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_br_if_false_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (depth c next : Z) (vs : value_stack),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (BR_IF depth, next) ->
+    s.(rt_values) = V_I32 c :: vs ->
+    c = 0 ->
+    multi_pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next) vs).
+Proof.
+  intros m s f rest depth c next vs Hframe Hfetch Hvalues Hzero.
+  eapply Multi_pc_step.
+  - eapply Pc_br_if_false; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_br_if_true_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (depth target c next : Z)
+         (vs : value_stack),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (BR_IF depth, next) ->
+    s.(rt_values) = V_I32 c :: vs ->
+    c <> 0 ->
+    List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
+    multi_pc_step m s
+      (set_top_values_cycle s (frame_branch_to f depth target) vs).
+Proof.
+  intros m s f rest depth target c next vs Hframe Hfetch Hvalues Hnz Hnth.
+  eapply Multi_pc_step.
+  - eapply Pc_br_if_true; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_eqz_brif_true_jump_multi :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc : Z) (prefix rest : list sasm_instr) (target : Z),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF 0 :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    List.nth_error f.(frame_block_stack) 0 = Some target ->
+    multi_pc_step m
+      {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      (set_top_values_cycle
+         (set_top_values_cycle
+            {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+               rt_memory := mem; rt_cycle_cnt := cyc |}
+            (set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ))
+            (V_I32 1 :: input))
+         (frame_branch_to
+            (set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ))
+            0 target)
+         input).
+Proof.
+  intros m fn f fr input mem cyc prefix rest target
+    Hlook Hbody Hpc Hnth.
+  set (next1 := instrs_total_size prefix + instr_size I32_EQZ).
+  set (f1 := set_frame_pc f next1).
+  set (s0 := {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}).
+  set (s1 := set_top_values_cycle s0 f1 (V_I32 1 :: input)).
+  assert (Hfetch1 : fetch_frame_instr m f = Some (I32_EQZ, next1)).
+  { subst next1.
+    apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix) (i := I32_EQZ)
+      (rest := BR_IF 0 :: rest);
+      [exact Hlook | exact Hbody | exact Hpc]. }
+  assert (Hstep1 : multi_pc_step m s0 s1).
+  { subst s1 s0 f1.
+    apply pc_i32_eqz_multi with (rest := fr) (v := 0) (vs := input)
+      (next := next1); [reflexivity | exact Hfetch1 | reflexivity]. }
+  assert (Hpc1 : f1.(frame_pc) = instrs_total_size (prefix ++ [I32_EQZ])).
+  { subst f1 next1.
+    rewrite instrs_total_size_app.
+    simpl.
+    ring. }
+  set (next2 := instrs_total_size (prefix ++ [I32_EQZ]) + instr_size (BR_IF 0)).
+  assert (Hfetch2 : fetch_frame_instr m f1 = Some (BR_IF 0, next2)).
+  { subst next2.
+    apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix ++ [I32_EQZ]) (i := BR_IF 0)
+      (rest := rest); [exact Hlook | | exact Hpc1].
+    rewrite Hbody.
+    repeat rewrite app_assoc.
+    rewrite app_singleton_cons_safeasm.
+    reflexivity. }
+  assert (Hstep2 :
+    multi_pc_step m s1
+      (set_top_values_cycle s1 (frame_branch_to f1 0 target) input)).
+  { eapply pc_br_if_true_multi with
+      (rest := fr) (depth := 0) (target := target) (c := 1)
+      (next := next2) (vs := input).
+    - subst s1 s0 f1. simpl. reflexivity.
+    - exact Hfetch2.
+    - subst s1 s0 f1. simpl. reflexivity.
+    - discriminate.
+    - subst f1. exact Hnth. }
+  exact (multi_pc_step_trans m s0 s1 _ Hstep1 Hstep2).
+Qed.
+
+Lemma pc_eqz_brif_false_fallthrough_multi :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc : Z) (prefix rest : list sasm_instr) (n : Z),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF 0 :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    n <> 0 ->
+    multi_pc_step m
+      {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      (set_top_values_cycle
+         (set_top_values_cycle
+            {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+               rt_memory := mem; rt_cycle_cnt := cyc |}
+            (set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ))
+            (V_I32 0 :: input))
+         (set_frame_pc
+            (set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ))
+            (instrs_total_size (prefix ++ [I32_EQZ]) + instr_size (BR_IF 0)))
+         input).
+Proof.
+  intros m fn f fr input mem cyc prefix rest n
+    Hlook Hbody Hpc Hnz.
+  set (next1 := instrs_total_size prefix + instr_size I32_EQZ).
+  set (f1 := set_frame_pc f next1).
+  set (s0 := {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}).
+  set (s1 := set_top_values_cycle s0 f1
+               (V_I32 (if n =? 0 then 1 else 0) :: input)).
+  assert (Hfetch1 : fetch_frame_instr m f = Some (I32_EQZ, next1)).
+  { subst next1.
+    apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix) (i := I32_EQZ)
+      (rest := BR_IF 0 :: rest);
+      [exact Hlook | exact Hbody | exact Hpc]. }
+  assert (Hstep1 : multi_pc_step m s0 s1).
+  { subst s1 s0 f1.
+    apply pc_i32_eqz_multi with (rest := fr) (v := n) (vs := input)
+      (next := next1); [reflexivity | exact Hfetch1 | reflexivity]. }
+  assert (Hnz_eqb : (n =? 0) = false) by
+    (apply Z.eqb_neq; exact Hnz).
+  assert (Hvalues1 : s1.(rt_values) = V_I32 0 :: input).
+  { subst s1 s0 f1. simpl. rewrite Hnz_eqb. reflexivity. }
+  assert (Hpc1 : f1.(frame_pc) = instrs_total_size (prefix ++ [I32_EQZ])).
+  { subst f1 next1.
+    rewrite instrs_total_size_app.
+    simpl.
+    ring. }
+  set (next2 := instrs_total_size (prefix ++ [I32_EQZ]) + instr_size (BR_IF 0)).
+  assert (Hfetch2 : fetch_frame_instr m f1 = Some (BR_IF 0, next2)).
+  { subst next2.
+    apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix ++ [I32_EQZ]) (i := BR_IF 0)
+      (rest := rest); [exact Hlook | | exact Hpc1].
+    rewrite Hbody.
+    repeat rewrite app_assoc.
+    rewrite app_singleton_cons_safeasm.
+    reflexivity. }
+  assert (Hstep2 :
+    multi_pc_step m s1
+      (set_top_values_cycle s1 (set_frame_pc f1 next2) input)).
+  { eapply pc_br_if_false_multi with
+      (rest := fr) (depth := 0) (c := 0)
+      (next := next2) (vs := input).
+    - subst s1 s0 f1. simpl. reflexivity.
+    - exact Hfetch2.
+    - exact Hvalues1.
+    - reflexivity. }
+  exact (multi_pc_step_trans m s0 s1 _ Hstep1 Hstep2).
+Qed.
+
+Lemma pc_eqz_brif_zero_jump_multi :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc : Z) (prefix rest : list sasm_instr) (target : Z),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF 0 :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    List.nth_error f.(frame_block_stack) 0 = Some target ->
+    multi_pc_step m
+      {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      {| rt_values := input;
+         rt_frames :=
+           frame_branch_to
+             (set_frame_pc f
+                (instrs_total_size prefix + instr_size I32_EQZ))
+             0 target :: fr;
+         rt_memory := mem;
+         rt_cycle_cnt := cyc + 2 |}.
+Proof.
+  intros m fn f fr input mem cyc prefix rest target
+    Hlook Hbody Hpc Hnth.
+  pose proof
+    (pc_eqz_brif_true_jump_multi m fn f fr input mem cyc prefix rest target
+      Hlook Hbody Hpc Hnth) as Hmulti.
+  set (f1 := set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ)) in *.
+  set (f2 := frame_branch_to f1 0 target) in *.
+  set (s0 := {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}) in *.
+  unfold set_top_values_cycle in Hmulti.
+  replace (cyc + 2) with (cyc + 1 + 1) by lia.
+  exact Hmulti.
+Qed.
+
+Lemma pc_eqz_brif_nonzero_fallthrough_multi :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc n : Z) (prefix rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF 0 :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    n <> 0 ->
+    multi_pc_step m
+      {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      {| rt_values := input;
+         rt_frames :=
+           set_frame_pc f
+             (instrs_total_size prefix + instr_size I32_EQZ +
+              instr_size (BR_IF 0)) :: fr;
+         rt_memory := mem;
+         rt_cycle_cnt := cyc + 2 |}.
+Proof.
+  intros m fn f fr input mem cyc n prefix rest
+    Hlook Hbody Hpc Hnz.
+  pose proof
+    (pc_eqz_brif_false_fallthrough_multi m fn f fr input mem cyc prefix rest n
+      Hlook Hbody Hpc Hnz) as Hmulti.
+  set (f1 := set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ)) in *.
+  set (next2 :=
+         instrs_total_size (prefix ++ [I32_EQZ]) + instr_size (BR_IF 0)) in *.
+  set (f2 := set_frame_pc f1 next2) in *.
+  set (s0 := {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}) in *.
+  unfold set_top_values_cycle in Hmulti.
+  subst s0.
+  subst f2.
+  subst f1.
+  subst next2.
+  simpl in Hmulti.
+  rewrite instrs_total_size_app in Hmulti.
+  simpl in Hmulti.
+  replace (cyc + 2) with (cyc + 1 + 1) by lia.
+  exact Hmulti.
+Qed.
+
+Lemma pc_eqz_brif_zero_jump_multi_depth :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc depth target : Z) (prefix rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF depth :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
+    multi_pc_step m
+      {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      {| rt_values := input;
+         rt_frames :=
+           frame_branch_to
+             (set_frame_pc f
+                (instrs_total_size prefix + instr_size I32_EQZ))
+             depth target :: fr;
+         rt_memory := mem;
+         rt_cycle_cnt := cyc + 2 |}.
+Proof.
+  intros m fn f fr input mem cyc depth target prefix rest
+    Hlook Hbody Hpc Hnth.
+  set (f1 := set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ)).
+  set (s0 := {| rt_values := V_I32 0 :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}).
+  set (s1 := set_top_values_cycle s0 f1 (V_I32 1 :: input)).
+  assert (Hfetch1 : fetch_frame_instr m f = Some (I32_EQZ, f1.(frame_pc))).
+  { subst f1. apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix) (i := I32_EQZ)
+      (rest := BR_IF depth :: rest);
+      [exact Hlook | exact Hbody | exact Hpc]. }
+  assert (Hstep1 :
+    multi_pc_step m s0 s1).
+  { subst s0 f1.
+    apply pc_i32_eqz_multi with
+      (rest := fr) (v := 0) (vs := input)
+      (next := instrs_total_size prefix + instr_size I32_EQZ);
+      [reflexivity | exact Hfetch1 | reflexivity]. }
+  assert (Hpc1 : f1.(frame_pc) =
+                 instrs_total_size (prefix ++ [I32_EQZ])).
+  { subst f1. rewrite instrs_total_size_app.
+    simpl. ring. }
+  assert (Hbody2 :
+    fn.(sasm_body) = (prefix ++ [I32_EQZ]) ++ BR_IF depth :: rest).
+  { rewrite Hbody. repeat rewrite app_assoc. rewrite app_singleton_cons_safeasm.
+    reflexivity. }
+  assert (Hlook1 : lookup_function m f1.(frame_func_idx) = Some fn).
+  { subst f1. simpl. exact Hlook. }
+  assert (Hnth1 :
+    List.nth_error f1.(frame_block_stack) (Z.to_nat depth) = Some target).
+  { subst f1. simpl. exact Hnth. }
+  assert (Hstep2 :
+    multi_pc_step m s1
+      {| rt_values := input; rt_frames := frame_branch_to f1 depth target :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}).
+  { replace {| rt_values := input;
+               rt_frames := frame_branch_to f1 depth target :: fr;
+               rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}
+      with (set_top_values_cycle s1 (frame_branch_to f1 depth target) input)
+      by (subst s1 s0 f1; simpl; reflexivity).
+    eapply pc_br_if_true_multi with
+      (rest := fr) (depth := depth) (target := target) (c := 1)
+      (next := instrs_total_size (prefix ++ [I32_EQZ]) + instr_size (BR_IF depth))
+      (vs := input).
+    - subst s0 f1. simpl. reflexivity.
+    - subst f1.
+      apply fetch_frame_instr_app_exact with
+        (fn := fn) (prefix := prefix ++ [I32_EQZ]) (i := BR_IF depth)
+        (rest := rest); [exact Hlook1 | exact Hbody2 | exact Hpc1].
+    - subst s0 f1. simpl. reflexivity.
+    - discriminate.
+    - subst f1. exact Hnth1. }
+  assert (Hmulti : multi_pc_step m s0
+    {| rt_values := input; rt_frames := frame_branch_to f1 depth target :: fr;
+       rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}).
+  { eapply multi_pc_step_trans; [exact Hstep1 | exact Hstep2]. }
+  replace (cyc + 2) with (cyc + 1 + 1) by lia.
+  exact Hmulti.
+Qed.
+
+Lemma pc_eqz_brif_nonzero_fallthrough_multi_depth :
+  forall (m : sasm_module) (fn : sasm_function) (f : sasm_frame)
+         (fr : frame_stack) (input : value_stack) (mem : list Z)
+         (cyc depth n : Z) (prefix rest : list sasm_instr),
+    lookup_function m f.(frame_func_idx) = Some fn ->
+    fn.(sasm_body) = prefix ++ I32_EQZ :: BR_IF depth :: rest ->
+    f.(frame_pc) = instrs_total_size prefix ->
+    n <> 0 ->
+    multi_pc_step m
+      {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc |}
+      {| rt_values := input;
+         rt_frames :=
+           set_frame_pc f
+             (instrs_total_size prefix + instr_size I32_EQZ +
+              instr_size (BR_IF depth)) :: fr;
+         rt_memory := mem;
+         rt_cycle_cnt := cyc + 1 + 1 |}.
+Proof.
+  intros m fn f fr input mem cyc depth n prefix rest
+    Hlook Hbody Hpc Hnz.
+  set (f1 := set_frame_pc f
+               (instrs_total_size prefix + instr_size I32_EQZ)).
+  set (s0 := {| rt_values := V_I32 n :: input; rt_frames := f :: fr;
+                rt_memory := mem; rt_cycle_cnt := cyc |}).
+  set (s1 := set_top_values_cycle s0 f1
+               (V_I32 (if n =? 0 then 1 else 0) :: input)).
+  assert (Hfetch1 : fetch_frame_instr m f = Some (I32_EQZ, f1.(frame_pc))).
+  { subst f1. apply fetch_frame_instr_app_exact with
+      (fn := fn) (prefix := prefix) (i := I32_EQZ)
+      (rest := BR_IF depth :: rest);
+      [exact Hlook | exact Hbody | exact Hpc]. }
+  assert (Hstep1 : multi_pc_step m s0 s1).
+  { subst s1 s0 f1.
+    apply pc_i32_eqz_multi with
+      (rest := fr) (v := n) (vs := input)
+      (next := instrs_total_size prefix + instr_size I32_EQZ);
+      [reflexivity | exact Hfetch1 | reflexivity]. }
+  assert (Hnz_eqb : (n =? 0) = false) by (apply Z.eqb_neq; exact Hnz).
+  assert (Hvalues1 : s1.(rt_values) = V_I32 0 :: input).
+  { subst s1 s0 f1. simpl. rewrite Hnz_eqb. reflexivity. }
+  assert (Hpc1 : f1.(frame_pc) =
+                 instrs_total_size (prefix ++ [I32_EQZ])).
+  { subst f1. rewrite instrs_total_size_app. simpl. ring. }
+  assert (Hbody2 :
+    fn.(sasm_body) = (prefix ++ [I32_EQZ]) ++ BR_IF depth :: rest).
+  { rewrite Hbody. repeat rewrite app_assoc. rewrite app_singleton_cons_safeasm.
+    reflexivity. }
+  assert (Hlook1 : lookup_function m f1.(frame_func_idx) = Some fn).
+  { subst f1. simpl. exact Hlook. }
+  set (f2 := set_frame_pc f1
+               (instrs_total_size (prefix ++ [I32_EQZ]) +
+                instr_size (BR_IF depth))).
+  assert (Hstep2 :
+    multi_pc_step m s1
+      {| rt_values := input; rt_frames := f2 :: fr;
+         rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}).
+  { change (multi_pc_step m s1
+      (set_top_values_cycle s1 f2 input)).
+    eapply pc_br_if_false_multi with
+      (rest := fr) (depth := depth) (c := 0)
+      (next := instrs_total_size (prefix ++ [I32_EQZ]) +
+               instr_size (BR_IF depth)) (vs := input).
+    - subst s1 s0 f1. simpl. reflexivity.
+    - subst f1.
+      apply fetch_frame_instr_app_exact with
+        (fn := fn) (prefix := prefix ++ [I32_EQZ]) (i := BR_IF depth)
+        (rest := rest); [exact Hlook1 | exact Hbody2 | exact Hpc1].
+    - exact Hvalues1.
+    - reflexivity. }
+  assert (Hmulti : multi_pc_step m s0
+    {| rt_values := input; rt_frames := f2 :: fr;
+       rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}).
+  { eapply multi_pc_step_trans; [exact Hstep1 | exact Hstep2]. }
+  replace {| rt_values := input;
+             rt_frames :=
+               set_frame_pc f
+                 (instrs_total_size prefix + instr_size I32_EQZ +
+                  instr_size (BR_IF depth)) :: fr;
+             rt_memory := mem;
+             rt_cycle_cnt := cyc + 1 + 1 |}
+    with {| rt_values := input; rt_frames := f2 :: fr;
+            rt_memory := mem; rt_cycle_cnt := cyc + 1 + 1 |}.
+  - exact Hmulti.
+  - repeat f_equal.
+    subst f2. subst f1. rewrite set_frame_pc_set_frame_pc.
+    repeat f_equal.
+    rewrite instrs_total_size_app. simpl. ring.
+Qed.
+
+Lemma pc_i32_local_set_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (idx next : Z) (v : sasm_value)
+         (vs : value_stack),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (LOCAL_SET idx, next) ->
+    s.(rt_values) = v :: vs ->
+    multi_pc_step m s
+      (set_top_values_cycle s
+         {| frame_locals := list_set f.(frame_locals) (Z.to_nat idx) v;
+            frame_func_idx := f.(frame_func_idx);
+            frame_pc := next;
+            frame_block_stack := f.(frame_block_stack) |}
+         vs).
+Proof.
+  intros m s f rest idx next v vs Hframe Hfetch Hvalues.
+  eapply Multi_pc_step.
+  - eapply Pc_local_set; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_add_then_local_set_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (v1 v2 : Z) (vs : value_stack)
+         (idx next1 next2 : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_ADD, next1) ->
+    s.(rt_values) = V_I32 v2 :: V_I32 v1 :: vs ->
+    fetch_frame_instr m (set_frame_pc f next1) =
+      Some (LOCAL_SET idx, next2) ->
+    multi_pc_step m s
+      (set_top_values_cycle
+         (set_top_values_cycle s (set_frame_pc f next1)
+            (V_I32 (v1 + v2) :: vs))
+         {| frame_locals :=
+              list_set f.(frame_locals) (Z.to_nat idx) (V_I32 (v1 + v2));
+            frame_func_idx := f.(frame_func_idx);
+            frame_pc := next2;
+            frame_block_stack := f.(frame_block_stack) |}
+         vs).
+Proof.
+  intros m s f rest v1 v2 vs idx next1 next2
+    Hframe Hfetch_add Hvalues Hfetch_set.
+  eapply multi_pc_step_trans.
+  - exact (pc_i32_add_multi m s f rest v1 v2 vs next1
+             Hframe Hfetch_add Hvalues).
+  - eapply Multi_pc_step.
+    + eapply Pc_local_set.
+      * unfold set_top_values_cycle.
+        rewrite Hframe.
+        reflexivity.
+      * exact Hfetch_set.
+      * unfold set_top_values_cycle.
+        rewrite Hframe.
+        reflexivity.
+    + apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_local_get_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (idx next : Z) (v : sasm_value),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (LOCAL_GET idx, next) ->
+    List.nth_error f.(frame_locals) (Z.to_nat idx) = Some v ->
+    multi_pc_step m s
+      (push_value v
+         (replace_top_frame_noinc s (set_frame_pc f next))).
+Proof.
+  intros m s f rest idx next v Hframe Hfetch Hnth.
+  eapply Multi_pc_step.
+  - eapply Pc_local_get; eauto.
+  - apply Multi_pc_refl.
+Qed.
+
+Lemma pc_i32_const_local_set_multi :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (n next1 next2 : Z) (restvs : value_stack),
+    s.(rt_frames) = f :: rest ->
+    s.(rt_values) = restvs ->
+    fetch_frame_instr m f = Some (I32_CONST n, next1) ->
+    fetch_frame_instr m (set_frame_pc f next1) =
+      Some (LOCAL_SET 0, next2) ->
+    multi_pc_step m s
+      (set_top_values_cycle
+         (push_value (V_I32 n)
+            (replace_top_frame_noinc s (set_frame_pc f next1)))
+         {| frame_locals :=
+              list_set f.(frame_locals) 0 (V_I32 n);
+            frame_func_idx := f.(frame_func_idx);
+            frame_pc := next2;
+            frame_block_stack := f.(frame_block_stack) |}
+         restvs).
+Proof.
+  intros m s f rest n next1 next2 restvs Hframe Hvalues Hfetch1 Hfetch2.
+  eapply multi_pc_step_trans.
+  - exact (pc_i32_const_multi m s f rest n next1 Hframe Hfetch1).
+  - eapply Multi_pc_step.
+    + eapply Pc_local_set.
+      * unfold replace_top_frame_noinc.
+        rewrite Hframe.
+        reflexivity.
+      * exact Hfetch2.
+      * unfold push_value, replace_top_frame_noinc.
+        rewrite Hframe.
+        rewrite Hvalues.
+        reflexivity.
+    + apply Multi_pc_refl.
+Qed.
+
 Section Validation.
 
 (* ---- 常量 ---- *)
@@ -1301,7 +2675,9 @@ Definition rule_V11 (m : sasm_module) : Prop :=
     body_length f > 0.
 
 (* V12: Safety Section 存在 — sasm_safety 字段非空可构造即满足 *)
-Definition rule_V12 (m : sasm_module) : Prop := True.
+Definition rule_V12 (m : sasm_module) : Prop :=
+  0 < m.(sasm_safety).(safe_cycle_limit) /\
+  0 < m.(sasm_safety).(safe_stack_depth).
 
 (* ---- V13-V20: 指令验证 ---- *)
 
@@ -1705,33 +3081,5 @@ End Validation.
 Definition terminal_state_sasm (s : runtime_state) : Prop :=
   s.(rt_frames) = nil.
 
-(* ================================================================
-   定理 5: sasm_type_safety (安全状态可推进性)
-   
-   如果模块通过了 V1-V26 验证，
-   且当前状态满足运行时安全约束，
-   则要么状态已经结束（帧栈为空），
-   要么存在满足全部安全约束的下一步。
-   说明：原“任意 multi_step 可达状态”的版本在当前小步语义下
-   无法保证可达状态仍满足周期/栈约束，故先修正为可达证明所需的安全不变量。
-   ================================================================ *)
-Definition runtime_state_safe (m : sasm_module) (s : runtime_state) : Prop :=
-  s.(rt_cycle_cnt) < (sasm_safety m).(safe_cycle_limit) /\
-  Z.of_nat (List.length s.(rt_frames)) <= (sasm_safety m).(safe_stack_depth) /\
-  all_memory_accesses_valid m s.
-
-Theorem sasm_type_safety : forall (m : sasm_module) (s : runtime_state),
-  validate_module m ->
-  runtime_state_safe m s ->
-  terminal_state_sasm s \/ (exists s'', safe_step m s s'').
-Proof.
-  intros m s Hvalidate Hsafe.
-  right.
-  exists s.
-  destruct Hsafe as [Hcycle [Hstack Hmem]].
-  apply SafeStep with (s := s) (s' := s).
-  - apply Step_nop.
-  - exact Hcycle.
-  - exact Hstack.
-  - exact Hmem.
-Qed.
+(* 真实的 sasm_type_safety 将在 SafeASM 改为 PC 取指语义后重建；
+   旧版本依赖“任意状态可 Step_nop”伪规则，已删除。 *)

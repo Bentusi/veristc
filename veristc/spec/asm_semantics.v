@@ -35,4 +35,4 @@ Qed.
 
 (* SafeASM 的最终状态（当前为占位，Phase 1 中将定义为 rt_frames = nil） *)
 Definition is_final_sasm (s : runtime_state) : Prop :=
-  True.
+  s.(rt_frames) = nil.

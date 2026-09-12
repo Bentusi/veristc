@@ -7,6 +7,23 @@
 > **对应实现文件**：`codegen.v`（代码生成器实现+证明）  
 > **目的**：让不熟悉 Coq 形式化方法的开发人员也能清晰理解 ST 语言的每种构造如何映射到 SafeASM 指令，以及为什么这种映射是正确的（语义保持）。  
 
+## 当前验证边界（2026-09-12）
+
+以下条目已在当前代码树中用 `Qed` 闭合，并通过 `make coq/verify/e2e`：
+
+- 核心表达式的总型求值与配置式 Progress/Preservation/Type Safety。
+- `desugar_stmt` 的结构递归脱糖与 `desugar_stmts` 拼接引理。
+- 源 `stmts_step` 全部构造到 CoreST 星步的单步保持，以及 `star_stmts_step → star_corest_step`。
+- CoreST 赋值按目标变量现有类型执行 coercion，与源赋值按声明类型 coercion 对齐。
+- 赋值、IF、WHILE、BLOCK 及组合语句列表的 SafeASM PC 轨迹保持，包括 `compile_stmt_correct_pc` 与 `codegen_stmts_correct_pc`。
+- 核心 CASE 的分支条件、INT/DINT 选择以及 REPEAT 的等价 while-not 展开。
+- 源程序完整执行轨迹到 `pc_stmts_trace` 的构造，已覆盖 ASSIGN/IF/CASE/FOR/WHILE/REPEAT。
+- 类型检查成功到 `core_cfg` 的 soundness 构造，以及核心程序从成功编译到 `pc_final_entry` 的顶层 `semantics_preservation_compiled`。
+
+仍待完成并不得计入“P1 已完成”的部分：
+
+- `safeasm.v` 的 V3 安全谓词清理、正式 encoder/CRC/名称表可逆性，以及数组、FB/函数、RETURN/EXIT、质量类型、浮点等后续增量。
+
 ---
 
 ## 0. 文档控制
@@ -1183,12 +1200,18 @@ R(st_state, asm_state) 定义为:
 
 下表将每种 ST 构造的语义保持责任映射到具体的 Coq 文件和定理：
 
+> 核心子集边界：当前 PC 闭环仅覆盖单 `P_PROGRAM`、`BOOL/INT/DINT`
+> 局部变量，以及字面量、变量、`U_NEG/U_NOT`、加减乘、比较和
+> `AND/OR/XOR`。`U_ABS`、`B_DIV/B_MOD`、数组、FB/函数、RETURN/EXIT、
+> 浮点/64 位和质量操作会在编译入口拒绝，后续增量再放开。
+
 | 阶段 | Coq 文件 | 证明内容 | 对应 spec 章节 | 进度 |
 |------|---------|---------|---------------|------|
-| 1.1 | `typechecker.v` | 类型安全 `type_safety` (progress + preservation) | §2.2 子集定义 | ❌ 待实现 |
+| 1.1 | `typechecker.v` | 配置式类型安全 `typed_eval_total`/`progress_cfg`/`preservation_cfg`/`type_safety_cfg` + 初始状态一致 | §2.2 子集定义 | ✅ 已闭合（核心子集） |
 | 1.1 | `typechecker.v` | 表达式类型检查等价性 `type_check_expr_sound` / `type_check_expr_complete`（∅ 函数环境） | §7.1 | ✅ 已闭合 |
-| 1.2 | `desugar.v` | 脱糖语义保持 `desugar_semantics_preservation` | §2.3 逻辑求值 | ❌ 待实现 |
-| 1.3 | `codegen.v` | 表达式整体保持（旧宽命题已移除，待 frame/memory 不变量重构） | §2.1 表达式映射 | ⚠️ 重构中 |
+| 1.3 | `safeasm.v` | PC 规范语义 `pc_step`/`multi_pc_step`（I32/局部/RETURN/BLOCK/LOOP/BR/BR_IF） | safeasm-spec §5.6 | ⚠️ 部分闭合 |
+| 1.2 | `desugar.v` | CoreST 配置语义 `corest_step`/`star_corest_step` 与表达式等价 `desugar_core_expr_eval_equiv`；`desugar_semantics_preservation` | §2.3 逻辑求值 | ✅ 已闭合（核心子集） |
+| 1.3 | `codegen.v` | 核心表达式整体 PC 保持 `compile_expr_correct_pc`（字面量/变量/一元/二元/比较/AND/OR/XOR） | §2.1 表达式映射 | ✅ 已闭合（核心子集） |
 | 1.3 | `codegen.v` | 字面量编译仿真 `compile_literal_correct` | §2.1 字面量映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 变量引用编译仿真 `compile_var_correct`（帧 locals 一致性前提） | §2.1 变量映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 32 位整数字面量二元运算仿真 `compile_int_binop_literal_correct` | §2.1 二元运算映射 | ✅ 已闭合 |
@@ -1196,17 +1219,28 @@ R(st_state, asm_state) 定义为:
 | 1.3 | `codegen.v` | 32 位整数字面量比较仿真 `compile_int_compare_literal_correct` | §2.1 比较映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 布尔 AND/OR/XOR 字面量仿真 `compile_bool_{and,or,xor}_literal_correct` | §2.1 逻辑运算映射 | ✅ 已闭合 |
 | 1.3 | `codegen.v` | 字面量赋值语句垂直切片 `compile_int_assign_local0_correct` | §2.2 赋值映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 程序级 PC 切片 `compile_lit_program_pc`（compile_program → multi_pc_step → pc_final_entry） | §2.2 程序映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 程序级算术赋值 `compile_add_assign_program_pc`（加法赋值到 pc_final_entry/local0） | §2.2 赋值映射 | ✅ 已闭合 |
+| 1.3 | `compiler_correctness.v` | 顶层算术赋值样例 `add_st_program_semantics`（ST → desugar → codegen → multi_pc_step） | §7.2 核心定理 | ✅ 已闭合（单程序切片） |
+| 1.3 | `compiler_correctness.v` | 顶层变量拷贝赋值 `var_st_program_semantics`（ST → desugar → codegen → multi_pc_step） | §7.2 核心定理 | ✅ 已闭合（单程序切片） |
 | 1.3 | `codegen.v` | BOOL 字面量赋值垂直切片 `compile_bool_assign_local0_correct` | §2.2 赋值映射 | ✅ 已闭合 |
-| 1.3 | `codegen.v` | 语句编译仿真 `compile_stmt_correct` | §2.2 语句映射 | ❌ 待实现 |
+| 1.3 | `codegen.v` | 通用“表达式结果写回局部变量”组合 `pc_local_set_after_expr` | §2.2 赋值映射 | ✅ 已闭合 |
+| 1.3 | `codegen.v` | 核心 `CS_ASSIGN` PC 保持 `compile_assign_correct_pc`（含 CoreST 状态一致性更新） | §2.2 赋值映射 | ✅ 已闭合（单语句） |
+| 1.3 | `codegen.v` | 核心赋值序列 PC 保持 `compile_assign_sequence_correct_pc`（逐条语句模拟 `star_corest_step`） | §2.2 顺序执行映射 | ✅ 已闭合（赋值序列） |
+| 1.3 | `codegen.v` | 核心语句 PC 仿真 `compile_stmt_correct_pc`、`codegen_stmts_correct_pc` | §2.2 语句映射 | ✅ 已闭合（单程序核心子集） |
+| 1.2 | `compiler_correctness.v` | 源配置星步到 PC trace `core_star_pc_trace`（ASSIGN/IF/CASE/FOR/WHILE/REPEAT） | §2.2/§7.2 | ✅ 已闭合（核心子集） |
+| 1.3 | `compiler_correctness.v` | 单程序语义保持 `core_st_program_semantics_preservation` | §7.2 核心定理 | ✅ 已闭合（核心子集） |
+| 1.1/1.3 | `compiler_correctness.v` | 类型检查 soundness `typed_stmts_of_type_check_core` 与配置构造 `core_cfg_of_core_typecheck` | §2.2/§7.1 | ✅ 已闭合（核心子集） |
 | 1.3 | `codegen.v` | **64 位运算仿真** | **§2.1 I64/F64 运算** | ❌ **v1.1 新增** |
 | 1.3 | `codegen.v` | **质量传播仿真** | **§2.4 质量传播映射** | ❌ **v1.1 新增** |
 | 1.3 | `codegen.v` | **影子质量区访问正确性** | **§3.3 影子内存** | ❌ **v1.1 新增** |
 | 1.3 | `codegen.v` | **T↔QT 隐式转换仿真** | **§2.2 Q 类型赋值** | ❌ **v1.1 新增** |
-| 1.3 | `compiler_correctness.v` | 语义保持 `semantics_preservation` | §7.2 核心定理 | ⚠️ 已声明/admit |
+| 1.3 | `compiler_correctness.v` | 顶层语义保持 `semantics_preservation`（成功编译 + `core_cfg` + 源终止执行） | §7.2 核心定理 | ✅ 已闭合（核心子集） |
+| 1.3 | `compiler_correctness.v` | 无条件编译语义保持 `semantics_preservation_compiled`（仅需成功编译与源终止执行） | §7.2 核心定理 | ✅ 已闭合（核心子集） |
 | 1.3 | `compiler_correctness.v` | **质量保持扩展 `quality_preservation`** | **§6.1 条件 2** | ❌ **v1.1 新增** |
-| 1.3 | `compiler_correctness.v` | 整体语义保持 `total_semantics_preservation` | §7.2 闭包版本 | ⚠️ 已声明/admit |
+| 1.3 | `compiler_correctness.v` | 整体语义保持 `total_semantics_preservation` | §7.2 闭包版本 | ❌ 待重建 |
 | 1.3 | `compiler_correctness.v` | 编译确定性 `compile_determinism` | — | ✅ 已证明 |
-| 1.3 | `compiler_correctness.v` | 安全保持 `safety_preservation` | §7.3 安全约束 | ⚠️ 占位证明 |
+| 1.3 | `compiler_correctness.v` | 安全保持 `safety_preservation` | §7.3 安全约束 | ❌ 旧空真已删除，待基于 validate_module 重建 |
 | 1.3 | `compiler_correctness.v` | **影子区访问安全 `quality_mem_safety`** | **§7.3 质量安全** | ❌ **v1.1 新增** |
 | 1.4 | `analysis.v` | WCET/循环上限静态分析 | — | ❌ 待实现 |
 | 1.5 | `encoder.v` | 编码/解码可逆性 `encode_decode_identity` | safeasm-spec §编码 | ❌ 待实现 |

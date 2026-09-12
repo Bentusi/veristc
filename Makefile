@@ -124,10 +124,22 @@ e2e: veristc sasm-run
 		-o $(E2E_OUT_DIR)/core_if.sasm
 	./veristc/extraction/veristc compile tests/st-examples/core_while.st \
 		-o $(E2E_OUT_DIR)/core_while.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_while_if.st \
+		-o $(E2E_OUT_DIR)/core_while_if.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_for.st \
+		-o $(E2E_OUT_DIR)/core_for.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_repeat.st \
+		-o $(E2E_OUT_DIR)/core_repeat.sasm
+	./veristc/extraction/veristc compile tests/st-examples/core_case.st \
+		-o $(E2E_OUT_DIR)/core_case.sasm
 	./vm/sasm_run $(E2E_OUT_DIR)/core_assign.sasm 42
 	./vm/sasm_run $(E2E_OUT_DIR)/core_if.sasm 2
 	./vm/sasm_run $(E2E_OUT_DIR)/core_while.sasm 5
-	@echo "E2E passed: core_assign/if/while .st -> .sasm -> VM"
+	./vm/sasm_run $(E2E_OUT_DIR)/core_while_if.sasm 7
+	./vm/sasm_run $(E2E_OUT_DIR)/core_for.sasm 10
+	./vm/sasm_run $(E2E_OUT_DIR)/core_repeat.sasm 5
+	./vm/sasm_run $(E2E_OUT_DIR)/core_case.sasm 20
+	@echo "E2E passed: core_assign/if/while/while_if/for/repeat/case .st -> .sasm -> VM"
 
 # ================================================================
 # RT-Thread 适配层 (需要 RT-Thread SDK)
@@ -196,6 +208,9 @@ $(COMPILER_VO): $(COMPILER_SRC) $(SPEC_VO) $(SRC_VO)
 	@echo "  [ROQC] $<"
 	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) spec/compiler_correctness.v
 
+$(VERISTC_DIR)/spec/safest.vo:        $(VERISTC_DIR)/spec/safeasm.vo
+$(VERISTC_DIR)/spec/st_semantics.vo:  $(VERISTC_DIR)/spec/safest.vo
+$(VERISTC_DIR)/spec/asm_semantics.vo: $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo
 $(VERISTC_DIR)/src/parser.vo:        $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/lexer.vo

@@ -89,9 +89,9 @@ Definition eval_compare_bool (op : compare_op) (b1 b2 : bool) : bool :=
   match op with
   | C_EQ => Bool.eqb b1 b2
   | C_NE => negb (Bool.eqb b1 b2)
-  | C_LT => b1 && negb b2
+  | C_LT => negb b1 && b2
   | C_LE => negb b1 || b2
-  | C_GT => negb b1 && b2
+  | C_GT => b1 && negb b2
   | C_GE => b1 || negb b2
   end.
 
@@ -385,10 +385,51 @@ Fixpoint execute_stmts (s : st_state) (stmts : list st_stmt) : st_state :=
 (* 辅助：检查 CASE 值是否匹配 *)
 Fixpoint match_case_values (sel_num : Z) (vs : list case_value) : bool :=
   match vs with
-  | nil => true
-  | CV_SINGLE (L_INT n) :: vs' => if Z.eqb sel_num n then match_case_values sel_num vs' else false
-  | CV_RANGE (L_INT lo) (L_INT hi) :: vs' => if (lo <=? sel_num) && (sel_num <=? hi) then match_case_values sel_num vs' else false
+  | nil => false
+  | CV_SINGLE (L_INT n) :: vs' =>
+      Z.eqb sel_num n || match_case_values sel_num vs'
+  | CV_RANGE (L_INT lo) (L_INT hi) :: vs' =>
+      ((lo <=? sel_num) && (sel_num <=? hi)) ||
+      match_case_values sel_num vs'
   | _ :: vs' => match_case_values sel_num vs'
+  end.
+
+Fixpoint core_case_values (values : list case_value) : Prop :=
+  match values with
+  | nil => True
+  | CV_SINGLE (L_INT _) :: rest => core_case_values rest
+  | CV_RANGE (L_INT _) (L_INT _) :: rest => core_case_values rest
+  | _ => False
+  end.
+
+Fixpoint core_case_values_dec (values : list case_value) : bool :=
+  match values with
+  | nil => true
+  | CV_SINGLE (L_INT _) :: rest => core_case_values_dec rest
+  | CV_RANGE (L_INT _) (L_INT _) :: rest => core_case_values_dec rest
+  | _ => false
+  end.
+
+Lemma core_case_values_dec_true :
+  forall (values : list case_value),
+    core_case_values_dec values = true -> core_case_values values.
+Proof.
+  intros values.
+  induction values as [|v rest IH]; simpl; intros H.
+  - exact I.
+  - destruct v as [lit | lo hi].
+    + destruct lit; try discriminate.
+      apply IH. exact H.
+    + destruct lo; try discriminate.
+      destruct hi; try discriminate.
+      apply IH. exact H.
+Qed.
+
+Fixpoint core_case_branches (branches : list case_element) : Prop :=
+  match branches with
+  | nil => True
+  | CASE_ELEM values body :: rest =>
+      core_case_values values /\ core_case_branches rest
   end.
 
 (* 辅助：查找匹配的 CASE 分支 *)
@@ -561,7 +602,7 @@ Inductive stmts_step : st_program -> list st_stmt -> st_state ->
   | Ss_repeat : forall (p : st_program) (body : list st_stmt)
                        (cond : st_expr) (rest : list st_stmt) (s : st_state),
       stmts_step p (S_REPEAT body cond :: rest) s
-                 (body ++ (S_IF cond nil (Some (S_REPEAT body cond :: nil))) :: rest) s
+                 (body ++ (S_WHILE (E_UNARY_OP U_NOT cond) body) :: rest) s
 
   | Ss_case : forall (p : st_program) (sel : st_expr)
                      (branches : list case_element) (default : option (list st_stmt))
