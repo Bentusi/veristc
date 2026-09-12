@@ -34,6 +34,9 @@ static inline bool push_value(VM *vm, sasm_value val) {
         return false;
     }
     vm->val_stack[vm->val_stack_ptr++] = val;
+    if (vm->val_stack_ptr > vm->max_value_stack_depth) {
+        vm->max_value_stack_depth = vm->val_stack_ptr;
+    }
     return true;
 }
 
@@ -60,13 +63,30 @@ static inline Frame *current_frame(VM *vm) {
 }
 
 static bool push_frame(VM *vm, uint32_t func_idx) {
-    if (vm->frame_stack_ptr >= FRAME_STACK_SIZE) {
+    const SasmModule *m = vm->module;
+    uint32_t depth_limit = m->safety.global_stack_depth;
+
+    if (func_idx >= m->func_count || func_idx >= SASM_MAX_FUNCTIONS) {
+        vm->last_error = VM_ERR_INVALID_OPCODE;
+        return false;
+    }
+    if (m->funcs[func_idx].local_count > SASM_MAX_LOCALS) {
+        vm->last_error = VM_ERR_INVALID_OPCODE;
+        return false;
+    }
+
+    if (depth_limit == 0 || depth_limit > FRAME_STACK_SIZE) {
+        depth_limit = FRAME_STACK_SIZE;
+    }
+    if (vm->frame_stack_ptr >= depth_limit) {
         vm->last_error = VM_ERR_FRAME_OVERFLOW;
         return false;
     }
     
-    const SasmModule *m = vm->module;
     Frame *frame = &vm->frame_stack[vm->frame_stack_ptr++];
+    if (vm->frame_stack_ptr > vm->max_frame_depth) {
+        vm->max_frame_depth = vm->frame_stack_ptr;
+    }
     
     frame->func_idx = func_idx;
     frame->pc = 0;
@@ -76,16 +96,30 @@ static bool push_frame(VM *vm, uint32_t func_idx) {
     frame->block_depth = 0;
     
     /* 查找对应的代码体 */
+    bool code_found = false;
     for (uint32_t i = 0; i < m->code_count; i++) {
         if (m->codes[i].func_idx == func_idx) {
-            frame->body = m->codes[i].body;
+            uint32_t offset = m->codes[i].body_offset;
+            uint32_t size = m->codes[i].body_size;
+            if (offset > m->code_size || size > m->code_size - offset) {
+                vm->frame_stack_ptr--;
+                vm->last_error = VM_ERR_INVALID_OPCODE;
+                return false;
+            }
+            frame->body = m->code_pool + offset;
             frame->body_size = m->codes[i].body_size;
+            code_found = true;
             break;
         }
     }
+    if (!code_found) {
+        vm->frame_stack_ptr--;
+        vm->last_error = VM_ERR_INVALID_OPCODE;
+        return false;
+    }
     
     /* 初始化局部变量 */
-    for (uint32_t i = 0; i < frame->local_count && i < 32; i++) {
+    for (uint32_t i = 0; i < frame->local_count && i < SASM_MAX_LOCALS; i++) {
         frame->locals[i] = 0;
     }
     
@@ -235,7 +269,7 @@ int vm_execute_cycle(VM *vm) {
         case OP_BLOCK: {
             uint32_t block_len = read_u32_code(frame, &pc);
             /* 记录返回地址 */
-            if (frame->block_depth < 16) {
+            if (frame->block_depth < SASM_MAX_BLOCK_DEPTH) {
                 frame->block_stack[frame->block_depth++] = pc + block_len;
             }
             break;
@@ -243,7 +277,7 @@ int vm_execute_cycle(VM *vm) {
         
         case OP_LOOP: {
             read_u32_code(frame, &pc);
-            if (frame->block_depth < 16) {
+            if (frame->block_depth < SASM_MAX_BLOCK_DEPTH) {
                 /* LOOP 的返回地址指向循环开始（pc 之前已指向 body 偏移） */
                 frame->block_stack[frame->block_depth++] = pc - 5;  /* 5 = opcode + u32 */
             }
@@ -972,6 +1006,8 @@ int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
     
     vm->val_stack_ptr = 0;
     vm->frame_stack_ptr = 0;
+    vm->max_frame_depth = 0;
+    vm->max_value_stack_depth = 0;
     vm->cycle_count = 0;
     vm->last_error = VM_OK;
     
@@ -990,6 +1026,9 @@ int vm_run(VM *vm) {
     if (!vm || !vm->module) return -1;
     
     vm->cycle_count = 0;
+    vm->max_frame_depth = 0;
+    vm->max_value_stack_depth = 0;
+    vm->last_error = VM_OK;
     
     /* 创建入口函数帧 */
     vm->frame_stack_ptr = 0;

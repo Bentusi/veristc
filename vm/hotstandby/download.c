@@ -24,6 +24,7 @@
 #define DL_MAX_SECTIONS     8
 #define DL_PATCH_MAGIC      0x444C5043  /* "DLPC" */
 #define DL_MAX_PATCH_SIZE   16384
+#define DL_MAX_RAW_SIZE     262144
 #define DL_VERSION_SLOTS    2           /* 保留 2 个版本 (当前+新) */
 
 /* ================================================================
@@ -58,7 +59,7 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     SasmModule module;           /* 已加载的模块 */
-    uint8_t    raw_data[SASM_MAX_CODE_SIZE * 4]; /* 原始二进制 */
+    uint8_t    raw_data[DL_MAX_RAW_SIZE]; /* 原始二进制 */
     uint32_t   raw_size;
     uint32_t   version_id;
     bool       valid;
@@ -121,7 +122,7 @@ static int compute_diff(const SasmModule *old_mod,
         offset += sizeof(DlSectionDiff);
     } else {
         /* 逐函数对比 Code Section */
-        for (uint32_t i = 0; i < new_mod->code_count && i < 8; i++) {
+        for (uint32_t i = 0; i < new_mod->code_count; i++) {
             uint32_t old_size = (i < old_mod->code_count)
                                 ? old_mod->codes[i].body_size : 0;
             uint32_t new_size = new_mod->codes[i].body_size;
@@ -137,11 +138,13 @@ static int compute_diff(const SasmModule *old_mod,
                 /* 复制新的 body 数据 */
                 if (offset + new_size > DL_MAX_PATCH_SIZE) return -1;
                 memcpy(patch_buf + offset,
-                       new_mod->codes[i].body, new_size);
+                       new_mod->code_pool + new_mod->codes[i].body_offset,
+                       new_size);
                 offset += new_size;
             } else if (old_size > 0 &&
-                       memcmp(old_mod->codes[i].body,
-                              new_mod->codes[i].body, old_size) != 0) {
+                       memcmp(old_mod->code_pool + old_mod->codes[i].body_offset,
+                              new_mod->code_pool + new_mod->codes[i].body_offset,
+                              old_size) != 0) {
                 DlSectionDiff *diff = (DlSectionDiff *)(patch_buf + offset);
                 diff->section_type = SEC_CODE;
                 diff->old_offset = i;
@@ -151,7 +154,8 @@ static int compute_diff(const SasmModule *old_mod,
                 offset += sizeof(DlSectionDiff);
                 if (offset + new_size > DL_MAX_PATCH_SIZE) return -1;
                 memcpy(patch_buf + offset,
-                       new_mod->codes[i].body, new_size);
+                       new_mod->code_pool + new_mod->codes[i].body_offset,
+                       new_size);
                 offset += new_size;
             }
         }
@@ -231,10 +235,12 @@ static int apply_patch(const SasmModule *old_mod,
             uint32_t func_idx = diff->new_offset;
             if (func_idx >= SASM_MAX_FUNCTIONS) return -1;
             if (offset + diff->length > patch_size) return -1;
-            if (diff->length > SASM_MAX_CODE_SIZE) return -1;
+            if (diff->length > SASM_MAX_FUNCTION_CODE_SIZE) return -1;
 
             new_mod->codes[func_idx].body_size = diff->length;
-            memcpy(new_mod->codes[func_idx].body,
+            uint32_t body_offset = new_mod->codes[func_idx].body_offset;
+            if (body_offset + diff->length > SASM_MAX_CODE_POOL_SIZE) return -1;
+            memcpy(new_mod->code_pool + body_offset,
                    patch + offset, diff->length);
             offset += diff->length;
         } else if (diff->section_type == SEC_SAFE) {

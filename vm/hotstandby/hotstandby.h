@@ -33,7 +33,7 @@ extern "C" {
 
 #define HS_PAGE_SIZE          4096     /* 内存页大小 (4KB) */
 #define HS_MAX_PAGES          256      /* 最大页数 (1MB / 4KB) */
-#define HS_MAX_SNAPSHOT_SIZE  65536    /* 快照最大字节数 */
+#define HS_MAX_SNAPSHOT_SIZE  131072   /* 快照最大字节数 */
 #define HS_SNAPSHOT_MAGIC     0x48534E50  /* "HSNP" */
 #define HS_SYNC_CHANNELS      2        /* 同步通道数 (主→备 + 备→主) */
 
@@ -93,6 +93,8 @@ typedef struct __attribute__((packed)) {
     uint32_t frame_stack_ptr;    /* 帧栈指针 */
     uint32_t cycle_count;        /* 周期计数 */
     int32_t  last_error;         /* 末次错误码 */
+    uint32_t max_frame_depth;    /* 本周期最大调用深度 */
+    uint32_t max_value_stack_depth; /* 本周期最大值栈深度 */
 
     /* 内存快照 (压缩: 仅含脏页) */
     uint32_t dirty_page_count;   /* 脏页数量 */

@@ -2600,7 +2600,7 @@ Definition validate_function_body (f : sasm_function) : bool :=
 
 Definition MAX_MEMORY_SIZE : Z := 65536.   (* 64 KB *)
 Definition MAX_CYCLE_LIMIT : Z := 1000000.  (* 10^6 *)
-Definition MAX_CALL_DEPTH : Z := 32.
+Definition MAX_CALL_DEPTH : Z := 256.
 
 (* ---- 辅助函数 ---- *)
 

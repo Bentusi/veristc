@@ -1,11 +1,12 @@
 /**
- * tests/vm-tests/test_minimal.c
- * 里程碑验证：手写 .sasm 二进制 → C VM 解释执行
- * 
- * 测试用例: 返回常量 42 的最小 SafeASM 程序
- * 
- * 预期结果: vm_get_result() == 42
- * 验证条件: 加载成功 + 解释执行无错误 + 结果正确
+ * tests/vm-tests/test_engineering.c
+ * SafeASM VM 指令回归 + 工业控制容量验收
+ *
+ * 工程用例:
+ *   - 256 个函数的闭环控制处理链
+ *   - 256 层函数调用深度
+ *   - 参数校验、限幅和安全输出计算
+ *   - global_stack_depth 溢出保护
  */
 
 #include <stdio.h>
@@ -22,6 +23,19 @@ VM_Interface g_vm_interface = { 0 };
 #include "../../vm/loader.c"
 #include "../../vm/safeasm_interp.c"
 
+static void install_code(SasmModule *module, uint32_t code_idx,
+                         const uint8_t *body, uint32_t body_size) {
+    assert(code_idx < SASM_MAX_FUNCTIONS);
+    assert(body_size > 0);
+    assert(body_size <= SASM_MAX_FUNCTION_CODE_SIZE);
+    assert(module->code_size + body_size <= SASM_MAX_CODE_POOL_SIZE);
+
+    module->codes[code_idx].body_offset = module->code_size;
+    module->codes[code_idx].body_size = body_size;
+    memcpy(module->code_pool + module->code_size, body, body_size);
+    module->code_size += body_size;
+}
+
 /* ================================================================
    从真实 .sasm 文件加载并执行
    验证 Phase 0 里程碑: loader + interpreter 端到端可用。
@@ -37,7 +51,7 @@ static void test_load_return42_sasm(void) {
     fclose(fp);
     assert(len >= 8 && len < sizeof(buf));
 
-    SasmModule module;
+    static SasmModule module;
     assert(sasm_load(buf, (uint32_t)len, &module) == 0);
     assert(sasm_validate(&module) == true);
 
@@ -128,6 +142,10 @@ static const uint8_t minimal_sasm[] __attribute__((unused)) = {
 
 static void build_return42_module(SasmModule *m) {
     memset(m, 0, sizeof(SasmModule));
+    const uint8_t body[] = {
+        OP_I32_CONST, 0x2A, 0x00, 0x00, 0x00,
+        OP_RETURN
+    };
     m->version = 1;
     m->type_count = 1;
     m->types[0].param_count = 0;
@@ -138,13 +156,10 @@ static void build_return42_module(SasmModule *m) {
     m->funcs[0].local_count = 0;
     m->code_count = 1;
     m->codes[0].func_idx = 0;
-    m->codes[0].body[0] = OP_I32_CONST;
-    m->codes[0].body[1] = 0x2A; m->codes[0].body[2] = 0x00;
-    m->codes[0].body[3] = 0x00; m->codes[0].body[4] = 0x00;
-    m->codes[0].body[5] = OP_RETURN;
-    m->codes[0].body_size = 6;
+    install_code(m, 0, body, sizeof(body));
     m->total_memory_size = 256;
     m->safety.cycle_limit = 1000;
+    m->safety.global_stack_depth = 8;
     m->entry_function = 0;
 }
 
@@ -155,7 +170,7 @@ static void build_return42_module(SasmModule *m) {
 static void test_return_42(void) {
     printf("测试 1: 执行最小程序 (返回 42)...\n");
     
-    SasmModule module;
+    static SasmModule module;
     build_return42_module(&module);
     
     static VM vm;
@@ -186,7 +201,7 @@ static void test_arithmetic(void) {
     };
     
     /* 构建 SasmModule（直接构造，跳过序列化） */
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     
     module.version = 1;
@@ -201,11 +216,11 @@ static void test_arithmetic(void) {
     
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(arith_code);
-    memcpy(module.codes[0].body, arith_code, sizeof(arith_code));
+    install_code(&module, 0, arith_code, sizeof(arith_code));
     
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -233,7 +248,7 @@ static void test_div_by_zero(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -245,10 +260,10 @@ static void test_div_by_zero(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(div_code);
-    memcpy(module.codes[0].body, div_code, sizeof(div_code));
+    install_code(&module, 0, div_code, sizeof(div_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -280,7 +295,7 @@ static void test_conditional(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -292,10 +307,10 @@ static void test_conditional(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(cond_code);
-    memcpy(module.codes[0].body, cond_code, sizeof(cond_code));
+    install_code(&module, 0, cond_code, sizeof(cond_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -350,7 +365,7 @@ static void test_i32_shifts(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -362,10 +377,10 @@ static void test_i32_shifts(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(bits_code);
-    memcpy(module.codes[0].body, bits_code, sizeof(bits_code));
+    install_code(&module, 0, bits_code, sizeof(bits_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -409,7 +424,7 @@ static void test_i32_comparisons(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -421,10 +436,10 @@ static void test_i32_comparisons(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(cmp_code);
-    memcpy(module.codes[0].body, cmp_code, sizeof(cmp_code));
+    install_code(&module, 0, cmp_code, sizeof(cmp_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -450,7 +465,7 @@ static void test_i64_const_and_conv(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -462,10 +477,10 @@ static void test_i64_const_and_conv(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(i64_code);
-    memcpy(module.codes[0].body, i64_code, sizeof(i64_code));
+    install_code(&module, 0, i64_code, sizeof(i64_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -483,7 +498,7 @@ static void test_i64_const_and_conv(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule mod2;
+    static SasmModule mod2;
     memset(&mod2, 0, sizeof(mod2));
     mod2.version = 1;
     mod2.type_count = 1;
@@ -495,10 +510,10 @@ static void test_i64_const_and_conv(void) {
     mod2.funcs[0].local_count = 0;
     mod2.code_count = 1;
     mod2.codes[0].func_idx = 0;
-    mod2.codes[0].body_size = sizeof(extend_code);
-    memcpy(mod2.codes[0].body, extend_code, sizeof(extend_code));
+    install_code(&mod2, 0, extend_code, sizeof(extend_code));
     mod2.total_memory_size = 256;
     mod2.safety.cycle_limit = 1000;
+    mod2.safety.global_stack_depth = 8;
     mod2.entry_function = 0;
     
     static VM vm2;
@@ -527,7 +542,7 @@ static void test_load8_store8(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -539,10 +554,10 @@ static void test_load8_store8(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(load8_code);
-    memcpy(module.codes[0].body, load8_code, sizeof(load8_code));
+    install_code(&module, 0, load8_code, sizeof(load8_code));
     module.total_memory_size = 512;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -570,7 +585,7 @@ static void test_i64_arith(void) {
         0x06                              /* RETURN */
     };
     
-    SasmModule module;
+    static SasmModule module;
     memset(&module, 0, sizeof(module));
     module.version = 1;
     module.type_count = 1;
@@ -582,10 +597,10 @@ static void test_i64_arith(void) {
     module.funcs[0].local_count = 0;
     module.code_count = 1;
     module.codes[0].func_idx = 0;
-    module.codes[0].body_size = sizeof(i64_add_code);
-    memcpy(module.codes[0].body, i64_add_code, sizeof(i64_add_code));
+    install_code(&module, 0, i64_add_code, sizeof(i64_add_code));
     module.total_memory_size = 256;
     module.safety.cycle_limit = 1000;
+    module.safety.global_stack_depth = 8;
     module.entry_function = 0;
     
     static VM vm;
@@ -597,10 +612,239 @@ static void test_i64_arith(void) {
     printf("测试 10: 通过 ✅\n");
 }
 
+/* ================================================================
+   测试 11: 工业控制闭环 - 4096 函数表 + 256 层调用
+   ================================================================ */
+
+static void test_industrial_control_limits(void) {
+    const char *path = "tests/sasm-examples/industrial_control.sasm";
+
+    printf("测试 11: 工业控制闭环容量验收...\n");
+    assert(SASM_MAX_FUNCTIONS == 4096);
+    assert(SASM_MAX_CALL_DEPTH == 256);
+    assert(SASM_MAX_LOCALS >= 1024);
+    assert(SASM_MAX_PARAMS == 16);
+    assert(SASM_MAX_MEMORY == 1048576);
+
+    FILE *fp = fopen(path, "rb");
+    assert(fp != NULL);
+
+    static uint8_t buf[262144];
+    size_t len = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    assert(len > 0 && len < sizeof(buf));
+
+    static SasmModule module;
+    assert(sasm_load(buf, (uint32_t)len, &module) == 0);
+    assert(sasm_validate(&module));
+    assert(module.func_count == SASM_MAX_FUNCTIONS);
+    assert(module.code_count == SASM_MAX_FUNCTIONS);
+    assert(module.safety.global_stack_depth == SASM_MAX_CALL_DEPTH);
+
+    static VM vm;
+    assert(vm_init(&vm, &module, 4096) == 0);
+    assert(vm_run(&vm) == VM_OK);
+    assert(vm_get_result(&vm) == 4095);
+    assert(vm.max_frame_depth == SASM_MAX_CALL_DEPTH);
+    assert(vm.max_value_stack_depth > 1);
+
+    printf("  函数数: %u\n", module.func_count);
+    printf("  最大调用深度: %u\n", vm.max_frame_depth);
+    printf("  最大值栈深度: %u\n", vm.max_value_stack_depth);
+    printf("  控制输出: %d (期望: 4095)\n", vm_get_result(&vm));
+
+    /* 同一程序收紧栈上限，必须在进入第 65 层前安全中止。 */
+    const uint32_t configured_depth = 64;
+    module.safety.global_stack_depth = configured_depth;
+    assert(vm_init(&vm, &module, 4096) == 0);
+    assert(vm_run(&vm) == VM_ERR_FRAME_OVERFLOW);
+    assert(vm.max_frame_depth == configured_depth);
+    printf("  栈溢出保护: 深度 %u 时中止\n", configured_depth);
+
+    printf("测试 11: 通过 ✅\n");
+}
+
+/* ================================================================
+   测试 12: 核电站四保护通道 + 两个专设安全系列
+   ================================================================ */
+
+typedef struct {
+    const char *name;
+    int32_t power[4];
+    int32_t pressure[4];
+    int32_t level[4];
+    int32_t valid[4];
+    int32_t bypass[4];
+    int32_t train_enable[2];
+    int32_t train_permissive[2];
+    int32_t expected_channel[4];
+    int32_t expected_vote;
+    int32_t expected_trip;
+    int32_t expected_train[2];
+    int32_t expected_mismatch;
+} NuclearScenario;
+
+static const uint32_t nuclear_channel_offsets[4] = {0, 20, 40, 60};
+static const uint32_t nuclear_channel_outputs[4] = {116, 120, 124, 128};
+
+static void vm_write_i32(VM *vm, uint32_t offset, int32_t value) {
+    assert(offset + sizeof(value) <= vm->memory_size);
+    memcpy(vm->memory + offset, &value, sizeof(value));
+}
+
+static int32_t vm_read_i32(const VM *vm, uint32_t offset) {
+    int32_t value = 0;
+    assert(offset + sizeof(value) <= vm->memory_size);
+    memcpy(&value, vm->memory + offset, sizeof(value));
+    return value;
+}
+
+static void configure_nuclear_inputs(VM *vm, const NuclearScenario *scenario) {
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t base = nuclear_channel_offsets[i];
+        vm_write_i32(vm, base, scenario->power[i]);
+        vm_write_i32(vm, base + 4, scenario->pressure[i]);
+        vm_write_i32(vm, base + 8, scenario->level[i]);
+        vm_write_i32(vm, base + 12, scenario->valid[i]);
+        vm_write_i32(vm, base + 16, scenario->bypass[i]);
+    }
+    vm_write_i32(vm, 80, scenario->train_enable[0]);
+    vm_write_i32(vm, 84, scenario->train_permissive[0]);
+    vm_write_i32(vm, 88, scenario->train_enable[1]);
+    vm_write_i32(vm, 92, scenario->train_permissive[1]);
+}
+
+static void test_nuclear_protection_case(void) {
+    static const NuclearScenario scenarios[] = {
+        {
+            "正常运行",
+            {900, 950, 920, 980},
+            {155, 160, 150, 158},
+            {80, 75, 85, 70},
+            {1, 1, 1, 1},
+            {0, 0, 0, 0},
+            {1, 1},
+            {1, 1},
+            {0, 0, 0, 0},
+            0, 0, {0, 0}, 0,
+        },
+        {
+            "单通道高功率 1/4",
+            {1100, 950, 920, 980},
+            {155, 160, 150, 158},
+            {80, 75, 85, 70},
+            {1, 1, 1, 1},
+            {0, 0, 0, 0},
+            {1, 1},
+            {1, 1},
+            {1, 0, 0, 0},
+            1, 0, {0, 0}, 0,
+        },
+        {
+            "低压低液位 2/4",
+            {900, 950, 920, 980},
+            {155, 110, 150, 158},
+            {80, 75, 15, 70},
+            {1, 1, 1, 1},
+            {0, 0, 0, 0},
+            {1, 1},
+            {1, 1},
+            {0, 1, 1, 0},
+            2, 1, {1, 1}, 0,
+        },
+        {
+            "坏质量点加 2/4",
+            {1100, 1050, 1020, 980},
+            {155, 160, 150, 158},
+            {80, 75, 85, 70},
+            {0, 1, 1, 1},
+            {0, 0, 0, 0},
+            {1, 1},
+            {1, 1},
+            {0, 1, 1, 0},
+            2, 1, {1, 1}, 0,
+        },
+        {
+            "四通道全旁通",
+            {1100, 1100, 1100, 1100},
+            {100, 100, 100, 100},
+            {10, 10, 10, 10},
+            {1, 1, 1, 1},
+            {1, 1, 1, 1},
+            {1, 1},
+            {1, 1},
+            {0, 0, 0, 0},
+            0, 0, {0, 0}, 0,
+        },
+        {
+            "A 列闭锁不一致",
+            {900, 950, 920, 980},
+            {155, 110, 150, 158},
+            {80, 75, 15, 70},
+            {1, 1, 1, 1},
+            {0, 0, 0, 0},
+            {0, 1},
+            {1, 1},
+            {0, 1, 1, 0},
+            2, 1, {0, 1}, 1,
+        },
+    };
+
+    const char *path = "tests/sasm-examples/nuclear_protection.sasm";
+    printf("测试 12: 核电四通道与两专设系列逻辑...\n");
+
+    FILE *fp = fopen(path, "rb");
+    assert(fp != NULL);
+
+    static uint8_t buf[16384];
+    size_t len = fread(buf, 1, sizeof(buf), fp);
+    fclose(fp);
+    assert(len > 0 && len < sizeof(buf));
+
+    static SasmModule module;
+    assert(sasm_load(buf, (uint32_t)len, &module) == 0);
+    assert(sasm_validate(&module));
+    assert(module.func_count == 10);
+    assert(module.safety.global_stack_depth == 3);
+
+    static VM vm;
+    for (size_t scenario_index = 0;
+         scenario_index < sizeof(scenarios) / sizeof(scenarios[0]);
+         scenario_index++) {
+        const NuclearScenario *scenario = &scenarios[scenario_index];
+        assert(vm_init(&vm, &module, 4096) == 0);
+        configure_nuclear_inputs(&vm, scenario);
+        assert(vm_run(&vm) == VM_OK);
+
+        for (uint32_t channel = 0; channel < 4; channel++) {
+            int32_t actual = vm_read_i32(&vm, nuclear_channel_outputs[channel]);
+            assert(actual == scenario->expected_channel[channel]);
+        }
+
+        int32_t vote = vm_read_i32(&vm, 108);
+        int32_t trip = vm_read_i32(&vm, 96);
+        int32_t train_a = vm_read_i32(&vm, 100);
+        int32_t train_b = vm_read_i32(&vm, 104);
+        int32_t mismatch = vm_read_i32(&vm, 112);
+
+        assert(vote == scenario->expected_vote);
+        assert(trip == scenario->expected_trip);
+        assert(vm_get_result(&vm) == scenario->expected_trip);
+        assert(train_a == scenario->expected_train[0]);
+        assert(train_b == scenario->expected_train[1]);
+        assert(mismatch == scenario->expected_mismatch);
+        assert(vm.max_frame_depth == 3);
+
+        printf("  %-18s vote=%d trip=%d trainA=%d trainB=%d mismatch=%d\n",
+               scenario->name, vote, trip, train_a, train_b, mismatch);
+    }
+
+    printf("测试 12: 通过 ✅\n");
+}
+
 int main(void) {
     printf("========================================\n");
-    printf("  Phase 0.10: 里程碑验证\n");
-    printf("  SafeASM VM 端到端测试\n");
+    printf("  SafeASM VM 工程回归与容量验收\n");
     printf("========================================\n\n");
     
     test_return_42();
@@ -613,9 +857,11 @@ int main(void) {
     test_i64_const_and_conv();
     test_load8_store8();
     test_i64_arith();
+    test_industrial_control_limits();
+    test_nuclear_protection_case();
     
     printf("\n========================================\n");
-    printf("  全部 10 个测试通过 ✅\n");
+    printf("  全部 12 个测试通过 ✅\n");
     printf("  里程碑验证完成\n");
     printf("========================================\n");
     return 0;

@@ -365,7 +365,7 @@ int main(int argc, char **argv) {
         /* --- TYPE Section --- */
         if (sec_type == 0) {
             int type_idx = 0;
-            while (sec_remaining > 0 && type_idx < 8) {
+            while (sec_remaining > 0 && type_idx < SASM_MAX_FUNCTIONS) {
                 uint32_t pc = r32(&sec_data, &sec_remaining);
                 printf("        类型[%d]: params=%u [", type_idx, pc);
                 for (uint32_t i = 0; i < pc && sec_remaining > 0; i++) {
@@ -387,7 +387,7 @@ int main(int argc, char **argv) {
         /* --- FUNC Section --- */
         else if (sec_type == 1) {
             int func_idx = 0;
-            while (sec_remaining > 0 && func_idx < 8) {
+            while (sec_remaining > 0 && func_idx < SASM_MAX_FUNCTIONS) {
                 uint32_t ti = r32(&sec_data, &sec_remaining);
                 uint32_t lc = r32(&sec_data, &sec_remaining);
                 printf("        函数[%d]: type_idx=%u, locals=%u [", func_idx, ti, lc);

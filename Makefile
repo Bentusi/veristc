@@ -29,8 +29,22 @@ VM_HS_LIB    = vm/hotstandby/libvm_hs.a
 
 # VM 测试
 VM_TEST_DIR  = tests/vm-tests
-VM_TEST_SRCS = $(VM_TEST_DIR)/test_minimal.c
-VM_TEST_BIN  = $(VM_TEST_DIR)/test_minimal
+VM_TEST_SRCS = $(VM_TEST_DIR)/test_engineering.c
+VM_TEST_BIN  = $(VM_TEST_DIR)/test_engineering
+ENGINEERING_SASM = tests/sasm-examples/industrial_control.sasm
+ENGINEERING_GEN  = tests/sasm-examples/gen_industrial_control.py
+NUCLEAR_SASM     = tests/sasm-examples/nuclear_protection.sasm
+NUCLEAR_GEN      = tests/sasm-examples/gen_nuclear_protection.py
+NUCLEAR_E2E_ST   = tests/st-examples/nuclear_rps_esfas.st
+NUCLEAR_E2E_SASM = tests/veristc-tests/out/nuclear_rps_esfas.sasm
+NUCLEAR_E2E_TEST_SRC = $(VM_TEST_DIR)/test_nuclear_protection_e2e.c
+NUCLEAR_E2E_TEST_BIN = $(VM_TEST_DIR)/test_nuclear_protection_e2e
+NUCLEAR_FULL_GEN = tests/st-examples/gen_nuclear_rps_esfas_full.py
+NUCLEAR_FULL_ST = tests/st-examples/nuclear_rps_esfas_full.st
+NUCLEAR_FULL_LAYOUT = tests/veristc-tests/out/nuclear_rps_esfas_full_layout.h
+NUCLEAR_FULL_SASM = tests/veristc-tests/out/nuclear_rps_esfas_full.sasm
+NUCLEAR_FULL_TEST_SRC = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e.c
+NUCLEAR_FULL_TEST_BIN = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e
 
 # sasm_dump 工具
 SASM_DUMP_SRC = vm/sasm_dump.c
@@ -43,13 +57,14 @@ RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
 .PHONY: all coq vm-lib vm-io vm-hs vm-test sasm-dump rtthread clean verify
-.PHONY: sasm-run e2e
+.PHONY: static-analysis-test
+.PHONY: sasm-run e2e nuclear-e2e nuclear-full-e2e
 
 all: coq vm-lib vm-hs vm-test sasm-dump
 
 # Phase 0 验收入口：Coq 规范/骨架编译 + C VM 全量构建 + 里程碑测试
-verify: all
-	@echo "Phase 0 verification passed: Coq files compiled, VM libraries built, milestone tests passed."
+verify: all static-analysis-test nuclear-e2e nuclear-full-e2e
+	@echo "Verification passed: Coq, VM, engineering test, full ST/VM E2E and static stack analysis."
 
 # ================================================================
 # VM 核心库编译
@@ -94,7 +109,14 @@ vm/hotstandby/%.o: vm/hotstandby/%.c vm/hotstandby/hotstandby.h vm/vm.h
 vm-test: $(VM_CORE_LIB) $(VM_IO_LIB) $(VM_TEST_BIN)
 	$(VM_TEST_BIN)
 
-$(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_LIB) $(VM_IO_LIB) -lm
+$(ENGINEERING_SASM): $(ENGINEERING_GEN)
+	python3 $(ENGINEERING_GEN)
+
+$(NUCLEAR_SASM): $(NUCLEAR_GEN)
+	python3 $(NUCLEAR_GEN)
+
+$(VM_TEST_BIN): $(VM_TEST_SRCS) $(ENGINEERING_SASM) $(NUCLEAR_SASM) \
+		$(VM_CORE_LIB) $(VM_IO_LIB) -lm
 	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
 
 # ================================================================
@@ -141,6 +163,39 @@ e2e: veristc sasm-run
 	./vm/sasm_run $(E2E_OUT_DIR)/core_case.sasm 20
 	@echo "E2E passed: core_assign/if/while/while_if/for/repeat/case .st -> .sasm -> VM"
 
+# 核电 RPS/ESFAS 场景矩阵: ST -> VeriSTC -> .sasm -> C VM
+nuclear-e2e: veristc vm-lib vm-io $(NUCLEAR_E2E_TEST_BIN)
+	$(NUCLEAR_E2E_TEST_BIN) $(NUCLEAR_E2E_SASM)
+
+$(NUCLEAR_E2E_SASM): veristc $(NUCLEAR_E2E_ST)
+	@mkdir -p $(dir $@)
+	./veristc/extraction/veristc analyze $(NUCLEAR_E2E_ST)
+	./veristc/extraction/veristc compile $(NUCLEAR_E2E_ST) -o $@
+
+$(NUCLEAR_E2E_TEST_BIN): $(NUCLEAR_E2E_TEST_SRC) $(NUCLEAR_E2E_SASM) \
+		$(VM_CORE_LIB) $(VM_IO_LIB) -lm
+	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+
+# 工程规模四通道/两系列模型: 12k+ 行生成 ST -> VeriSTC -> 单模块 VM
+nuclear-full-e2e: veristc vm-lib vm-io $(NUCLEAR_FULL_TEST_BIN)
+	@test "$$(wc -l < $(NUCLEAR_FULL_ST))" -ge 10000
+	$(NUCLEAR_FULL_TEST_BIN) $(NUCLEAR_FULL_SASM)
+
+$(NUCLEAR_FULL_ST): $(NUCLEAR_FULL_GEN)
+	python3 $(NUCLEAR_FULL_GEN)
+
+$(NUCLEAR_FULL_LAYOUT): $(NUCLEAR_FULL_ST) $(NUCLEAR_FULL_GEN)
+	python3 $(NUCLEAR_FULL_GEN)
+
+$(NUCLEAR_FULL_SASM): veristc $(NUCLEAR_FULL_ST)
+	@mkdir -p $(dir $@)
+	./veristc/extraction/veristc analyze $(NUCLEAR_FULL_ST)
+	./veristc/extraction/veristc compile $(NUCLEAR_FULL_ST) -o $@
+
+$(NUCLEAR_FULL_TEST_BIN): $(NUCLEAR_FULL_TEST_SRC) $(NUCLEAR_FULL_LAYOUT) \
+		$(NUCLEAR_FULL_SASM) $(VM_CORE_LIB) $(VM_IO_LIB) -lm
+	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+
 # ================================================================
 # RT-Thread 适配层 (需要 RT-Thread SDK)
 # ================================================================
@@ -174,7 +229,7 @@ ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/asm_semantics.v
 
 # Src files (depend on spec files)
-SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/desugar.v src/analysis.v src/typechecker.v src/codegen.v
+SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/inline.v src/desugar.v src/analysis.v src/typechecker.v src/codegen.v
 
 # Extraction files
 EXTRACTION_DIR = extraction
@@ -214,10 +269,11 @@ $(VERISTC_DIR)/spec/asm_semantics.vo: $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo
 $(VERISTC_DIR)/src/parser.vo:        $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/lexer.vo
+$(VERISTC_DIR)/src/inline.vo:       $(VERISTC_DIR)/spec/safest.vo
 $(VERISTC_DIR)/src/desugar.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
 $(VERISTC_DIR)/src/analysis.vo:      $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/desugar.vo
 $(VERISTC_DIR)/src/typechecker.vo:   $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
-$(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/st_semantics.vo $(VERISTC_DIR)/src/desugar.vo
+$(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/st_semantics.vo $(VERISTC_DIR)/src/desugar.vo $(VERISTC_DIR)/src/analysis.vo
 
 $(VERISTC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
 
@@ -246,12 +302,26 @@ veristc: extract
 		 ocamlopt -o veristc str.cmxa $$OCAML_FILES) 2>&1
 	@echo "  [OCAML] veristc executable built: $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc"
 
+# 验证调用图静态分析能识别完整嵌套链，而不是只统计直接调用。
+static-analysis-test: veristc
+	@result="$$(./veristc/extraction/veristc analyze tests/st-examples/engineering_call_chain.st)"; \
+	printf '%s\n' "$$result"; \
+	printf '%s\n' "$$result" | grep -q '^stack depth: 6$$'; \
+	if ./veristc/extraction/veristc compile tests/st-examples/engineering_recursive.st \
+		-o /tmp/veristc-recursive.sasm > /tmp/veristc-recursive.log 2>&1; then \
+		echo "recursive program unexpectedly compiled"; exit 1; \
+	fi; \
+	grep -q 'recursive calls are not supported' /tmp/veristc-recursive.log; \
+	echo "static stack analysis and recursion gate passed"
+
 # ================================================================
 # 清理
 # ================================================================
 
 clean:
 	rm -f $(VM_TEST_BIN)
+	rm -f $(NUCLEAR_E2E_TEST_BIN) $(NUCLEAR_E2E_SASM)
+	rm -f $(NUCLEAR_FULL_TEST_BIN) $(NUCLEAR_FULL_SASM) $(NUCLEAR_FULL_LAYOUT)
 	rm -f $(SASM_DUMP_BIN)
 	rm -f $(SASM_RUN_BIN)
 	rm -f $(VM_CORE_LIB) $(VM_CORE_OBJS)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """生成最小 .sasm 测试文件 (返回常量 42)"""
 import struct
+import zlib
 
 def section(type_id, body):
     hdr = struct.pack("<B", type_id)     # type, 1 byte
@@ -49,12 +50,13 @@ data += section(4,
 data += section(5,
     struct.pack("<B", 1) +               # safety_level = SIL3
     struct.pack("<I", 1000) +            # cycle_limit = 1000
-    struct.pack("<I", 0) +               # stack_depth = 0
-    struct.pack("<I", 0)                 # loop_count = 0
+    struct.pack("<I", 8) +               # stack_depth = 8
+    struct.pack("<I", 0) +               # loop_count = 0
+    struct.pack("<I", 0)                 # mem_range_count = 0
 )
 
-# CRC (dummy)
-data += struct.pack("<I", 0)
+# CRC32 over all bytes after the six-byte file header.
+data += struct.pack("<I", zlib.crc32(data[6:]) & 0xFFFFFFFF)
 
 path = "tests/sasm-examples/return42.sasm"
 with open(path, "wb") as f:

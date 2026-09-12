@@ -89,6 +89,8 @@ static uint32_t crc32_compute(const uint8_t *data, uint32_t len) {
  */
 int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
     if (!buf || !module || len < 8) return -1;
+
+    memset(module, 0, sizeof(*module));
     
     const uint8_t *p = buf;
     uint32_t remaining = len;
@@ -126,15 +128,16 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
         switch (sec_type) {
         case SEC_TYPE:
             /* Type Section */
-            module->type_count = 0;
             while (p < sec_data + sec_len && module->type_count < SASM_MAX_FUNCTIONS) {
                 uint32_t idx = module->type_count;
                 module->types[idx].param_count = read_u32(&p, &remaining);
-                for (uint32_t i = 0; i < module->types[idx].param_count && i < 16; i++) {
+                if (module->types[idx].param_count > SASM_MAX_PARAMS) return -1;
+                for (uint32_t i = 0; i < module->types[idx].param_count; i++) {
                     module->types[idx].param_types[i] = read_u8(&p, &remaining);
                 }
                 module->types[idx].return_count = read_u32(&p, &remaining);
-                for (uint32_t i = 0; i < module->types[idx].return_count && i < 1; i++) {
+                if (module->types[idx].return_count > 1) return -1;
+                for (uint32_t i = 0; i < module->types[idx].return_count; i++) {
                     module->types[idx].return_types[i] = read_u8(&p, &remaining);
                 }
                 module->type_count++;
@@ -143,12 +146,12 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
             
         case SEC_FUNC:
             /* Function Section */
-            module->func_count = 0;
             while (p < sec_data + sec_len && module->func_count < SASM_MAX_FUNCTIONS) {
                 uint32_t idx = module->func_count;
                 module->funcs[idx].type_idx = read_u32(&p, &remaining);
                 module->funcs[idx].local_count = read_u32(&p, &remaining);
-                for (uint32_t i = 0; i < module->funcs[idx].local_count && i < 32; i++) {
+                if (module->funcs[idx].local_count > SASM_MAX_LOCALS) return -1;
+                for (uint32_t i = 0; i < module->funcs[idx].local_count; i++) {
                     module->funcs[idx].local_types[i] = read_u8(&p, &remaining);
                 }
                 module->func_count++;
@@ -159,7 +162,8 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
             /* Memory Section */
             module->total_memory_size = read_u32(&p, &remaining);
             module->segment_count = read_u32(&p, &remaining);
-            for (uint32_t i = 0; i < module->segment_count && i < 8; i++) {
+            if (module->segment_count > SASM_MAX_SEGMENTS) return -1;
+            for (uint32_t i = 0; i < module->segment_count; i++) {
                 module->segments[i].segment_type  = read_u8(&p, &remaining);
                 module->segments[i].start_offset  = read_u32(&p, &remaining);
                 module->segments[i].size          = read_u32(&p, &remaining);
@@ -169,7 +173,8 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
         case SEC_IOMAP:
             /* IOMap Section */
             module->iomap_count = read_u32(&p, &remaining);
-            for (uint32_t i = 0; i < module->iomap_count && i < 64; i++) {
+            if (module->iomap_count > SASM_MAX_IOMAP_ENTRIES) return -1;
+            for (uint32_t i = 0; i < module->iomap_count; i++) {
                 module->iomap[i].st_var_name_offset = read_u32(&p, &remaining);
                 module->iomap[i].mem_offset         = read_u32(&p, &remaining);
                 module->iomap[i].channel_id         = read_u32(&p, &remaining);
@@ -179,6 +184,7 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
                 /* scale_factor 和 bias 为 8 字节 double */
                 module->iomap[i].scale_factor = 1.0;  /* 简化 */
                 module->iomap[i].bias         = 0.0;
+                if (remaining < 16) return -1;
                 p += 16; remaining -= 16;  /* 跳过 float64 × 2 */
                 module->iomap[i].safety_limit_low  = read_s32(&p, &remaining);
                 module->iomap[i].safety_limit_high = read_s32(&p, &remaining);
@@ -187,14 +193,21 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
             
         case SEC_CODE:
             /* Code Section */
-            module->code_count = 0;
             while (p < sec_data + sec_len && module->code_count < SASM_MAX_FUNCTIONS) {
                 uint32_t idx = module->code_count;
                 module->codes[idx].func_idx  = read_u32(&p, &remaining);
                 module->codes[idx].body_size = read_u32(&p, &remaining);
-                if (module->codes[idx].body_size > SASM_MAX_CODE_SIZE) return -1;
+                if (module->codes[idx].body_size == 0 ||
+                    module->codes[idx].body_size > SASM_MAX_FUNCTION_CODE_SIZE) {
+                    return -1;
+                }
+                if (module->code_size + module->codes[idx].body_size >
+                    SASM_MAX_CODE_POOL_SIZE) {
+                    return -1;
+                }
+                module->codes[idx].body_offset = module->code_size;
                 for (uint32_t i = 0; i < module->codes[idx].body_size; i++) {
-                    module->codes[idx].body[i] = read_u8(&p, &remaining);
+                    module->code_pool[module->code_size++] = read_u8(&p, &remaining);
                 }
                 module->code_count++;
             }
@@ -207,14 +220,16 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
             module->safety.global_stack_depth  = read_u32(&p, &remaining);
             
             module->safety.loop_count = read_u32(&p, &remaining);
-            for (uint32_t i = 0; i < module->safety.loop_count && i < 32; i++) {
+            if (module->safety.loop_count > SASM_MAX_LOOP_BOUNDS) return -1;
+            for (uint32_t i = 0; i < module->safety.loop_count; i++) {
                 module->safety.loop_bounds[i].func_idx      = read_u32(&p, &remaining);
                 module->safety.loop_bounds[i].instr_offset  = read_u32(&p, &remaining);
                 module->safety.loop_bounds[i].max_iterations = read_u32(&p, &remaining);
             }
             
             module->safety.mem_range_count = read_u32(&p, &remaining);
-            for (uint32_t i = 0; i < module->safety.mem_range_count && i < 32; i++) {
+            if (module->safety.mem_range_count > SASM_MAX_MEM_RANGES) return -1;
+            for (uint32_t i = 0; i < module->safety.mem_range_count; i++) {
                 module->safety.mem_access_ranges[i].low  = read_u32(&p, &remaining);
                 module->safety.mem_access_ranges[i].high = read_u32(&p, &remaining);
             }
@@ -250,17 +265,40 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
 bool sasm_validate(const SasmModule *module) {
     if (!module) return false;
     
-    /* 1. 必须有至少一个函数 */
-    if (module->func_count == 0) return false;
+    /* 1. 类型、函数和代码表均不能为空且不能超出静态容量 */
+    if (module->type_count == 0 || module->type_count > SASM_MAX_FUNCTIONS) return false;
+    if (module->func_count == 0 || module->func_count > SASM_MAX_FUNCTIONS) return false;
+    if (module->code_count != module->func_count) return false;
+    if (module->code_size > SASM_MAX_CODE_POOL_SIZE) return false;
     
     /* 2. 必须有安全注解 */
-    if (module->safety.cycle_limit == 0 && 
-        module->safety.global_stack_depth == 0) return false;
+    if (module->safety.cycle_limit == 0 || module->safety.cycle_limit > 1000000) return false;
+    if (module->safety.global_stack_depth == 0 ||
+        module->safety.global_stack_depth > SASM_MAX_CALL_DEPTH) return false;
     
     /* 3. 内存大小合理 */
     if (module->total_memory_size == 0 || 
         module->total_memory_size > SASM_MAX_MEMORY) return false;
-    
-    /* 4. 安全检查可以通过 */
+
+    /* 4. 入口函数有效 */
+    if (module->entry_function >= module->func_count) return false;
+
+    /* 5. 函数声明和代码体均在有效范围内 */
+    for (uint32_t i = 0; i < module->func_count; i++) {
+        if (module->funcs[i].type_idx >= module->type_count) return false;
+        if (module->funcs[i].local_count > SASM_MAX_LOCALS) return false;
+    }
+    bool code_seen[SASM_MAX_FUNCTIONS] = {false};
+    for (uint32_t i = 0; i < module->code_count; i++) {
+        const FuncCode *code = &module->codes[i];
+        if (code->func_idx >= module->func_count) return false;
+        if (code_seen[code->func_idx]) return false;
+        code_seen[code->func_idx] = true;
+        if (code->body_size == 0 ||
+            code->body_size > SASM_MAX_FUNCTION_CODE_SIZE) return false;
+        if (code->body_offset > module->code_size ||
+            code->body_offset + code->body_size > module->code_size) return false;
+    }
+
     return true;
 }

@@ -9,6 +9,7 @@
 
 module L = Lexer
 module P = Parser
+module I = Inline
 module D = Desugar
 module T = Typechecker
 module C = Codegen
@@ -65,15 +66,34 @@ let rec coq_list_len (l : 'a Datatypes.list) : int =
   | Datatypes.Coq_nil -> 0
   | Datatypes.Coq_cons (_, rest) -> 1 + coq_list_len rest
 
+let rec coq_list_exists (predicate : 'a -> bool) : 'a Datatypes.list -> bool =
+  function
+  | Datatypes.Coq_nil -> false
+  | Datatypes.Coq_cons (value, rest) ->
+      predicate value || coq_list_exists predicate rest
+
+let analysis_has_recursion (result : Analysis.analysis_result) : bool =
+  coq_list_exists
+    (function
+      | Datatypes.Coq_pair (_, Datatypes.Coq_true) -> true
+      | Datatypes.Coq_pair (_, Datatypes.Coq_false) -> false)
+    result.Analysis.ar_has_recursion
+
+let max_call_depth = 256
+
 let compile_st_to_sasm (source_path : string) : string =
   let source = coq_string_of_native (read_file source_path) in
   let tokens = match L.lex source with
     | Some ts -> ts
     | None -> failwith "lexer failed"
   in
-  let ast = match P.parse tokens with
+  let parsed = match P.parse tokens with
     | Some p -> p
     | None -> failwith "parser failed"
+  in
+  let ast = match I.inline_program parsed with
+    | Some p -> p
+    | None -> failwith "function inlining failed"
   in
   if coq_list_len ast.Safest.pou_list = 0 then
     failwith "parser produced empty program";
@@ -83,6 +103,14 @@ let compile_st_to_sasm (source_path : string) : string =
   let corest = D.desugar_program ast in
   if coq_list_len corest.Desugar.cprog_functions = 0 then
     failwith "desugar produced empty function list";
+  let analysis = A.analyze corest in
+  if analysis_has_recursion analysis then
+    failwith "recursive calls are not supported";
+  let stack_depth = z_to_int analysis.Analysis.ar_max_stack_depth in
+  if stack_depth > max_call_depth then
+    failwith
+      (Printf.sprintf "static stack depth %d exceeds limit %d"
+         stack_depth max_call_depth);
   let sasm_module = C.compile_program corest in
   z_bytes_to_string (E.encode_module sasm_module)
 
@@ -124,14 +152,22 @@ let () =
         | Some ts -> ts
         | None -> failwith "lexer failed"
       in
-      let ast = match P.parse tokens with
+      let parsed = match P.parse tokens with
         | Some p -> p
         | None -> failwith "parser failed"
+      in
+      let ast = match I.inline_program parsed with
+        | Some p -> p
+        | None -> failwith "function inlining failed"
       in
       if coq_list_len ast.Safest.pou_list = 0 then
         failwith "parser produced empty program";
       let result = A.analyze (D.desugar_program ast) in
       Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
+      Printf.printf "recursive calls: %s\n"
+        (bool_to_string
+           (if analysis_has_recursion result then Datatypes.Coq_true
+            else Datatypes.Coq_false));
       Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
       Printf.printf "loops bounded: %s\n"
         (bool_to_string result.A.ar_all_loops_bounded)

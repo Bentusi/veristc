@@ -92,13 +92,17 @@ Definition has_recursion (graph : call_graph) : list (ident * bool) :=
   (f, dfs_cycle (Datatypes.S (List.length graph)) graph f [])
  ) graph.
 
-Fixpoint max_call_depth (graph : call_graph) (entry : ident) {struct graph} : Z :=
- match graph with
- | nil => 0
- | (f, callees) :: rest =>
-   if ident_eq f entry then
-    Z.of_nat (List.length callees)
-   else max_call_depth rest entry
+(* 计算从 entry 开始的最长无递归调用链长度（含当前函数帧）。
+   fuel 限制保证即使调用图异常成环，Coq 计算也必然终止。 *)
+Fixpoint max_call_chain (fuel : nat) (graph : call_graph)
+                        (entry : ident) {struct fuel} : nat :=
+ match fuel with
+ | O => 1
+ | S fuel' =>
+   let callees := lookup_callees graph entry in
+   1 + List.fold_right
+         (fun callee acc => Nat.max (max_call_chain fuel' graph callee) acc)
+         0%nat callees
  end.
 
 (* ================================================================
@@ -152,11 +156,21 @@ Definition check_all_loops_bounded (p : corest_program) : bool :=
   基于调用图，考虑最坏情况（所有可能路径同时活跃）。
   ================================================================ *)
 
-(* 计算程序的整体栈深度 = 最大调用深度 + 1（入口函数） *)
+(* 计算程序所有函数中的最大无递归调用链深度。
+   为保证入口不可达分支也被保守覆盖，这里对所有函数取最大值。
+   非递归程序的简单路径最多包含函数总数个节点，因而是精确上界。 *)
+Fixpoint graph_max_call_chain (fuel : nat) (graph : call_graph) : nat :=
+ match graph with
+ | nil => 0%nat
+ | (f, _) :: rest =>
+   Nat.max (max_call_chain fuel graph f)
+           (graph_max_call_chain fuel rest)
+ end.
+
 Definition analyze_stack_depth (p : corest_program) : Z :=
  let graph := build_call_graph p in
- let entry := p.(cprog_entry) in
- max_call_depth graph entry + 1.
+ let fuel := Datatypes.S (List.length graph) in
+ Z.of_nat (graph_max_call_chain fuel graph).
 
 (* ================================================================
   第 4 部分：WCET 估算 (WCET Estimation)

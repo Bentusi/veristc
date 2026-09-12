@@ -208,6 +208,8 @@ int hs_snapshot_create(HotStandbySystem *hs)
     hdr.frame_stack_ptr = vm->frame_stack_ptr;
     hdr.cycle_count     = vm->cycle_count;
     hdr.last_error      = vm->last_error;
+    hdr.max_frame_depth = vm->max_frame_depth;
+    hdr.max_value_stack_depth = vm->max_value_stack_depth;
 
     /* 2. 收集脏页 */
     uint32_t page_indices[HS_MAX_PAGES];
@@ -291,6 +293,8 @@ int hs_snapshot_apply(HotStandbySystem *hs, const uint8_t *snap_data,
 
     const SnapshotHeader *hdr = (const SnapshotHeader *)snap_data;
     if (hdr->magic != HS_SNAPSHOT_MAGIC) return -3;
+    if (hdr->val_stack_ptr > VALUE_STACK_SIZE ||
+        hdr->frame_stack_ptr > FRAME_STACK_SIZE) return -4;
 
     VM *vm = hs->vm;
     uint32_t offset = sizeof(SnapshotHeader);
@@ -325,6 +329,8 @@ int hs_snapshot_apply(HotStandbySystem *hs, const uint8_t *snap_data,
     /* 5. 还原其他状态 */
     vm->cycle_count = hdr->cycle_count;
     vm->last_error  = hdr->last_error;
+    vm->max_frame_depth = hdr->max_frame_depth;
+    vm->max_value_stack_depth = hdr->max_value_stack_depth;
 
     return 0;
 }

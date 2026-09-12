@@ -20,9 +20,19 @@ extern "C" {
 
 #define SASM_MAGIC         0x4D534153  /* "SASM" as little-endian uint32 */
 #define SASM_VERSION       0x01
-#define SASM_MAX_FUNCTIONS 8
+#define SASM_MAX_FUNCTIONS 4096
+#define SASM_MAX_CALL_DEPTH 256
+#define SASM_MAX_LOCALS 1024     /* 参数与普通局部变量共享的帧槽数 */
+#define SASM_MAX_PARAMS 16       /* 单个函数签名的参数上限 */
+#define SASM_MAX_BLOCK_DEPTH 16
+#define SASM_MAX_FUNCTION_CODE_SIZE (1024U * 1024U)
+#define SASM_MAX_CODE_SIZE SASM_MAX_FUNCTION_CODE_SIZE
+#define SASM_MAX_CODE_POOL_SIZE (2U * 1024U * 1024U)
 #define SASM_MAX_MEMORY    1048576
-#define SASM_MAX_CODE_SIZE 8192
+#define SASM_MAX_SEGMENTS  8
+#define SASM_MAX_IOMAP_ENTRIES 64
+#define SASM_MAX_LOOP_BOUNDS 8
+#define SASM_MAX_MEM_RANGES 8
 
 #define VAL_I32 0x7F
 #define VAL_I64 0x7E
@@ -173,7 +183,7 @@ typedef int32_t sasm_value;
 
 typedef struct {
     uint32_t param_count;
-    uint8_t  param_types[16];
+    uint8_t  param_types[SASM_MAX_PARAMS];
     uint32_t return_count;
     uint8_t  return_types[1];
 } FuncType;
@@ -181,7 +191,7 @@ typedef struct {
 typedef struct {
     uint32_t type_idx;
     uint32_t local_count;
-    uint8_t  local_types[32];
+    uint8_t  local_types[SASM_MAX_LOCALS];
 } FuncDecl;
 
 typedef struct {
@@ -219,15 +229,15 @@ typedef struct {
     uint32_t cycle_limit;
     uint32_t global_stack_depth;
     uint32_t loop_count;
-    LoopBound loop_bounds[8];
+    LoopBound loop_bounds[SASM_MAX_LOOP_BOUNDS];
     uint32_t mem_range_count;
-    MemAccessRange mem_access_ranges[8];
+    MemAccessRange mem_access_ranges[SASM_MAX_MEM_RANGES];
 } SafetyAnnotation;
 
 typedef struct {
     uint32_t func_idx;
+    uint32_t body_offset;
     uint32_t body_size;
-    uint8_t  body[SASM_MAX_CODE_SIZE];
 } FuncCode;
 
 typedef struct {
@@ -238,12 +248,14 @@ typedef struct {
     uint32_t func_count;
     FuncDecl funcs[SASM_MAX_FUNCTIONS];
     uint32_t segment_count;
-    MemSegment segments[8];
+    MemSegment segments[SASM_MAX_SEGMENTS];
     uint32_t total_memory_size;
     uint32_t iomap_count;
-    IOMapEntry iomap[64];
+    IOMapEntry iomap[SASM_MAX_IOMAP_ENTRIES];
     uint32_t code_count;
     FuncCode  codes[SASM_MAX_FUNCTIONS];
+    uint32_t code_size;
+    uint8_t  code_pool[SASM_MAX_CODE_POOL_SIZE];
     SafetyAnnotation safety;
     uint32_t entry_function;
 } SasmModule;
@@ -252,17 +264,17 @@ typedef struct {
 typedef struct {
     uint32_t func_idx;
     uint32_t pc;
-    sasm_value locals[32];
+    sasm_value locals[SASM_MAX_LOCALS];
     uint32_t local_count;
     const uint8_t *body;
     uint32_t body_size;
-    uint32_t block_stack[16];
+    uint32_t block_stack[SASM_MAX_BLOCK_DEPTH];
     uint32_t block_depth;
 } Frame;
 
 /* VM */
 #define VALUE_STACK_SIZE  1024
-#define FRAME_STACK_SIZE  64
+#define FRAME_STACK_SIZE  SASM_MAX_CALL_DEPTH
 #define MEMORY_SIZE       1048576
 
 typedef struct {
@@ -271,6 +283,8 @@ typedef struct {
     uint32_t   val_stack_ptr;
     Frame frame_stack[FRAME_STACK_SIZE];
     uint32_t frame_stack_ptr;
+    uint32_t max_frame_depth;
+    uint32_t max_value_stack_depth;
     uint8_t memory[MEMORY_SIZE];
     uint32_t memory_size;
     uint32_t cycle_count;

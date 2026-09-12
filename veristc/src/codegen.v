@@ -24,6 +24,7 @@ Require Import veristc_spec.safest.
 Require Import veristc_spec.safeasm.
 Require Import veristc_src.desugar.
 Require Import veristc_spec.st_semantics.
+Require Import veristc_src.analysis.
 Local Open Scope Z_scope.
 Import ListNotations.
 
@@ -1069,7 +1070,7 @@ Definition compile_program (p : corest_program) : sasm_module :=
      sasm_io_map := io_map;
      sasm_safety := {| safe_level := 0;
                        safe_cycle_limit := 1000000;
-                       safe_stack_depth := 64;
+                       safe_stack_depth := analyze_stack_depth p;
                        safe_loop_bounds := [];
                        safe_mem_access_map := [{| mar_low := 0; mar_high := total_mem |}];
                     |};

@@ -397,26 +397,17 @@ ST:  result := Add(5, 3)
          Add := a + b;
      END_FUNCTION
       │
-      ▼  编译为 SafeASM:
-      I32_CONST 5        ; 参数 1
-      I32_CONST 3        ; 参数 2
-      CALL 0             ; 调用函数索引 0 (Add)
+      ▼  编译期展开为 SafeASM:
+      I32_CONST 5        ; 参数 a 实参
+      I32_CONST 3        ; 参数 b 实参
+      I32_ADD            ; Add 表达式体 a + b
       LOCAL_SET result_idx  ; 将返回值存入 result
-      
-  ; Add 函数的 SafeASM:
-  ; Type: [I32, I32] → [I32]
-  ; Code:
-  func_Add:
-      LOCAL_GET 0        ; 加载参数 a
-      LOCAL_GET 1        ; 加载参数 b
-      I32_ADD            ; a + b
-      RETURN             ; 返回栈顶值
       
       │
       ▼  语义保持:
          ST 语义: result = Add(5, 3) = 5 + 3 = 8
-         ASM 语义: CALL 0 → 执行 Add 指令 → RETURN → 栈顶=8
-         参数传递和返回值一一对应 ✅
+         ASM 语义: 参数替换 → 表达式体求值 → 栈顶=8
+         纯函数调用在前端展开，后续由核心编译正确性定理覆盖 ✅
 ```
 
 ### 例 5：逻辑求值 (Short-circuit AND)
@@ -1284,7 +1275,7 @@ A: FOR 循环的语义保持通过 LOOP/BR_IF/BR 的组合实现。LOOP 标记�
 A: 编译正确性定理只保证"如果 VM 正确执行 SafeASM 指令，则结果与 ST 语义一致"。VM 本身的正确性需要通过 C 语言级别的测试和（可选）形式化验证来保证。这就是为什么我们将编译器证明和 VM 分开——编译器证明用 Coq，VM 正确性用测试。
 
 **Q: 函数调用怎么保证语义保持？**
-A: 通过 CALL/RETURN 指令机制和栈帧管理。参数在调用前压入值栈，CALL 指令创建新栈帧，RETURN 返回值留在栈顶，恢复调用者帧。这与 ST 的函数调用语义（传参→执行→返回）完全对应。
+A: 当前实现先将单表达式、无副作用的 FUNCTION 在调用点做参数替换和递归展开，再进入已验证的核心 SafeST 编译管线。因此不依赖 SafeASM 的 CALL 指令。RS 触发器使用显式 `set/reset/q_previous` 参数，滤波器使用显式 `previous` 参数；需要跨扫描周期保留的状态由调用者持有。
 
 ---
 
@@ -1310,7 +1301,7 @@ A: 通过 CALL/RETURN 指令机制和栈帧管理。参数在调用前压入值�
 | REPEAT 循环 | `codegen.v` | `compile_repeat_preservation` | `invariant induction; omega` |
 | EXIT | `codegen.v` | `compile_exit_preservation` | `unfold br_depth; auto` |
 | RETURN | `codegen.v` | `compile_return_preservation` | `unfold pop_frame; auto` |
-| 函数调用 | `codegen.v` | `compile_call_preservation` | `eapply frame_push_correct` |
+| 纯函数调用 | `inline.v` + `codegen.v` | `inline_program_preserves_io_mapping` + 核心表达式证明 | 参数替换；递归展开 |
 | FB 调用 | `codegen.v` | `compile_fb_preservation` | `eapply fb_memory_layout_correct` |
 | 类型转换 | `codegen.v` | `compile_typecast_preservation` | `case analysis on conversion type` |
 | **质量传播（二元运算）** | `codegen.v` | `compile_quality_binop_preservation` | **`destruct q1, q2; auto` (v1.1)** |

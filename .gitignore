@@ -10,6 +10,8 @@ vm/sasm_run
 tests/veristc-tests/out/
 tests/vm-tests/test_minimal
 tests/vm-tests/test_engineering
+tests/vm-tests/test_nuclear_protection_e2e
+tests/vm-tests/test_nuclear_protection_full_e2e
 
 # 目标文件
 *.o

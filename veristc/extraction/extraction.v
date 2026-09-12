@@ -26,6 +26,7 @@ Set Extraction Output Directory "./extraction".
 (* 提取所有编译器核心模块 *)
 Require Import veristc_src.lexer.
 Require Import veristc_src.parser.
+Require Import veristc_src.inline.
 Require Import veristc_src.desugar.
 Require Import veristc_src.typechecker.
 Require Import veristc_src.codegen.
@@ -36,6 +37,7 @@ Require Import veristc_src.encoder.
 Separate Extraction
   veristc_src.lexer.lex
   veristc_src.parser.parse
+  veristc_src.inline.inline_program
   veristc_src.desugar.desugar_program
   veristc_src.typechecker.type_check_program
   veristc_src.codegen.compile_program
