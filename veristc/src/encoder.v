@@ -3,7 +3,7 @@
    SafeASM 二进制编码器 — v1.1 full encoder
 
    Usage (after OCaml extraction):
-     VeriSTC compile input.st -o output.sasm
+     VeriSTC -c input.st -o output.sasm
 
    Binary format (matching vm/loader.c):
      [Magic]     "SASM"             4 bytes

@@ -21,6 +21,9 @@ Local Open Scope Z_scope.
 Import ListNotations.
 
 Definition GLOBAL_BASE : Z := 4096.
+Definition SASM_PRINT_PORT : Z := 2147483640.  (* 0x7FFFFFF8 *)
+Definition SASM_COUNTER_PRINT_PORT : Z := 2147483644.  (* 0x7FFFFFFC *)
+Definition SYSTEM_COUNTER_NAME : ident := ID "__veristc_cycle_counter".
 
 Fixpoint lookup_global_offset
          (env : list (ident * Z)) (x : ident) : option Z :=
@@ -62,6 +65,27 @@ Definition global_store
       I32_CONST off :: value_code ++
       [I32_STORE {| mem_align := 2; mem_offset := 0 |}]
   | None => [NOP]
+  end.
+
+Definition compile_cycle_counter
+           (locals : compile_env) (globals : list (ident * Z))
+           : list sasm_instr :=
+  let temp := Z.of_nat (List.length locals) in
+  match lookup_global_offset globals SYSTEM_COUNTER_NAME with
+  | Some addr =>
+      [I32_CONST addr;
+       I32_LOAD {| mem_align := 2; mem_offset := 0 |};
+       I32_CONST 1;
+       I32_ADD;
+       LOCAL_SET temp;
+       I32_CONST addr;
+       LOCAL_GET temp;
+       I32_STORE {| mem_align := 2; mem_offset := 0 |};
+       I32_CONST SASM_COUNTER_PRINT_PORT;
+       LOCAL_GET temp;
+       I32_STORE {| mem_align := 2; mem_offset := 0 |};
+       LOCAL_GET temp]
+  | None => [I32_CONST 0]
   end.
 
 Fixpoint compile_expr_g
@@ -136,8 +160,12 @@ Fixpoint compile_expr_g
   | CE_XOR e1 e2 =>
       compile_expr_g locals globals e1 ++
       compile_expr_g locals globals e2 ++ [I32_XOR]
-  | CE_FUNC_CALL _ args =>
-      List.concat (List.map (compile_expr_g locals globals) args)
+  | CE_FUNC_CALL f args =>
+      match f, args with
+      | ID "CycleCounter", nil => compile_cycle_counter locals globals
+      | _, _ =>
+          List.concat (List.map (compile_expr_g locals globals) args)
+      end
   | CE_QUALITY_OP _ args =>
       List.concat (List.map (compile_expr_g locals globals) args)
   end.
@@ -147,10 +175,15 @@ Fixpoint compile_stmt_g
          (s : corest_stmt) {struct s} : list sasm_instr :=
   match s with
   | CS_ASSIGN x e =>
-      let rhs := compile_expr_g locals globals e in
-      match lookup_var_idx locals x with
-      | Some idx => rhs ++ [LOCAL_SET idx]
-      | None => global_store globals x rhs
+      match x with
+      | ID "__veristc_cycle_counter" =>
+          compile_cycle_counter locals globals ++ [DROP]
+      | _ =>
+          let rhs := compile_expr_g locals globals e in
+          match lookup_var_idx locals x with
+          | Some idx => rhs ++ [LOCAL_SET idx]
+          | None => global_store globals x rhs
+          end
       end
   | CS_ARRAY_ASSIGN x idx e =>
       compile_expr_g locals globals (CE_VAR x) ++
@@ -180,7 +213,17 @@ Fixpoint compile_stmt_g
       let loop_size := instr_seq_size (header_instrs ++ loop_body) in
       let exit_instrs := [LOOP loop_size] ++ header_instrs ++ loop_body in
       [BLOCK (instr_seq_size exit_instrs)] ++ exit_instrs
-  | CS_FB_CALL _ _ => [NOP]
+  | CS_FB_CALL inst params =>
+      match inst with
+      | ID "PRINT" =>
+          List.concat
+            (List.map (fun p =>
+               I32_CONST SASM_PRINT_PORT ::
+               compile_expr_g locals globals (snd p) ++
+               [I32_STORE {| mem_align := 2; mem_offset := 0 |}])
+             params)
+      | _ => [NOP]
+      end
   | CS_RETURN => [RETURN]
   | CS_EXIT => [BR 0]
   | CS_BLOCK stmts =>
@@ -200,7 +243,7 @@ Definition compile_function_g
     | None => body
     end in
   let safeasm_types :=
-    List.map (fun p => st_type_to_sasm (snd p)) env_ty in
+    List.map (fun p => st_type_to_sasm (snd p)) env_ty ++ [I32] in
   {| sasm_func_type_idx := 0;
      sasm_locals := safeasm_types;
      sasm_body := body;

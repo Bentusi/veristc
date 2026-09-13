@@ -6,6 +6,8 @@
 # ================================================================
 # 可执行文件
 vm/svm
+output.sasm
+output.txt
 tests/veristc-tests/out/
 tests/vm-tests/test_vm
 tests/vm-tests/test_nuclear_protection_full_e2e
@@ -37,6 +39,7 @@ tests/vm-tests/test_nuclear_protection_full_e2e
 *.vos
 *.glob
 *.aux
+*.cache
 
 # Coq 编译缓存
 .coq-native/

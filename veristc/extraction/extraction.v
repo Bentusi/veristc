@@ -11,7 +11,8 @@
      5. encoder — SafeASM 二进制编码
    
    提取后的 OCaml 程序可通过命令行:
-     VeriSTC compile input.st -o output.sasm
+     VeriSTC -c input.st -o output.sasm
+     VeriSTC -a input.st
    将 IEC 61131-3 Structured Text 编译为 SafeASM 字节码。
    ================================================================ *)
 

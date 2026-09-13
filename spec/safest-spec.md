@@ -1452,6 +1452,13 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 | `MOVE` | `T → T` | 类型安全的值拷贝 |
 | `SEL` | `BOOL, T, T → T` | 选择器 (SEL(g,a,b) = g?a:b) |
 | `MUX` | `INT, T... → T` | 多路选择 |
+| `CycleCounter()` | `() → DINT` | 每个扫描周期递增并打印系统全局周期计数 |
+| `PRINT(v, ...)` | `32-bit scalar... → void` | 打印一个或多个布尔、整数或质量值 |
+
+`CycleCounter()` 无需在 ST 中声明。编译器自动分配保留全局槽
+`__veristc_cycle_counter`，周期开始时加一并打印，所有 PROGRAM 均可直接调用。
+`PRINT` 是语句型内置函数，无需声明，支持 `PRINT(x);` 和
+`PRINT(x1, x2);`。
 
 ### 9.1 质量操作内置函数（v1.1 新增）
 

@@ -800,14 +800,26 @@ with parse_assignment_or_fb_call (fuel : nat) (st : parser_state) {struct fuel}
           match peek st1 with
           | Some TK_LPAREN =>
               let st2 := snd (consume st1) in
-              match parse_fb_param_list fuel' st2 with
-              | Parse_ok (params, st3) =>
-                  let st4 := snd (expect_token st3 TK_RPAREN) in
-                  let st5 := snd (expect_token st4 TK_SEMI) in
-                  Parse_ok ((S_FB_CALL (ID name) params), st5)
-              | Parse_fail => Parse_fail
-              | Parse_error msg => Parse_error msg
-              end
+              if String.eqb name "PRINT" then
+                match parse_argument_list fuel' st2 with
+                | Parse_ok (args, st3) =>
+                    let st4 := snd (expect_token st3 TK_RPAREN) in
+                    let st5 := snd (expect_token st4 TK_SEMI) in
+                    let params :=
+                      List.map (fun e => (ID "__print_arg", e)) args in
+                    Parse_ok ((S_FB_CALL (ID name) params), st5)
+                | Parse_fail => Parse_fail
+                | Parse_error msg => Parse_error msg
+                end
+              else
+                match parse_fb_param_list fuel' st2 with
+                | Parse_ok (params, st3) =>
+                    let st4 := snd (expect_token st3 TK_RPAREN) in
+                    let st5 := snd (expect_token st4 TK_SEMI) in
+                    Parse_ok ((S_FB_CALL (ID name) params), st5)
+                | Parse_fail => Parse_fail
+                | Parse_error msg => Parse_error msg
+                end
           | Some TK_ASSIGN =>
               let st2 := snd (consume st1) in
               match parse_expression fuel' st2 with

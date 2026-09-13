@@ -35,6 +35,13 @@ Import ListNotations.
 (* 调用图：从调用者到被调用者列表的映射 *)
 Definition call_graph : Type := list (ident * list ident).
 
+Definition is_builtin_ident (name : ident) : bool :=
+  match name with
+  | ID "PRINT" => true
+  | ID "CycleCounter" => true
+  | _ => false
+  end.
+
 (* 构建调用图：遍历 CoreST 程序的所有函数体 *)
 Fixpoint collect_fb_calls_expr (e : corest_expr) {struct e} : list ident :=
  match e with
@@ -49,7 +56,7 @@ Fixpoint collect_fb_calls_expr (e : corest_expr) {struct e} : list ident :=
 
 Fixpoint collect_fb_calls_stmt (s : corest_stmt) {struct s} : list ident :=
  match s with
- | CS_FB_CALL inst _ => [inst]
+ | CS_FB_CALL inst _ => if is_builtin_ident inst then nil else [inst]
  | CS_IF _ t e => List.concat (List.map collect_fb_calls_stmt t) ++
           List.concat (List.map collect_fb_calls_stmt e)
  | CS_WHILE _ b => List.concat (List.map collect_fb_calls_stmt b)

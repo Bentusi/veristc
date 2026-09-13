@@ -78,3 +78,6 @@ veristc/
 
 - `tests/st-examples/`：ST 示例程序
 - `tests/vm-tests/`：C VM 单元测试与端到端测试（Unity/CMock 框架）
+- `run_tests.sh`：构建并执行全部测试
+- `run_vm_checks.sh`：执行最小 VM、SVM、CRC 和周期检查
+- `run_nuclear_e2e.sh`：执行复杂核电 ST→SASM→VM 端到端验证

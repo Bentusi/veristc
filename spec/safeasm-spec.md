@@ -261,6 +261,11 @@ memory_arg (4 字节):
 | 0x39 | `F64_STORE` | `memory_arg` | `addr:i32 val:f64 → -` | 存储 f64 |
 | 0x3A | `I32_STORE8` | `memory_arg` | `addr:i32 val:i32 → -` | **存储 1 字节（取低8位），v1.1** |
 
+保留打印端口：
+
+- `0x7FFFFFF8`：`PRINT()` 写入 32 位值，VM 输出 `[print] value`。
+- `0x7FFFFFFC`：`CycleCounter()` 输出 `[cycle_counter] value`。
+
 #### 安全扩展指令
 
 | 操作码 | 指令 | 参数 | 说明 |

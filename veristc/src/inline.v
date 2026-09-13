@@ -11,11 +11,21 @@
 From Stdlib Require Import List.
 From Stdlib Require Import Bool.
 From Stdlib Require Import String.
+From Stdlib Require Import ZArith.
 Require Import veristc_spec.safest.
 Import ListNotations.
+Local Open Scope Z_scope.
 
 Definition simple_function : Type :=
   list ident * st_expr.
+
+Definition cycle_counter_name : ident := ID "__veristc_cycle_counter".
+
+Definition is_builtin_function (name : ident) : bool :=
+  match name with
+  | ID "CycleCounter" => true
+  | _ => false
+  end.
 
 Fixpoint function_param_names (decls : list st_var_decl) : list ident :=
   match decls with
@@ -155,7 +165,14 @@ Fixpoint expand_expr
                     expand_expr fuel' defs (subst_expr params args' body)
                   else
                     None
-              | None => None
+              | None =>
+                  if is_builtin_function name then
+                    match args' with
+                    | nil => Some (E_VAR cycle_counter_name)
+                    | _ => None
+                    end
+                  else
+                    None
               end
           | None => None
           end
@@ -239,7 +256,12 @@ Fixpoint expand_stmt
           | _, _ => None
           end
       | S_FB_CALL inst params =>
-          Some (S_FB_CALL inst params)
+          match expand_exprs fuel' defs (List.map snd params) with
+          | Some args' =>
+              Some (S_FB_CALL inst
+                      (List.combine (List.map fst params) args'))
+          | None => None
+          end
       | S_RETURN => Some S_RETURN
       | S_EXIT => Some S_EXIT
       end
@@ -316,7 +338,12 @@ Definition expand_program_pou
   match pou with
   | P_PROGRAM name decls body =>
       match expand_stmts fuel defs body with
-      | Some body' => Some (Some (P_PROGRAM name decls body'))
+      | Some body' =>
+          let increment :=
+            S_ASSIGN cycle_counter_name
+              (E_BIN_OP B_ADD (E_VAR cycle_counter_name)
+                              (E_LIT (L_INT 1%Z))) in
+          Some (Some (P_PROGRAM name decls (increment :: body')))
       | None => None
       end
   | P_FUNCTION _ _ _ _ => Some None
@@ -340,7 +367,9 @@ Fixpoint expand_program_pous
 Definition inline_program (p : st_program) : option st_program :=
   match expand_program_pous inline_fuel p.(pou_list) p.(pou_list) with
   | Some pous =>
-      Some {| global_vars := p.(global_vars);
+      let counter_decl :=
+        Build_st_var_decl cycle_counter_name T_DINT D_GLOBAL Q_NONE None in
+      Some {| global_vars := p.(global_vars) ++ [counter_decl];
               pou_list := pous;
               io_mapping := p.(io_mapping);
               entry_point := p.(entry_point) |}

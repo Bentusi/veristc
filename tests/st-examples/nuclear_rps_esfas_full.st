@@ -917,7 +917,7 @@ channel_fault_c := 0 + 0;
 channel_fault_d := 0 + 0;
 diagnosis_count := 0 + 0;
 
-cycle_counter := cycle_counter + 1;
+cycle_counter := CycleCounter();
 filter_sample_count := filter_sample_count + 1;
 filter_accum_a := filter_accum_a + raw_000_a;
 filter_a := FilterStep(filter_a, raw_000_a);

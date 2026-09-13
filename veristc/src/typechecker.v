@@ -362,6 +362,13 @@ Definition type_check_expr_in_program (p : st_program) (env : type_env) (e : st_
    第 6 部分：语句类型检查函数 (Statement Type Checking)
    ================================================================ *)
 
+Definition is_print_type (ty : st_type) : bool :=
+  match ty with
+  | T_BOOL | T_BYTE | T_WORD | T_DWORD
+  | T_SINT | T_INT | T_DINT | T_QUALITY => true
+  | _ => false
+  end.
+
 Fixpoint type_check_stmt (fenv : type_env_func) (env : type_env) (s : st_stmt) : bool :=
   match s with
   | S_ASSIGN x e =>
@@ -442,10 +449,19 @@ Fixpoint type_check_stmt (fenv : type_env_func) (env : type_env) (s : st_stmt) :
       body_ok && cond_ok
 
   | S_FB_CALL inst params =>
-      (* FB 调用检查: 验证所有参数表达式类型正确 *)
-      List.forallb (fun p => let _ := fst p in let e := snd p in
-        match type_check_expr nil env e with Some _ => true | None => false end
-      ) params
+      match inst with
+      | ID "PRINT" =>
+          List.forallb (fun p => let _ := fst p in let e := snd p in
+            match type_check_expr nil env e with
+            | Some ty => is_print_type ty
+            | None => false
+            end) params
+      | _ =>
+          (* FB 调用检查: 验证所有参数表达式类型正确 *)
+          List.forallb (fun p => let _ := fst p in let e := snd p in
+            match type_check_expr nil env e with Some _ => true | None => false end
+          ) params
+      end
 
   | S_RETURN => true
   | S_EXIT => true

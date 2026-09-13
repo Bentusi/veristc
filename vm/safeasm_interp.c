@@ -21,6 +21,7 @@
  */
 
 #include "vm.h"
+#include <stdio.h>
 #include <string.h>
 #include <math.h>
 
@@ -502,6 +503,18 @@ int vm_execute_cycle(VM *vm) {
             sasm_value val  = pop_value(vm);
             sasm_value addr = pop_value(vm);
             uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
+
+            if (mem_addr == SASM_PRINT_PORT) {
+                printf("[print] %d\n", val);
+                fflush(stdout);
+                break;
+            }
+
+            if (mem_addr == SASM_COUNTER_PRINT_PORT) {
+                printf("[cycle_counter] %d\n", val);
+                fflush(stdout);
+                break;
+            }
             
             if (!check_mem_bounds(vm, mem_addr, 4)) {
                 return VM_ERR_MEM_OUT_OF_BOUNDS;

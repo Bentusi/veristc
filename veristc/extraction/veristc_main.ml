@@ -1,6 +1,6 @@
 (* ================================================================
    veristc/extraction/veristc_main.ml
-   Compiler command line: .st -> .sasm
+   Compiler command line: -c .st -> .sasm, -a analyzes .st
 
    This file is compiled after the OCaml code extracted from Coq.
    The extracted modules shadow several Stdlib names, so all native
@@ -162,48 +162,71 @@ let bool_to_string (b : Datatypes.bool) : string =
   | Datatypes.Coq_true -> "true"
   | Datatypes.Coq_false -> "false"
 
+let analyze_st (source_path : string) : unit =
+  let source = coq_string_of_native (read_file source_path) in
+  let tokens = match L.lex source with
+    | Some ts -> ts
+    | None -> failwith "lexer failed"
+  in
+  let parsed = match P.parse tokens with
+    | Some p -> p
+    | None -> failwith "parser failed"
+  in
+  let ast = match I.inline_program parsed with
+    | Some p -> p
+    | None -> failwith "function inlining failed"
+  in
+  if coq_list_len ast.Safest.pou_list = 0 then
+    failwith "parser produced empty program";
+  let result = A.analyze (D.desugar_program ast) in
+  Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
+  Printf.printf "recursive calls: %s\n"
+    (bool_to_string
+       (if analysis_has_recursion result then Datatypes.Coq_true
+        else Datatypes.Coq_false));
+  Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
+  Printf.printf "loops bounded: %s\n"
+    (bool_to_string result.A.ar_all_loops_bounded)
+
 let () =
   let args = Sys.argv in
-  if Array.length args < 3 then begin
-    Printf.eprintf "usage: %s compile <input.st> [-o <output.sasm>]\n" args.(0);
-    Printf.eprintf "       %s analyze <input.st>\n" args.(0);
+  let usage () =
+    Printf.eprintf
+      "usage: %s [-a|-c] <input.st> [-o <output.sasm>]\n\
+       \  -a  analyze (default)\n\
+       \  -c  compile to .sasm\n" args.(0)
+  in
+  if Array.length args < 2 then begin
+    usage ();
     exit 1
   end;
-  match args.(1) with
-  | "compile" ->
-      let source = args.(2) in
+  let mode, source_index =
+    match args.(1) with
+    | "-a" -> `Analyze, 2
+    | "-c" -> `Compile, 2
+    | "-h" | "--help" -> usage (); exit 0
+    | arg when Stdlib.String.length arg > 0 &&
+               Stdlib.String.get arg 0 = '-' ->
+        Printf.eprintf "unknown option: %s\n" arg;
+        usage ();
+        exit 1
+    | _ -> `Analyze, 1
+  in
+  if Array.length args <= source_index then begin
+    usage ();
+    exit 1
+  end;
+  let source = args.(source_index) in
+  match mode with
+  | `Compile ->
       let sasm_data = compile_st_to_sasm source in
       let output =
-        if Array.length args >= 5 && args.(3) = "-o" then args.(4)
+        if Array.length args >= source_index + 3 &&
+           args.(source_index + 1) = "-o" then
+          args.(source_index + 2)
         else "output.sasm"
       in
       write_file output sasm_data;
       Printf.printf "compiled: %s -> %s\n" source output
-  | "analyze" ->
-      let source = coq_string_of_native (read_file args.(2)) in
-      let tokens = match L.lex source with
-        | Some ts -> ts
-        | None -> failwith "lexer failed"
-      in
-      let parsed = match P.parse tokens with
-        | Some p -> p
-        | None -> failwith "parser failed"
-      in
-      let ast = match I.inline_program parsed with
-        | Some p -> p
-        | None -> failwith "function inlining failed"
-      in
-      if coq_list_len ast.Safest.pou_list = 0 then
-        failwith "parser produced empty program";
-      let result = A.analyze (D.desugar_program ast) in
-      Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
-      Printf.printf "recursive calls: %s\n"
-        (bool_to_string
-           (if analysis_has_recursion result then Datatypes.Coq_true
-            else Datatypes.Coq_false));
-      Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
-      Printf.printf "loops bounded: %s\n"
-        (bool_to_string result.A.ar_all_loops_bounded)
-  | _ ->
-      Printf.eprintf "unknown command: %s\n" args.(1);
-      exit 1
+  | `Analyze ->
+      analyze_st source
