@@ -30,6 +30,7 @@ Require Import veristc_src.inline.
 Require Import veristc_src.desugar.
 Require Import veristc_src.typechecker.
 Require Import veristc_src.codegen.
+Require Import veristc_src.global_codegen.
 Require Import veristc_src.analysis.
 Require Import veristc_src.encoder.
 
@@ -41,6 +42,7 @@ Separate Extraction
   veristc_src.desugar.desugar_program
   veristc_src.typechecker.type_check_program
   veristc_src.codegen.compile_program
+  veristc_src.global_codegen.compile_program_g
   veristc_src.analysis.analyze
   veristc_src.encoder.encode_sasm_instr
   veristc_src.encoder.encode_module

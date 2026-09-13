@@ -233,6 +233,41 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
                 module->safety.mem_access_ranges[i].low  = read_u32(&p, &remaining);
                 module->safety.mem_access_ranges[i].high = read_u32(&p, &remaining);
             }
+            module->safety.wcet_func_count = 0;
+            if (p + 4 <= sec_data + sec_len) {
+                module->safety.wcet_func_count = read_u32(&p, &remaining);
+                if (module->safety.wcet_func_count >
+                    SASM_MAX_WCET_ENTRIES) {
+                    return -1;
+                }
+                for (uint32_t i = 0;
+                     i < module->safety.wcet_func_count; i++) {
+                    if (p + 12 > sec_data + sec_len) return -1;
+                    module->safety.wcet_funcs[i].func_idx =
+                        read_u32(&p, &remaining);
+                    module->safety.wcet_funcs[i].cycles =
+                        read_u32(&p, &remaining);
+                    module->safety.wcet_funcs[i].ns =
+                        read_u32(&p, &remaining);
+                }
+            }
+            break;
+
+        case SEC_WCET:
+            {
+                uint32_t count = read_u32(&p, &remaining);
+                if (count > SASM_MAX_WCET_ENTRIES) return -1;
+                module->safety.wcet_func_count = count;
+                for (uint32_t i = 0; i < count; i++) {
+                    if (p + 12 > sec_data + sec_len) return -1;
+                    module->safety.wcet_funcs[i].func_idx =
+                        read_u32(&p, &remaining);
+                    module->safety.wcet_funcs[i].cycles =
+                        read_u32(&p, &remaining);
+                    module->safety.wcet_funcs[i].ns =
+                        read_u32(&p, &remaining);
+                }
+            }
             break;
             
         default:
@@ -247,8 +282,8 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
     uint32_t stored_crc = read_u32(&p, &remaining);
     uint32_t computed_crc = crc32_compute(crc_start, crc_len);
     if (stored_crc != computed_crc) {
-        /* CRC 校验失败，仅警告（开发阶段允许） */
-        /* return -2; */
+        /* Zero is accepted for legacy handcrafted development fixtures. */
+        if (stored_crc != 0) return -2;
     }
     
     /* 6. 设置入口函数（第一个函数） */
@@ -275,6 +310,7 @@ bool sasm_validate(const SasmModule *module) {
     if (module->safety.cycle_limit == 0 || module->safety.cycle_limit > 1000000) return false;
     if (module->safety.global_stack_depth == 0 ||
         module->safety.global_stack_depth > SASM_MAX_CALL_DEPTH) return false;
+    if (module->safety.safety_level > 1) return false;
     
     /* 3. 内存大小合理 */
     if (module->total_memory_size == 0 || 

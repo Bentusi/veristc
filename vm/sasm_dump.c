@@ -1,10 +1,8 @@
 /**
  * vm/sasm_dump.c
- * SafeASM 二进制可视化打印工具
+ * SafeASM 二进制可视化打印实现 (由 svm -d 调用)
  * 
  * 功能: 读取 .sasm 文件并打印可读的内容
- * 用法: ./sasm_dump <file.sasm>
- * 
  * 输出:
  *   - 文件头 (Magic/Version/Flags)
  *   - 所有 Section 类型和大小
@@ -21,6 +19,21 @@
 #include <string.h>
 #include <stdlib.h>
 #include "vm.h"
+#include "sasm_dump.h"
+
+static const uint32_t dump_crc32_table[256] = {
+#include "crc32_table.inc"
+};
+
+static uint32_t dump_crc32_compute(const uint8_t *data, uint32_t len)
+{
+    uint32_t crc = 0xFFFFFFFF;
+    for (uint32_t i = 0; i < len; i++) {
+        uint8_t index = (crc ^ data[i]) & 0xFF;
+        crc = (crc >> 8) ^ dump_crc32_table[index];
+    }
+    return crc ^ 0xFFFFFFFF;
+}
 
 /* ================================================================
    指令助记符表
@@ -261,17 +274,14 @@ static void disasm_code(const uint8_t *body, uint32_t body_size, int indent) {
 }
 
 /* ================================================================
-   主函数：解析并打印 .sasm 文件
+   解析并打印 .sasm 文件
    ================================================================ */
 
-int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "用法: %s <file.sasm>\n", argv[0]);
-        return 1;
-    }
-    
+int sasm_dump_file(const char *path) {
+    if (!path) return 1;
+
     /* 读取文件 */
-    FILE *fp = fopen(argv[1], "rb");
+    FILE *fp = fopen(path, "rb");
     if (!fp) {
         perror("打开文件失败");
         return 1;
@@ -281,7 +291,7 @@ int main(int argc, char **argv) {
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     
-    if (fsize < 8) {
+    if (fsize < 10) {
         fprintf(stderr, "文件太小\n");
         fclose(fp);
         return 1;
@@ -310,7 +320,7 @@ int main(int argc, char **argv) {
     uint32_t len = (uint32_t)fsize;
     
     printf("╔══════════════════════════════════════════════════════╗\n");
-    printf("║  SafeASM Dump: %-40s ║\n", argv[1]);
+    printf("║  SafeASM Dump: %-40s ║\n", path);
     printf("╚══════════════════════════════════════════════════════╝\n\n");
     
     /* --- 文件头 --- */
@@ -482,6 +492,31 @@ int main(int argc, char **argv) {
                 uint32_t hi = r32(&sec_data, &sec_remaining);
                 printf("          [%u, %u)\n", lo, hi);
             }
+
+            if (sec_remaining >= 4) {
+                uint32_t wcnt = r32(&sec_data, &sec_remaining);
+                printf("        WCET 条目: %u\n", wcnt);
+                for (uint32_t i = 0; i < wcnt && sec_remaining >= 12; i++) {
+                    uint32_t fi = r32(&sec_data, &sec_remaining);
+                    uint32_t cy = r32(&sec_data, &sec_remaining);
+                    uint32_t ns = r32(&sec_data, &sec_remaining);
+                    printf("          函数[%u]: cycles=%u ns=%u\n",
+                           fi, cy, ns);
+                }
+            }
+        }
+
+        /* --- WCET Section --- */
+        else if (sec_type == 6) {
+            uint32_t wcnt = r32(&sec_data, &sec_remaining);
+            printf("        WCET 条目: %u\n", wcnt);
+            for (uint32_t i = 0; i < wcnt && sec_remaining >= 12; i++) {
+                uint32_t fi = r32(&sec_data, &sec_remaining);
+                uint32_t cy = r32(&sec_data, &sec_remaining);
+                uint32_t ns = r32(&sec_data, &sec_remaining);
+                printf("          函数[%u]: cycles=%u ns=%u\n",
+                       fi, cy, ns);
+            }
         }
         
         /* --- 跳过未解析的 Section 数据 --- */
@@ -499,9 +534,13 @@ int main(int argc, char **argv) {
     printf("\n[CRC32]\n");
     if (len >= 4) {
         uint32_t stored_crc = r32(&p, &len);
-        /* 简单 CRC 校验（仅显示，不做校验） */
+        uint32_t computed_crc = dump_crc32_compute(buf + 6,
+                                                   (uint32_t)fsize - 10);
         printf("  存储值: 0x%08X\n", stored_crc);
-        printf("  状态:   %s\n", stored_crc == 0 ? "(未计算)" : "(待验证)");
+        printf("  计算值: 0x%08X\n", computed_crc);
+        printf("  状态:   %s\n",
+               stored_crc == 0 ? "(未计算)" :
+               (stored_crc == computed_crc ? "OK" : "MISMATCH"));
     }
     
     free(buf);

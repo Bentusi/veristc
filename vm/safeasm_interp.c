@@ -1038,7 +1038,7 @@ int vm_run(VM *vm) {
     
     int result = vm_execute_cycle(vm);
     
-    /* 入口程序不追加 RETURN；结束时保留入口帧，由 sasm_run 读取 local0 */
+    /* 入口程序不追加 RETURN；结束时保留入口帧，由 svm 读取 local0 */
     return result;
 }
 

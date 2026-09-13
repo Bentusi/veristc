@@ -232,6 +232,14 @@ FB 字段偏移(inst, field) = FB_BASE + fb_base(inst) + field_offset(field)
 
 **关键保证**：所有偏移在**编译期确定**，运行期固定。SafeASM 线性内存布局由 Memory Section 中的 `memory_segments` 描述。
 
+**当前实现（v1.2）**：`VAR_GLOBAL` 从 `GLOBAL_BASE = 4096` 开始按 4 字节槽
+顺序分配，变量读取编译为 `I32_CONST offset; I32_LOAD`，写入编译为
+`I32_CONST offset; <value>; I32_STORE`。当前该扩展路径支持
+`BOOL`、`BYTE`、`WORD`、`DWORD`、`SINT`、`INT`、`DINT` 等 32 位存储语义；
+64 位全局量需要扩展为 `I64_LOAD/I64_STORE`。热备快照无条件包含
+`SEG_GLOBAL` 覆盖的页面，因此 RS 锁存、计数器、累加器、滤波状态和状态机
+不依赖调用者栈帧存活。
+
 ### 3.3 影子质量内存布局（v1.1）
 
 每个 Q 类型变量在影子质量区中占用 **1 字节**质量码。影子质量区是 SafeASM 线性内存的独立段 `SEG_QUALITY`。

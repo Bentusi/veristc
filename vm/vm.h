@@ -33,6 +33,7 @@ extern "C" {
 #define SASM_MAX_IOMAP_ENTRIES 64
 #define SASM_MAX_LOOP_BOUNDS 8
 #define SASM_MAX_MEM_RANGES 8
+#define SASM_MAX_WCET_ENTRIES SASM_MAX_FUNCTIONS
 
 #define VAL_I32 0x7F
 #define VAL_I64 0x7E
@@ -155,6 +156,14 @@ extern "C" {
 #define SEC_WCET  6
 #define SEC_DEBUG 7
 
+/* Memory segment types (match SafeASM MEM section). */
+#define SEG_TYPE_IO_INPUT  0
+#define SEG_TYPE_IO_OUTPUT 1
+#define SEG_TYPE_GLOBAL    2
+#define SEG_TYPE_FB_DATA   3
+#define SEG_TYPE_STACK     4
+#define SEG_TYPE_CONST     5
+
 /* 错误码 */
 #define VM_OK                   0
 #define VM_ERR_STACK_OVERFLOW   -1
@@ -225,6 +234,12 @@ typedef struct {
 } MemAccessRange;
 
 typedef struct {
+    uint32_t func_idx;
+    uint32_t cycles;
+    uint32_t ns;
+} WcetFuncInfo;
+
+typedef struct {
     uint8_t  safety_level;
     uint32_t cycle_limit;
     uint32_t global_stack_depth;
@@ -232,6 +247,8 @@ typedef struct {
     LoopBound loop_bounds[SASM_MAX_LOOP_BOUNDS];
     uint32_t mem_range_count;
     MemAccessRange mem_access_ranges[SASM_MAX_MEM_RANGES];
+    uint32_t wcet_func_count;
+    WcetFuncInfo wcet_funcs[SASM_MAX_WCET_ENTRIES];
 } SafetyAnnotation;
 
 typedef struct {

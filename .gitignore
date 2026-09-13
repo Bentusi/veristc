@@ -5,12 +5,9 @@
 # C 编译产物
 # ================================================================
 # 可执行文件
-vm/sasm_dump
-vm/sasm_run
+vm/svm
 tests/veristc-tests/out/
-tests/vm-tests/test_minimal
-tests/vm-tests/test_engineering
-tests/vm-tests/test_nuclear_protection_e2e
+tests/vm-tests/test_vm
 tests/vm-tests/test_nuclear_protection_full_e2e
 
 # 目标文件

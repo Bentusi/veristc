@@ -277,6 +277,23 @@ Definition encode_mem_access_range (r : mem_access_range) : list Z :=
 Definition encode_mem_access_ranges (rs : list mem_access_range) : list Z :=
   List.fold_right (fun r acc => encode_mem_access_range r ++ acc) [] rs.
 
+Definition encode_wcet_func_info (wi : wcet_func_info) : list Z :=
+  encode_u32 wi.(wcet_func_idx) ++
+  encode_u32 wi.(wcet_cycles) ++
+  encode_u32 wi.(wcet_ns).
+
+Definition encode_wcet_funcs (wis : list wcet_func_info) : list Z :=
+  List.fold_right
+    (fun wi acc => encode_wcet_func_info wi ++ acc) [] wis.
+
+Definition encode_wcet_data (wc : option wcet_data) : list Z :=
+  match wc with
+  | None => encode_u32 0
+  | Some data =>
+      encode_u32 (Z.of_nat (List.length data.(wcet_funcs))) ++
+      encode_wcet_funcs data.(wcet_funcs)
+  end.
+
 Definition encode_safety_section_data (m : sasm_module) : list Z :=
   let sa := m.(sasm_safety) in
   encode_u8 (Z.land sa.(safe_level) 255) ++
@@ -285,10 +302,14 @@ Definition encode_safety_section_data (m : sasm_module) : list Z :=
   encode_u32 (Z.of_nat (List.length sa.(safe_loop_bounds))) ++
   encode_loop_bounds sa.(safe_loop_bounds) ++
   encode_u32 (Z.of_nat (List.length sa.(safe_mem_access_map))) ++
-  encode_mem_access_ranges sa.(safe_mem_access_map).
+  encode_mem_access_ranges sa.(safe_mem_access_map) ++
+  encode_wcet_data m.(sasm_wcet).
 
 Definition encode_safe_section (m : sasm_module) : list Z :=
   encode_section 5 (encode_safety_section_data m).
+
+Definition encode_wcet_section (m : sasm_module) : list Z :=
+  encode_section 6 (encode_wcet_data m.(sasm_wcet)).
 
 (* ---- 2g. 综合汇编 section 清单 ---- *)
 
@@ -310,7 +331,10 @@ Definition encode_module (m : sasm_module) : list Z :=
   let iomap_sec := encode_iomap_section m in
   let code_sec  := encode_code_section m in
   let safe_sec  := encode_safe_section m in
-  let sections := type_sec ++ func_sec ++ mem_sec ++ iomap_sec ++ code_sec ++ safe_sec in
+  let wcet_sec  := encode_wcet_section m in
+  let sections :=
+    type_sec ++ func_sec ++ mem_sec ++ iomap_sec ++
+    code_sec ++ safe_sec ++ wcet_sec in
   let crc := [0x00; 0x00; 0x00; 0x00] in      (* CRC32 — placeholder, loader treats mismatch as non-fatal *)
   header ++ sections ++ crc.
 

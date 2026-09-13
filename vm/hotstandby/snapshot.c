@@ -80,7 +80,7 @@ static const uint32_t s_crc32_table[256] = {
     0xB40BBE37, 0xC30C8EA1, 0x5A05DF1B, 0x2D02EF8D,
 };
 
-static uint32_t crc32_compute(const uint8_t *data, uint32_t len)
+static uint32_t hs_crc32_compute(const uint8_t *data, uint32_t len)
 {
     uint32_t crc = 0xFFFFFFFF;
     for (uint32_t i = 0; i < len; i++) {
@@ -103,7 +103,7 @@ bool hs_snapshot_verify_crc(const uint8_t *data, uint32_t size)
     tmp.crc32 = 0;
     memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
 
-    uint32_t computed = crc32_compute(data, size);
+    uint32_t computed = hs_crc32_compute(data, size);
     memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
     /* 恢复原 CRC */
     ((SnapshotHeader *)data)->crc32 = stored_crc;
@@ -185,6 +185,21 @@ uint32_t hs_dirty_get_pages(const DirtyPageTracker *tracker,
     return count;
 }
 
+static bool snapshot_add_page(uint32_t *indices, uint32_t *count,
+                              uint32_t max_count, uint32_t page)
+{
+    if (!indices || !count) return false;
+
+    for (uint32_t i = 0; i < *count; i++) {
+        if (indices[i] == page) return true;
+    }
+    if (*count >= max_count) return false;
+
+    indices[*count] = page;
+    (*count)++;
+    return true;
+}
+
 /* ================================================================
    快照创建
    ================================================================ */
@@ -215,6 +230,28 @@ int hs_snapshot_create(HotStandbySystem *hs)
     uint32_t page_indices[HS_MAX_PAGES];
     uint32_t dirty_count = hs_dirty_get_pages(&hs->dirty_tracker, page_indices,
                                                HS_MAX_PAGES);
+
+    /* Global variables are always synchronized. This preserves RS state,
+       counters, accumulators, filters and state machines even when no dirty
+       page callback has been registered by the VM store path. */
+    for (uint32_t i = 0; i < vm->module->segment_count; i++) {
+        const MemSegment *seg = &vm->module->segments[i];
+        if (seg->segment_type != SEG_TYPE_GLOBAL || seg->size == 0) continue;
+
+        uint32_t first_page = seg->start_offset / HS_PAGE_SIZE;
+        uint32_t end_addr = seg->start_offset + seg->size - 1;
+        uint32_t last_page = end_addr / HS_PAGE_SIZE;
+        if (last_page >= hs->dirty_tracker.page_count) {
+            last_page = hs->dirty_tracker.page_count - 1;
+        }
+        for (uint32_t page = first_page; page <= last_page; page++) {
+            if (!snapshot_add_page(page_indices, &dirty_count,
+                                   HS_MAX_PAGES, page)) {
+                return -1;
+            }
+        }
+    }
+
     hdr.dirty_page_count = dirty_count;
     memcpy(hdr.dirty_page_indices, page_indices,
            dirty_count * sizeof(uint32_t));
@@ -263,7 +300,7 @@ int hs_snapshot_create(HotStandbySystem *hs)
     /* 8. 计算并写入 CRC32 */
     hdr.crc32 = 0;
     memcpy(buf, &hdr, sizeof(SnapshotHeader));
-    uint32_t crc = crc32_compute(buf, offset);
+    uint32_t crc = hs_crc32_compute(buf, offset);
     /* 将 CRC 写回包头 */
     SnapshotHeader *hdr_in_buf = (SnapshotHeader *)buf;
     hdr_in_buf->crc32 = crc;

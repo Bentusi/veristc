@@ -77,6 +77,4 @@ veristc/
 ### 测试
 
 - `tests/st-examples/`：ST 示例程序
-- `tests/sasm-examples/`：预编译的 SafeASM 二进制
-- `tests/vm-tests/`：C VM 单元测试（Unity/CMock 框架）
-- `tests/veristc-tests/`：编译器集成测试
+- `tests/vm-tests/`：C VM 单元测试与端到端测试（Unity/CMock 框架）

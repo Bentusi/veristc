@@ -1050,14 +1050,37 @@ Definition build_global_mem_segment (funcs : list corest_function) : memory_segm
   let total := estimate_total_memory funcs in
   {| seg_type := SEG_GLOBAL; seg_start := 0; seg_size := total |}.
 
+Definition wcet_info_of_function
+           (idx : Z) (f : corest_function) : wcet_func_info :=
+  let cycles :=
+    List.fold_right
+      (fun stmt acc => instr_count_stmt stmt + acc) 0 f.(cfunc_body) in
+  {| wcet_func_idx := idx;
+     wcet_cycles := cycles;
+     wcet_ns := cycles * 10;
+  |}.
+
+Fixpoint build_wcet_funcs
+         (idx : Z) (funcs : list corest_function) : list wcet_func_info :=
+  match funcs with
+  | nil => nil
+  | f :: rest =>
+      wcet_info_of_function idx f ::
+      build_wcet_funcs (idx + 1) rest
+  end.
+
+Definition build_wcet_data (funcs : list corest_function) : wcet_data :=
+  {| wcet_funcs := build_wcet_funcs 0 funcs |}.
+
 Definition compile_program (p : corest_program) : sasm_module :=
+  let core_funcs := p.(cprog_functions) in
   let funcs := List.map (fun f =>
     let env := build_compile_env f in
     let ty := build_compile_type_env f in
-    compile_function env ty f) p.(cprog_functions) in
-  let types := List.map build_sasm_func_type p.(cprog_functions) in
-  let total_mem := estimate_total_memory p.(cprog_functions) in
-  let global_seg := build_global_mem_segment p.(cprog_functions) in
+    compile_function env ty f) core_funcs in
+  let types := List.map build_sasm_func_type core_funcs in
+  let total_mem := estimate_total_memory core_funcs in
+  let global_seg := build_global_mem_segment core_funcs in
   let io_offsets := assign_io_offsets p.(cprog_io_mapping) 1024 in
   let io_map := List.map (fun p' => io_entry_to_sasm (fst p') (snd p')) io_offsets in
   {| sasm_magic := "SASM";
@@ -1068,13 +1091,13 @@ Definition compile_program (p : corest_program) : sasm_module :=
      sasm_memory_segments := [global_seg];
      sasm_total_memory_size := total_mem;
      sasm_io_map := io_map;
-     sasm_safety := {| safe_level := 0;
+     sasm_safety := {| safe_level := 1;
                        safe_cycle_limit := 1000000;
                        safe_stack_depth := analyze_stack_depth p;
                        safe_loop_bounds := [];
                        safe_mem_access_map := [{| mar_low := 0; mar_high := total_mem |}];
                     |};
-     sasm_wcet := None;
+     sasm_wcet := Some (build_wcet_data core_funcs);
      sasm_entry_function := 0;
   |}.
 

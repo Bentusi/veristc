@@ -13,6 +13,7 @@ module I = Inline
 module D = Desugar
 module T = Typechecker
 module C = Codegen
+module G = Global_codegen
 module A = Analysis
 module E = Encoder
 
@@ -81,6 +82,38 @@ let analysis_has_recursion (result : Analysis.analysis_result) : bool =
 
 let max_call_depth = 256
 
+let crc32_table =
+  Array.init 256 (fun n ->
+      let crc = ref n in
+      for _ = 0 to 7 do
+        crc :=
+          if (!crc land 1) <> 0 then
+            0xEDB88320 lxor (!crc lsr 1)
+          else
+            !crc lsr 1
+      done;
+      !crc)
+
+let crc32_range (data : string) (offset : int) (length : int) : int32 =
+  let crc = ref 0xFFFFFFFF in
+  for i = offset to offset + length - 1 do
+    let index = (!crc lxor Char.code (Stdlib.String.get data i)) land 0xFF in
+    crc := (!crc lsr 8) lxor crc32_table.(index)
+  done;
+  Int32.of_int ((!crc lxor 0xFFFFFFFF) land 0xFFFFFFFF)
+
+let attach_crc32 (data : string) : string =
+  let len = Stdlib.String.length data in
+  if len < 10 then failwith "encoded module is too short for CRC32";
+  let bytes = Bytes.of_string data in
+  let crc = crc32_range data 6 (len - 10) in
+  let value = Int32.to_int crc in
+  Bytes.set bytes (len - 4) (Char.chr (value land 0xFF));
+  Bytes.set bytes (len - 3) (Char.chr ((value lsr 8) land 0xFF));
+  Bytes.set bytes (len - 2) (Char.chr ((value lsr 16) land 0xFF));
+  Bytes.set bytes (len - 1) (Char.chr ((value lsr 24) land 0xFF));
+  Bytes.to_string bytes
+
 let compile_st_to_sasm (source_path : string) : string =
   let source = coq_string_of_native (read_file source_path) in
   let tokens = match L.lex source with
@@ -111,8 +144,8 @@ let compile_st_to_sasm (source_path : string) : string =
     failwith
       (Printf.sprintf "static stack depth %d exceeds limit %d"
          stack_depth max_call_depth);
-  let sasm_module = C.compile_program corest in
-  z_bytes_to_string (E.encode_module sasm_module)
+  let sasm_module = G.compile_program_g corest in
+  attach_crc32 (z_bytes_to_string (E.encode_module sasm_module))
 
 let write_file (path : string) (data : string) : unit =
   let ch = open_out path in
