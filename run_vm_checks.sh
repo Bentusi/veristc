@@ -4,9 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-if [[ "${VERISTC_SKIP_BUILD:-0}" != "1" ]]; then
-    make build-vm-test build-smoke svm
-fi
+make build-vm-test build-smoke
 
 echo "[1/4] minimal VM tests"
 tests/vm-tests/test_vm

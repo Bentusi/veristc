@@ -50,9 +50,9 @@ RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
 .PHONY: all build-tests build-vm-test build-smoke build-nuclear-e2e
-.PHONY: coq vm-lib vm-io vm-hs svm rtthread clean
+.PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean
 
-all: coq vm-lib vm-hs vm-io svm
+all: coq veristc vm-lib vm-hs vm-io svm
 
 build-tests: build-vm-test build-smoke build-nuclear-e2e
 
@@ -218,18 +218,24 @@ $(VERISTC_DIR)/extraction/extraction.vo: $(SPEC_VO) $(SRC_VO)
 
 ROQC_EXTRACT = rocq extract
 
-# 提取 OCaml 代码
-extract: coq
+# 提取 OCaml 代码（使用 stamp 文件避免重复提取）
+EXTRACT_STAMP = $(VERISTC_DIR)/$(EXTRACTION_DIR)/.extract_stamp
+
+$(EXTRACT_STAMP): $(EXTR_VO)
 	@echo "  [EXTRACT] Extracting OCaml code..."
 	@cd $(VERISTC_DIR) && $(ROQC) -Q spec veristc_spec -Q src veristc_src $(EXTRACTION_FILE) 2>&1
 	@cp $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat_support_impl.ocaml $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat.ml
 	@cp $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat_support_iface.ocaml $(VERISTC_DIR)/$(EXTRACTION_DIR)/PrimFloat.mli
+	@touch $@
 	@echo "  [EXTRACT] Extraction complete"
+
+# 用户可手动调用的提取入口
+extract: $(EXTRACT_STAMP)
 
 # 编译提取后的 OCaml 可执行程序
 VERISTC_BIN = veristc/extraction/veristc
 
-$(VERISTC_BIN): extract
+$(VERISTC_BIN): $(EXTRACT_STAMP)
 	@echo "  [OCAML] Compiling veristc executable..."
 	@cd $(VERISTC_DIR)/$(EXTRACTION_DIR) && \
 		ocamlfind ocamlopt -package str -linkpkg -c $$(ocamldep -sort *.mli 2>/dev/null) && \
@@ -248,7 +254,7 @@ veristc: $(VERISTC_BIN)
 clean:
 	rm -f $(VM_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN)
 	rm -f $(SVM_BIN) $(SMOKE_SASM) $(NUCLEAR_FULL_SASM)
-	rm -f veristc/extraction/veristc
+	rm -f veristc/extraction/veristc veristc/extraction/.extract_stamp
 	rm -f output.sasm output.txt .lia.cache .test_fix.aux
 	rm -rf tests/veristc-tests/out
 	rm -f $(VM_CORE_LIB) $(VM_CORE_OBJS)
