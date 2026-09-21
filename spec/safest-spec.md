@@ -868,6 +868,7 @@ SFC 相关全部关键字
 <stmt> ::= <identifier> ':=' <expr> ';'                      (* 赋值 *)
          | <identifier> '[' <expr> ']' ':=' <expr> ';'       (* 数组赋值 *)
          | <identifier> '(' <fb_param_list> ')' ';'           (* FB 调用 *)
+         | PRINT '(' [<print_arg> {',' <print_arg>}] ')' ';'  (* 打印 *)
          | IF <expr> THEN <stmt_list>                         (* IF 语句 *)
            {ELSIF <expr> THEN <stmt_list>}
            [ELSE <stmt_list>]
@@ -887,6 +888,9 @@ SFC 相关全部关键字
 <stmt_list> ::= <stmt>*
 
 <fb_param_list> ::= <identifier> ':=' <expr> {',' <identifier> ':=' <expr>}
+<print_arg> ::= <expr> | <string_literal>
+<string_literal> ::= "'" {<ascii_char> | "''" | '\' <escape_char>} "'"
+<escape_char> ::= 'n' | 't' | 'r' | '\' | "'" | '0'
 <case_element> ::= <case_value> {',' <case_value>} ':' <stmt_list>
 <case_value> ::= <literal> | <literal> '..' <literal>
 ```
@@ -1454,12 +1458,16 @@ SafeST 提供以下内置函数（在 Coq 中预先定义语义）：
 | `SEL` | `BOOL, T, T → T` | 选择器 (SEL(g,a,b) = g?a:b) |
 | `MUX` | `INT, T... → T` | 多路选择 |
 | `CycleCounter()` | `() → DINT` | 每个扫描周期递增并打印系统全局周期计数 |
-| `PRINT(v, ...)` | `32-bit scalar... → void` | 打印一个或多个布尔、整数或质量值 |
+| `PRINT(v, ..., 'text')` | `32-bit scalar / 字符串字面量... → void` | 打印值或字面量文本 |
 
 `CycleCounter()` 无需在 ST 中声明。编译器自动分配保留全局槽
 `__veristc_cycle_counter`，周期开始时加一并打印，所有 PROGRAM 均可直接调用。
 `PRINT` 是语句型内置函数，无需声明，支持 `PRINT(x);` 和
-`PRINT(x1, x2);`。
+`PRINT(x1, x2);`。字符串字面量只能直接出现在 `PRINT` 参数位置，例如
+`PRINT('tick=', tick);`；它不是 `STRING` 类型，不能声明、赋值或参与运算。
+字面量使用单引号，支持反斜杠转义 `\n`、`\t`、`\r`、`\\`、`\'`、`\0`，
+也支持 IEC 风格的双单引号 `''` 表示一个单引号字符。编译器在语法层把
+字面量展开为逐字符参数，再生成对保留字符打印端口的写入。
 
 ### 9.1 质量操作内置函数（v1.1 新增）
 
@@ -1511,12 +1519,14 @@ SafeST 不设置 `LIBRARY`/`IMPORT` 类运行时链接机制。外部算法按�
 
 | 编号 | 契约条款 | 责任方 |
 |------|---------|--------|
-| PRE-1 | 函数/FB 调用在调用点完全展开（macro 式），展开产物中不残留任何函数调用 | 预处理器 |
+| PRE-1 | 展开产物只允许单表达式 FUNCTION 实体及其调用（inline.v 展开域内）；多语句 FB 体必须由预处理器重写为"每可写字段一条单表达式更新规则"，不得把控制流体复制到调用点 | 预处理器 |
 | PRE-2 | 展开必须是确定性的：同一库版本 + 同一源码 → 逐字节相同的展开产物 | 预处理器 |
 | PRE-3 | 递归与循环依赖检测在展开期完成；展开深度与产物体积受预处理器上限约束 | 预处理器 |
 | PRE-4 | 库命名空间由预处理器负责 mangling（推荐 `<库名>_<实体>` 前缀），避免与用户代码及保留名（`CycleCounter`、`PRINT`、`Q_*`、`__veristc_*`）冲突 | 预处理器 |
 | PRE-5 | 展开产物附带 manifest（库名、版本、SHA256），随 `.sasm` 归档，保证审计链完整 | 预处理器/工程流程 |
 | PRE-6 | 源文件必须为 ASCII 编码；注释 `(* *)` 支持嵌套，注释内允许任意字节 | 预处理器 |
+| PRE-7 | 跨扫描周期状态变量必须声明为 VAR_GLOBAL（强制语言要求）：状态传递模式下所有实体状态变量在全局段声明，禁止依赖 PROGRAM 局部变量跨周期保持 | 预处理器 |
+| PRE-8 | 未展开的授权源文件（含 @fb/@use 指令与 FB 调用语句）禁止直接提交编译器：当前管线会把无法识别的 FB 调用静默降级为 NOP。预处理器是唯一合法入口，工程流程须保证 `.sasm` 只来自展开产物 | 工程流程 |
 
 **带状态 FB 的多实体模式（状态作为参数）**
 
@@ -1533,15 +1543,34 @@ q2 := RS(q2, s2, r2);   (* 实体 2：同一份代码，另一组变量 *)
 | 编号 | 约束 | 说明 |
 |------|------|------|
 | ME-1 | FUNCTION 体限单表达式 | 由编译器 inline.v 在调用点展开；多语句函数体须由上游预处理器先行展开（同 PRE-1） |
-| ME-2 | 状态变量必须声明为 VAR_GLOBAL | VM 每个扫描周期将 PROGRAM 帧局部变量清零，局部变量无法跨周期保持状态；全局变量位于持久 MEM 段。注意：这与 IEC 61131-3 的 PROGRAM 局部变量静态保持语义不一致，属当前 VM 的已知偏差，待决策是否修复 |
+| ME-2 | 状态变量必须声明为 VAR_GLOBAL（强制） | SafeST 规定：凡跨扫描周期保持的状态一律声明为 VAR_GLOBAL，由预处理器保证（PRE-7），**编译器不为该规则添加检查**。依据：VM 每周期将 PROGRAM 帧局部变量清零，局部变量无法跨周期保持（全局变量位于持久 MEM 段）。这有意偏离 IEC 61131-3 的局部变量静态保持语义，以换取简化的 VM 状态模型与热备快照边界；偏离性在 SafeST 子集定义中显式声明，不构成隐患 |
 | ME-3 | VAR_GLOBAL 块须位于 POU 列表之前 | 语法约定，支持多个连续块 |
 | ME-4 | 多输出 = 每调用一个返回值 | 第二输出在调用点派生（如 `Q1 := NOT q`）或由共享输入的姊妹函数提供；不依赖、也不需要 FUNCTION 双返回值 |
 
 参考示例：`tests/st-examples/rs_multi_entity.st`。
 
-备选模式（按实例上下文展开）：FB 实例 = 模板代码 + 一组以实例名为前缀的
-全局上下文变量，多个输出直接写回上下文全局。适用于多输出、多语句的复杂 FB，
-代价是调用点代码复制。参考：`tests/st-examples/fb_context_multi_instance.st`。
+**FB 形式多实体模式（共享函数实体 + 全局状态 + 赋值调用）**
+
+带状态 FB 经预处理器展开为三个部分，核心原则是**算法实现全程序一份**：
+
+1. **共享函数实体**：模板每个 STATE/OUTPUT 字段生成一个单表达式
+   FUNCTION（如 `RS_V1_Q := S OR (Q AND NOT R)`），在展开产物中只出现一次；
+2. **实例上下文全局**：每实例的 STATE/OUTPUT 字段展开为 `VAR_GLOBAL`
+   块（`rs1_Q`、`rs1_Q1` 等），字段序 = 模板声明序（即更新求值序）；
+3. **调用点赋值调用**：`rs1(S := e1, R := e2);` 展开为输入绑定临时量
+   （PROGRAM 局部，周期内有效）加逐字段赋值调用
+   `rs1_Q := RS_V1_Q(rs1__in_S, rs1__in_R, rs1_Q);`——控制流不复制。
+
+禁止形态：把 FB 多语句体逐调用点复制展开（调用点代码冗余随实例数线性
+放大，`.sasm` 体积不可控）。单表达式 FUNCTION 仍会被 inline.v 按调用点
+内联，每处只复制一条表达式的指令序列（数十指令级以下）；若要字节码级
+完全共享（一份体 + N 条 CALL），需要编译器侧 CALL 接通改造，属独立增量。
+
+参考示例：授权源 `tests/st-examples/rs_multi_entity_fb.st` +
+模板 `tests/st-examples/lib-templates/rs_v1.tpl.st` →
+展开产物 `tests/st-examples/rs_multi_entity_fb.expanded.st`；
+参考实现：`tools/stpreproc.py`（演示级，含 T-1~T-4 加载期检查）。
+多 VAR_GLOBAL 块语法（每实例一个上下文块）在展开产物中示范。
 
 **编译器守门规则（不信任上游，独立强制）**
 
@@ -1562,7 +1591,7 @@ q2 := RS(q2, s2, r2);   (* 实体 2：同一份代码，另一组变量 *)
 | 数据类型 | 全部 + 用户自定义 | BOOL/BYTE/WORD/DWORD/SINT/INT/DINT/**LINT**/REAL/**LREAL**/TIME/**QUALITY**/ARRAY/**Q*** |
 | 数组 | 静态+动态 | 仅静态（编译期固定边界） |
 | 指针/引用 | REF, REF_TO, POINTER | ❌ 禁止 |
-| 字符串 | STRING, WSTRING | ❌ 禁止 |
+| 字符串 | STRING, WSTRING 类型及字符串运算 | ❌ 禁止（`PRINT` 参数位允许只读字面量） |
 | **信号质量** | **无（IEC 61131-3 无内置质量位）** | **✅ Q* 类型体系 + 影子内存质量传播 (v1.1)** |
 | 类/方法 | CLASS, METHOD, PROPERTY | ❌ 禁止 |
 | SFC | STEP, TRANSITION, ACTION | ❌ 禁止 |
@@ -1918,7 +1947,7 @@ END_FUNCTION
 | `STRING`、`WSTRING` 类型声明 | 字符串涉及动态内存（变长），违反 P2 | 安全级逻辑无需字符串；人机交互字符串由上层的 HMI 系统管理 |
 | `CONCAT`、`LEFT`、`MID` 等字符串函数 | 同上 | 不需要 |
 | `STRING_TO_*` 类型转换 | 同上 | 不需要 |
-| 字符串字面量赋值给变量 | 同上 | 编译期报错 |
+| 字符串字面量赋值给变量 | 同上 | 编译期报错；仅 `PRINT` 参数位允许只读字面量 |
 
 ### B.3 动态内存与运行时构造
 

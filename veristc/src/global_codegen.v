@@ -22,6 +22,7 @@ Import ListNotations.
 
 Definition GLOBAL_BASE : Z := 4096.
 Definition SASM_PRINT_PORT : Z := 2147483640.  (* 0x7FFFFFF8 *)
+Definition SASM_CHAR_PRINT_PORT : Z := 2147483636.  (* 0x7FFFFFF4 *)
 Definition SASM_COUNTER_PRINT_PORT : Z := 2147483644.  (* 0x7FFFFFFC *)
 Definition SYSTEM_COUNTER_NAME : ident := ID "__veristc_cycle_counter".
 
@@ -218,7 +219,12 @@ Fixpoint compile_stmt_g
       | ID "PRINT" =>
           List.concat
             (List.map (fun p =>
-               I32_CONST SASM_PRINT_PORT ::
+               let port :=
+                 match fst p with
+                 | ID "__print_char" => SASM_CHAR_PRINT_PORT
+                 | _ => SASM_PRINT_PORT
+                 end in
+               I32_CONST port ::
                compile_expr_g locals globals (snd p) ++
                [I32_STORE {| mem_align := 2; mem_offset := 0 |}])
              params)

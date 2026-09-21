@@ -13,8 +13,10 @@ echo "[2/4] SVM one-cycle, PRINT and CycleCounter"
 ./vm/svm -n 1 -p 0 tests/veristc-tests/out/core_assign.sasm 42 \
     > /tmp/veristc-svm-once.out
 grep -Fq '[cycle_counter] 1' /tmp/veristc-svm-once.out
-grep -Fq '[print] 1' /tmp/veristc-svm-once.out
-grep -Fq '[print] 42' /tmp/veristc-svm-once.out
+grep -Fq 'counter=' /tmp/veristc-svm-once.out
+grep -Fq ' x=' /tmp/veristc-svm-once.out
+grep -Fq '1, ' /tmp/veristc-svm-once.out
+grep -Fq '42, ' /tmp/veristc-svm-once.out
 
 echo "[3/4] SVM dump, SIL3 and CRC"
 ./vm/svm -d tests/veristc-tests/out/core_assign.sasm \

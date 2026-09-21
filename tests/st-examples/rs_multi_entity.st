@@ -58,5 +58,5 @@ END_VAR
   q1 := RS(q1, s1, r1);
   q2 := RS(q2, s2, r2);
 
-  PRINT(tick, q1, q2);
+  PRINT('tick', tick, q1, q2);
 END_PROGRAM

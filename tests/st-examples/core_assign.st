@@ -5,5 +5,5 @@ VAR
 END_VAR
 counter := CycleCounter();
 x := 42 + 0;
-PRINT(counter, x);
+PRINT('counter=', counter, ' x=', x, '\n');
 END_PROGRAM

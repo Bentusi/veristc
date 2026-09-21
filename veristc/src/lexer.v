@@ -47,6 +47,56 @@ Definition is_whitespace (c : ascii) : bool :=
   let n := Z.of_N (Ascii.N_of_ascii c) in
   (Z.eqb n 32) || (Z.eqb n 9) || (Z.eqb n 10) || (Z.eqb n 13).  (* space, tab, LF, CR *)
 
+(* 字符串字面量中的反斜杠转义。SafeST 不接受 STRING 类型，该语法只
+   用于 PRINT 的字面量参数。 *)
+Definition escape_code (c : ascii) : option Z :=
+  let n := Z.of_N (Ascii.N_of_ascii c) in
+  if Z.eqb n 110 then Some 10       (* \n *)
+  else if Z.eqb n 116 then Some 9   (* \t *)
+  else if Z.eqb n 114 then Some 13  (* \r *)
+  else if Z.eqb n 92 then Some 92   (* \\ *)
+  else if Z.eqb n 39 then Some 39   (* \' *)
+  else if Z.eqb n 48 then Some 0    (* \0 *)
+  else None.
+
+(* 读取单引号字符串的字符体。调用时开引号已消费；返回解码后的字节码
+   序列和闭引号之后的剩余输入。支持 '' 与 \' 两种单引号写法。 *)
+Fixpoint read_string_chars (s : string) : option (list Z * string) :=
+  match s with
+  | EmptyString => None
+  | String c rest =>
+      let n := Z.of_N (Ascii.N_of_ascii c) in
+      if Z.eqb n 39 then
+        match rest with
+        | EmptyString => Some (nil, EmptyString)
+        | String c' rest' =>
+            if Ascii.eqb c' "'" then
+              match read_string_chars rest' with
+              | Some (chars, tail) => Some (39 :: chars, tail)
+              | None => None
+              end
+            else Some (nil, rest)
+        end
+      else if Z.eqb n 92 then
+        match rest with
+        | EmptyString => None
+        | String escaped rest' =>
+            match escape_code escaped with
+            | Some code =>
+                match read_string_chars rest' with
+                | Some (chars, tail) => Some (code :: chars, tail)
+                | None => None
+                end
+            | None => None
+            end
+        end
+      else
+        match read_string_chars rest with
+        | Some (chars, tail) => Some (n :: chars, tail)
+        | None => None
+        end
+  end.
+
 (* ================================================================
    第 2 部分：关键字表 (Keyword Table)
    ================================================================ *)
@@ -301,6 +351,11 @@ Fixpoint next_token (s : string) : option (token * string) :=
         else if Z.eqb n 62 then                        (* '>' *)
           if next_is 61 then Some (TK_GE, rest')       (* '>=' *)
           else Some (TK_GT, rest)
+        else if Z.eqb n 39 then                        (* "'" 字符串字面量 *)
+          match read_string_chars rest with
+          | Some (chars, rest') => Some (TK_STR_LIT chars, rest')
+          | None => None
+          end
         else None  (* 未知字符 *)
   end.
 
@@ -386,6 +441,7 @@ Definition token_to_string (t : token) : string :=
   | TK_REAL_LIT _ => "REAL "
   | TK_TIME_LIT _ => "TIME "
   | TK_BOOL_LIT b => if b then "TRUE " else "FALSE "
+  | TK_STR_LIT _ => "STRING "
   | TK_IDENT s => s ++ " "
   | TK_PLUS => "+ " | TK_MINUS => "- " | TK_STAR => "* " | TK_SLASH => "/ "
   | TK_EQ => "= " | TK_NE => "<> " | TK_LT => "< " | TK_LE => "<= "

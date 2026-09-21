@@ -505,7 +505,13 @@ int vm_execute_cycle(VM *vm) {
             uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
 
             if (mem_addr == SASM_PRINT_PORT) {
-                printf("[print] %d\n", val);
+                printf("%d, ", val);
+                fflush(stdout);
+                break;
+            }
+
+            if (mem_addr == SASM_CHAR_PRINT_PORT) {
+                printf("%c", (int)val);
                 fflush(stdout);
                 break;
             }

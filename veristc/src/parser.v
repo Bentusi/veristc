@@ -37,6 +37,9 @@ Arguments Parse_ok {A} _.
 Arguments Parse_error {A} _.
 Arguments Parse_fail {A}.
 
+Definition make_print_char_params (chars : list Z) : list (ident * st_expr) :=
+  List.map (fun code => (ID "__print_char", E_LIT (L_INT code))) chars.
+
 (* ================================================================
    第 2 部分：基本解析组合子 (Basic Parser Combinators)
    ================================================================ *)
@@ -105,6 +108,7 @@ Definition token_eq (t1 t2 : token) : bool :=
   | TK_REAL_LIT _, TK_REAL_LIT _ => true
   | TK_TIME_LIT _, TK_TIME_LIT _ => true
   | TK_BOOL_LIT _, TK_BOOL_LIT _ => true
+  | TK_STR_LIT _, TK_STR_LIT _ => true
   | TK_IDENT _, TK_IDENT _ => true
   | TK_PLUS, TK_PLUS => true
   | TK_MINUS, TK_MINUS => true
@@ -509,6 +513,48 @@ with parse_argument_list (fuel : nat) (st : parser_state) {struct fuel}
           | Parse_error msg => Parse_error msg
           end
       end
+  end
+
+(* PRINT 的参数表允许在普通表达式之间直接出现字符串字面量。
+   字符串只在此处展开为逐字符打印参数，不进入 st_expr/类型系统。 *)
+with parse_print_argument_list (fuel : nat) (st : parser_state) {struct fuel}
+     : parse_result (list (ident * st_expr)) :=
+  match fuel with
+  | O => Parse_error "Out of fuel"
+  | S fuel' =>
+      match peek st with
+      | Some TK_RPAREN => Parse_ok (nil, st)
+      | Some (TK_STR_LIT chars) =>
+          let st1 := snd (consume st) in
+          let params := make_print_char_params chars in
+          match peek st1 with
+          | Some TK_COMMA =>
+              let st2 := snd (consume st1) in
+              match parse_print_argument_list fuel' st2 with
+              | Parse_ok (rest, st3) => Parse_ok (params ++ rest, st3)
+              | Parse_fail => Parse_fail
+              | Parse_error msg => Parse_error msg
+              end
+          | _ => Parse_ok (params, st1)
+          end
+      | _ =>
+          match parse_expression fuel' st with
+          | Parse_ok (arg, st1) =>
+              let param := (ID "__print_arg", arg) in
+              match peek st1 with
+              | Some TK_COMMA =>
+                  let st2 := snd (consume st1) in
+                  match parse_print_argument_list fuel' st2 with
+                  | Parse_ok (rest, st3) => Parse_ok (param :: rest, st3)
+                  | Parse_fail => Parse_fail
+                  | Parse_error msg => Parse_error msg
+                  end
+              | _ => Parse_ok (param :: nil, st1)
+              end
+          | Parse_fail => Parse_fail
+          | Parse_error msg => Parse_error msg
+          end
+      end
   end.
 
 (* ----------------------------------------------------------------
@@ -819,12 +865,10 @@ with parse_assignment_or_fb_call (fuel : nat) (st : parser_state) {struct fuel}
           | Some TK_LPAREN =>
               let st2 := snd (consume st1) in
               if String.eqb name "PRINT" then
-                match parse_argument_list fuel' st2 with
-                | Parse_ok (args, st3) =>
+                match parse_print_argument_list fuel' st2 with
+                | Parse_ok (params, st3) =>
                     let st4 := snd (expect_token st3 TK_RPAREN) in
                     let st5 := snd (expect_token st4 TK_SEMI) in
-                    let params :=
-                      List.map (fun e => (ID "__print_arg", e)) args in
                     Parse_ok ((S_FB_CALL (ID name) params), st5)
                 | Parse_fail => Parse_fail
                 | Parse_error msg => Parse_error msg

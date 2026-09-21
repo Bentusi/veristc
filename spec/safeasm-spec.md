@@ -263,7 +263,8 @@ memory_arg (4 字节):
 
 保留打印端口：
 
-- `0x7FFFFFF8`：`PRINT()` 写入 32 位值，VM 输出 `[print] value`。
+- `0x7FFFFFF8`：`PRINT()` 写入 32 位值，VM 输出 `value, `。
+- `0x7FFFFFF4`：`PRINT()` 写入单个字符（低 8 位），VM 原样输出该字节。
 - `0x7FFFFFFC`：`CycleCounter()` 输出 `[cycle_counter] value`。
 
 #### 安全扩展指令

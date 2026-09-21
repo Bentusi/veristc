@@ -47,6 +47,9 @@ Inductive token : Type :=
   | TK_REAL_LIT : float -> token         (* 浮点常量 *)
   | TK_TIME_LIT : Z -> token             (* TIME 常量，纳秒 *)
   | TK_BOOL_LIT : bool -> token          (* 布尔常量 *)
+  | TK_STR_LIT : list Z -> token         (* 字符串字面量：词法层解码转义后的字符码序列。
+                                            仅允许出现在 PRINT 参数位，由语法层展开为
+                                            逐字符参数，不进入 st_expr/类型系统 *)
   (* 标识符 *)
   | TK_IDENT : string -> token           (* 变量名/函数名/FB名 *)
   (* 运算符 *)
