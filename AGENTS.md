@@ -13,6 +13,8 @@ veristc/
 ├── run_tests.sh                  ← 全量测试入口
 ├── run_vm_checks.sh              ← VM/SVM 单元+周期+CRC 检查
 ├── run_nuclear_e2e.sh            ← 核电 ST→SASM→VM 端到端验证
+├── run_feature_probes.sh         ← SafeST 特性面探针矩阵（PASS/XFAIL 覆盖表）
+├── run_channel_e2e.sh            ← 单组 RPS 4 通道保护黄金时间线 e2e
 ├── plan/                         ← Phase 描述文件（见下方导航）
 │   ├── phase0-spec-skeleton.prompt.md
 │   ├── phase1-compiler-proofs.prompt.md
@@ -66,6 +68,8 @@ veristc/
 └── tests/                        ← 测试套件
     ├── st-examples/                ST 示例程序
     │   ├── core_assign.st            最小 smoke 测试
+    │   ├── nuclear_rps_channel.st    状态密集中型用例（4 通道+表决+顺序器）
+    │   ├── feature-probes/           12 个单特性探针 + golden/ + README 覆盖矩阵
     │   └── nuclear_rps_esfas_full.st 核电 RPS/ESFAS 模型（>10000 行）
     └── vm-tests/                   C VM 测试
         ├── test_vm.c                 VM 单元测试（Unity/CMock）

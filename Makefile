@@ -37,6 +37,8 @@ NUCLEAR_FULL_ST = tests/st-examples/nuclear_rps_esfas_full.st
 NUCLEAR_FULL_SASM = tests/veristc-tests/out/nuclear_rps_esfas_full.sasm
 NUCLEAR_FULL_TEST_SRC = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e.c
 NUCLEAR_FULL_TEST_BIN = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e
+CHANNEL_ST = tests/st-examples/nuclear_rps_channel.st
+CHANNEL_SASM = tests/veristc-tests/out/nuclear_rps_channel.sasm
 HS_SNAPSHOT_SRC = vm/hotstandby/snapshot.c
 
 # 统一 SVM: 默认周期运行，-d 输出 dump
@@ -49,7 +51,7 @@ RTTHREAD_SRCS = $(RTTHREAD_DIR)/vm_rtthread.c
 RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
-.PHONY: all build-tests build-vm-test build-smoke build-nuclear-e2e
+.PHONY: all build-tests build-vm-test build-smoke build-nuclear-e2e build-channel-e2e
 .PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean
 
 all: coq veristc vm-lib vm-hs vm-io svm
@@ -124,6 +126,14 @@ $(NUCLEAR_FULL_SASM): veristc/extraction/veristc $(NUCLEAR_FULL_ST)
 	@mkdir -p $(dir $@)
 	./veristc/extraction/veristc -a $(NUCLEAR_FULL_ST)
 	./veristc/extraction/veristc -c $(NUCLEAR_FULL_ST) -o $@
+
+# 单组 RPS 4 通道保护 + ESFAS 顺序器（状态密集中型用例，golden 由
+# run_channel_e2e.sh 比对；SASM 构建在此收敛）
+build-channel-e2e: $(CHANNEL_SASM)
+
+$(CHANNEL_SASM): veristc/extraction/veristc $(CHANNEL_ST)
+	@mkdir -p $(dir $@)
+	./veristc/extraction/veristc -c $(CHANNEL_ST) -o $@
 
 $(NUCLEAR_FULL_TEST_BIN): $(NUCLEAR_FULL_TEST_SRC) $(NUCLEAR_FULL_SASM) \
 		$(HS_SNAPSHOT_SRC) \

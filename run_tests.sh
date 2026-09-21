@@ -9,6 +9,8 @@ make all build-tests
 
 # 分别执行测试套件（子脚本内的 make 会因目标已最新而跳过）
 "$ROOT/run_vm_checks.sh"
+"$ROOT/run_feature_probes.sh"
+"$ROOT/run_channel_e2e.sh"
 "$ROOT/run_nuclear_e2e.sh"
 
 echo "All tests passed"

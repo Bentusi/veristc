@@ -1,0 +1,8 @@
+p06 x=25,  latched=0, 
+p06 x=50,  latched=0, 
+p06 x=75,  latched=0, 
+p06 x=100,  latched=0, 
+p06 x=125,  latched=1, 
+p06 x=150,  latched=1, 
+p06 x=175,  latched=0, 
+p06 x=200,  latched=1, 

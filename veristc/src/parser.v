@@ -571,6 +571,10 @@ Fixpoint parse_statement_list (fuel : nat) (st : parser_state) {struct fuel}
       | Some TK_END_FUNCTION_BLOCK | Some TK_END_IF
       | Some TK_END_FOR | Some TK_END_WHILE | Some TK_END_REPEAT
       | Some TK_END_CASE | Some TK_ELSE | Some TK_ELSIF
+      (* CASE 下一分支的值头不是语句；在此收束分支语句表。
+         任何语句都不以整数字面量开头，故对其它上下文无副作用：
+         多余残留 token 仍会被顶层 EOF 安全网拒绝。 *)
+      | Some (TK_INT_LIT _)
       | Some TK_UNTIL | Some TK_EOF =>
           Parse_ok (nil, st)
       | _ =>
