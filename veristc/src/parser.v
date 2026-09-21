@@ -151,9 +151,17 @@ Definition token_eq (t1 t2 : token) : bool :=
   | _, _ => false
   end.
 
+(* 期望消费指定 token。不匹配时进入"毒化"状态：剩余 token 流以
+   TK_ASSIGN 开头（它不能作为任何语句/POU 的起始），使后续解析
+   必然失败，最终由 parse 的 EOF 安全网拒绝整个程序。
+   这消除了旧实现（无条件 consume）在缺失分号等场景下
+   静默错位并截断语句的危险行为。 *)
 Definition expect_token (st : parser_state) (expected_tok : token)
                         : (token * parser_state) :=
-  consume st.
+  let (tok, st1) := consume st in
+  if token_eq tok expected_tok
+  then (tok, st1)
+  else (tok, Build_parser_state (TK_ASSIGN :: TK_EOF :: nil) (ps_pos st1)).
 
 (* ================================================================
    第 3 部分：解析器主函数
@@ -426,6 +434,14 @@ with parse_primary_expression (fuel : nat) (st : parser_state) {struct fuel}
       | Some (TK_BOOL_LIT b) =>
           let st1 := snd (consume st) in
           Parse_ok ((E_LIT (L_BOOL b)), st1)
+      (* 词法分析器将 TRUE/FALSE 产出为独立关键字 token，
+         此处必须同时接受，否则布尔字面量无法解析 *)
+      | Some TK_TRUE =>
+          let st1 := snd (consume st) in
+          Parse_ok ((E_LIT (L_BOOL true)), st1)
+      | Some TK_FALSE =>
+          let st1 := snd (consume st) in
+          Parse_ok ((E_LIT (L_BOOL false)), st1)
       | Some (TK_TIME_LIT t) =>
           let st1 := snd (consume st) in
           Parse_ok ((E_LIT (L_TIME t)), st1)
@@ -519,7 +535,9 @@ Fixpoint parse_statement_list (fuel : nat) (st : parser_state) {struct fuel}
               | Parse_fail => Parse_fail
               | Parse_error msg => Parse_error msg
               end
-          | Parse_fail => Parse_ok (nil, st)
+          (* 语句解析失败不再静默终止列表（旧行为会丢弃后续所有语句
+             并产出"看似成功"的程序），改为向上传播错误 *)
+          | Parse_fail => Parse_error "unexpected token in statement list"
           | Parse_error msg => Parse_error msg
           end
       end
@@ -925,7 +943,9 @@ with parse_global_var_decls (fuel : nat) (st : parser_state) {struct fuel}
           let st1 := snd (consume st) in
           let (vars, st2) := parse_multiple_var_decls fuel' D_GLOBAL st1 in
           let st3 := snd (expect_token st2 TK_END_VAR) in
-          (vars, st3)
+          (* 支持连续多个 VAR_GLOBAL 块（库预处理合并场景），声明按出现顺序拼接 *)
+          let (more_vars, st4) := parse_global_var_decls fuel' st3 in
+          (vars ++ more_vars, st4)
       | _ => (nil, st)
       end
   end
@@ -1089,6 +1109,8 @@ with parse_optional_init (fuel : nat) (st : parser_state) {struct fuel}
           | TK_INT_LIT n => (Some (L_INT n), st2)
           | TK_REAL_LIT f => (Some (L_REAL f), st2)
           | TK_BOOL_LIT b => (Some (L_BOOL b), st2)
+          | TK_TRUE => (Some (L_BOOL true), st2)
+          | TK_FALSE => (Some (L_BOOL false), st2)
           | TK_TIME_LIT t => (Some (L_TIME t), st2)
           | _ => (None, st1)
           end
@@ -1223,9 +1245,21 @@ with parse_iomap_entries (fuel : nat) (st : parser_state) {struct fuel}
 
 Definition parse (tokens : list token) : option st_program :=
   let init_state := Build_parser_state tokens 0 in
-  let fuel := List.length tokens in
+  (* fuel 必须按解析深度放大：一条简单语句从 parse_program 到
+     parse_primary_expression 需穿越约 15 层递归，每层消耗 1 点 fuel，
+     而 token 数可以远小于该深度（如单语句程序）。取 32 倍裕量，
+     嵌套括号/IF 每层再消耗约 4-12 点，均在覆盖范围内。 *)
+  let fuel := (List.length tokens * 32)%nat in
   match parse_program fuel init_state with
-  | Parse_ok (prog, _) => Some prog
+  | Parse_ok (prog, st) =>
+      (* 安全网：解析必须消费到 TK_EOF 为止。若存在剩余 token，
+         说明中途发生静默截断（如缺少分号导致 expect_token 错位），
+         拒绝编译而不是产出丢失语句的 .sasm。 *)
+      match peek st with
+      | Some TK_EOF => Some prog
+      | None => Some prog
+      | _ => None
+      end
   | _ => None
   end.
 

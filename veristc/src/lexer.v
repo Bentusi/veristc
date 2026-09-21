@@ -189,13 +189,68 @@ Fixpoint skip_whitespace (s : string) : string :=
       else s
   end.
 
+(* 跳过注释体：调用时已消费开头的 "(*"，depth 为当前嵌套深度。
+   支持 IEC 61131-3 嵌套注释 (* ... (* ... *) ... *)。
+   注释内容按字节消费，因此注释中允许出现任意非 ASCII 字符。
+   未闭合的注释吞掉剩余输入（得到 TK_EOF），由解析器报错。 *)
+Fixpoint skip_comment (depth : nat) (s : string) {struct s} : string :=
+  match s with
+  | EmptyString => EmptyString
+  | String c rest =>
+      if Ascii.eqb c "(" then
+        match rest with
+        | String c' rest' =>
+            if Ascii.eqb c' "*" then skip_comment (S depth) rest'
+            else skip_comment depth rest
+        | EmptyString => EmptyString
+        end
+      else if Ascii.eqb c "*" then
+        match rest with
+        | String c' rest' =>
+            if Ascii.eqb c' ")" then
+              match depth with
+              | O => rest'
+              | S depth' => skip_comment depth' rest'
+              end
+            else skip_comment depth rest
+        | EmptyString => EmptyString
+        end
+      else skip_comment depth rest
+  end.
+
+(* 判断字符串是否以 "(*" 开头 *)
+Definition comment_start (s : string) : bool :=
+  match s with
+  | String c (String c' _) => Ascii.eqb c "(" && Ascii.eqb c' "*"
+  | _ => false
+  end.
+
+(* 跳过空白与注释（trivia）。fuel 驱动：每轮至少消费 "(*" 两个字符，
+   因此 fuel = 源串长度足以终止。 *)
+Fixpoint skip_trivia_fuel (fuel : nat) (s : string) {struct fuel} : string :=
+  match fuel with
+  | O => s
+  | S fuel' =>
+      let s1 := skip_whitespace s in
+      if comment_start s1
+      then match s1 with
+           | String _ (String _ rest2) =>
+               skip_trivia_fuel fuel' (skip_comment O rest2)
+           | _ => s1
+           end
+      else s1
+  end.
+
+Definition skip_trivia (s : string) : string :=
+  skip_trivia_fuel (String.length s) s.
+
 (* ================================================================
    第 4 部分：词法分析器主函数 (Lexer Main Function)
    ================================================================ *)
 
 (* 从字符串开头读取一个 token，返回 (token, 剩余字符串) *)
 Fixpoint next_token (s : string) : option (token * string) :=
-  let s' := skip_whitespace s in
+  let s' := skip_trivia s in
   match s' with
   | EmptyString => Some (TK_EOF, EmptyString)
   | String c rest =>
@@ -233,7 +288,9 @@ Fixpoint next_token (s : string) : option (token * string) :=
         else if Z.eqb n 93 then Some (TK_RBRACK, rest) (* ']' *)
         else if Z.eqb n 59 then Some (TK_SEMI, rest)   (* ';' *)
         else if Z.eqb n 44 then Some (TK_COMMA, rest)  (* ',' *)
-        else if Z.eqb n 46 then Some (TK_DOT, rest)    (* '.' *)
+        else if Z.eqb n 46 then                        (* '.' *)
+          if next_is 46 then Some (TK_RANGE, rest')    (* '..' *)
+          else Some (TK_DOT, rest)
         else if Z.eqb n 58 then                        (* ':' *)
           if next_is 61 then Some (TK_ASSIGN, rest')   (* ':=' *)
           else Some (TK_COLON, rest)

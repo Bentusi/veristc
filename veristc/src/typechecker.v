@@ -176,6 +176,28 @@ Definition no_duplicate_declarations (p : st_program) : Prop :=
   (has_duplicates global_names = false) /\
   (has_duplicates pou_names_list = false).
 
+(* 可判定版本：全局变量名与 POU 名均无重复。
+   命名冲突在安全级工具链中是编译错误（而非告警）：
+   上游库预处理展开后的扁平命名空间中，重复声明意味着
+   两个逻辑变量将静默共享同一内存，必须拒绝编译。 *)
+Definition check_no_duplicate_declarations (p : st_program) : bool :=
+  let global_names := var_decl_names p.(global_vars) in
+  let pou_names_list := List.map pou_name p.(pou_list) in
+  negb (has_duplicates global_names) && negb (has_duplicates pou_names_list).
+
+Lemma check_no_duplicate_declarations_sound :
+  forall p : st_program,
+    check_no_duplicate_declarations p = true ->
+    no_duplicate_declarations p.
+Proof.
+  intros p H.
+  unfold check_no_duplicate_declarations in H.
+  destruct (has_duplicates (var_decl_names (global_vars p))) eqn:Hg;
+    destruct (has_duplicates (List.map pou_name (pou_list p))) eqn:Hp;
+    simpl in H; try discriminate H.
+  unfold no_duplicate_declarations. split; assumption.
+Qed.
+
 (* 循环计数计算: loop_count start end_ step = Some n
    n = max(0, (end - start) / step + 1)  当 step != 0 且方向正确 *)
 Definition loop_count (start end_ step : st_expr) : option Z :=

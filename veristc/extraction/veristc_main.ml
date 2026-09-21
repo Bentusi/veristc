@@ -124,6 +124,10 @@ let compile_st_to_sasm (source_path : string) : string =
     | Some p -> p
     | None -> failwith "parser failed"
   in
+  (* 命名冲突 = 编译错误：上游库展开后的扁平命名空间中，
+     重复的全局变量/POU 声明会导致两个逻辑变量静默共享内存 *)
+  if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
+    failwith "duplicate global variable or POU name (naming conflict)";
   let ast = match I.inline_program parsed with
     | Some p -> p
     | None -> failwith "function inlining failed"
@@ -172,6 +176,8 @@ let analyze_st (source_path : string) : unit =
     | Some p -> p
     | None -> failwith "parser failed"
   in
+  if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
+    failwith "duplicate global variable or POU name (naming conflict)";
   let ast = match I.inline_program parsed with
     | Some p -> p
     | None -> failwith "function inlining failed"
