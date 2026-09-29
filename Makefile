@@ -33,6 +33,10 @@ VM_TEST_SRCS = $(VM_TEST_DIR)/test_vm.c
 VM_TEST_BIN  = $(VM_TEST_DIR)/test_vm
 SMOKE_ST = tests/st-examples/core_assign.st
 SMOKE_SASM = tests/veristc-tests/out/core_assign.sasm
+FUNCTION_ST = tests/st-examples/function_control_flow.st
+FUNCTION_SASM = tests/veristc-tests/out/function_control_flow.sasm
+FUNCTION_NEGATIVE_STS = tests/st-examples/function_impure.st \
+                        tests/st-examples/function_recursive.st
 NUCLEAR_FULL_ST = tests/st-examples/nuclear_rps_esfas_full.st
 NUCLEAR_FULL_SASM = tests/veristc-tests/out/nuclear_rps_esfas_full.sasm
 NUCLEAR_FULL_TEST_SRC = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e.c
@@ -56,7 +60,7 @@ RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
 all: coq veristc vm-lib vm-hs vm-io svm
 
-build-tests: build-vm-test build-smoke build-nuclear-e2e
+build-tests: build-vm-test build-smoke build-function-tests build-nuclear-e2e
 
 # ================================================================
 # VM 核心库编译
@@ -100,7 +104,7 @@ vm/hotstandby/%.o: vm/hotstandby/%.c vm/hotstandby/hotstandby.h vm/vm.h
 
 build-vm-test: $(VM_TEST_BIN)
 
-$(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_LIB) $(VM_IO_LIB) -lm
+$(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h $(VM_CORE_LIB) $(VM_IO_LIB) -lm
 	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
 
 # 统一 VM 可执行程序: 默认周期运行; -d 为 dump 模式
@@ -118,6 +122,12 @@ $(SMOKE_SASM): veristc/extraction/veristc $(SMOKE_ST)
 	./veristc/extraction/veristc -c $(SMOKE_ST) -o $@
 
 build-smoke: $(SMOKE_SASM)
+
+$(FUNCTION_SASM): veristc/extraction/veristc $(FUNCTION_ST)
+	@mkdir -p $(dir $@)
+	./veristc/extraction/veristc -c $(FUNCTION_ST) -o $@
+
+build-function-tests: $(FUNCTION_SASM)
 
 # 复杂核电模型构建: ST -> VeriSTC -> SASM -> VM 测试程序
 build-nuclear-e2e: $(NUCLEAR_FULL_SASM) $(NUCLEAR_FULL_TEST_BIN)
@@ -173,7 +183,7 @@ ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/asm_semantics.v
 
 # Src files (depend on spec files)
-SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/inline.v src/desugar.v src/analysis.v src/typechecker.v src/codegen.v src/global_codegen.v
+SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/inline.v src/desugar.v src/analysis.v src/typechecker.v src/function_check.v src/codegen.v src/global_codegen.v
 
 # Extraction files
 EXTRACTION_DIR = extraction
@@ -217,6 +227,7 @@ $(VERISTC_DIR)/src/inline.vo:       $(VERISTC_DIR)/spec/safest.vo
 $(VERISTC_DIR)/src/desugar.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
 $(VERISTC_DIR)/src/analysis.vo:      $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/src/desugar.vo
 $(VERISTC_DIR)/src/typechecker.vo:   $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
+$(VERISTC_DIR)/src/function_check.vo: $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo $(VERISTC_DIR)/src/typechecker.vo
 $(VERISTC_DIR)/src/codegen.vo:       $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/spec/st_semantics.vo $(VERISTC_DIR)/src/desugar.vo $(VERISTC_DIR)/src/analysis.vo
 $(VERISTC_DIR)/src/global_codegen.vo: $(VERISTC_DIR)/spec/safeasm.vo $(VERISTC_DIR)/src/desugar.vo $(VERISTC_DIR)/src/analysis.vo $(VERISTC_DIR)/src/codegen.vo
 

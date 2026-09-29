@@ -30,6 +30,7 @@ Require Import veristc_src.parser.
 Require Import veristc_src.inline.
 Require Import veristc_src.desugar.
 Require Import veristc_src.typechecker.
+Require Import veristc_src.function_check.
 Require Import veristc_src.codegen.
 Require Import veristc_src.global_codegen.
 Require Import veristc_src.analysis.
@@ -40,11 +41,15 @@ Separate Extraction
   veristc_src.lexer.lex
   veristc_src.parser.parse
   veristc_src.inline.inline_program
+  veristc_src.inline.normalize_program
   veristc_src.desugar.desugar_program
   veristc_src.typechecker.type_check_program
   veristc_src.typechecker.check_no_duplicate_declarations
+  veristc_src.function_check.prepare_program
+  veristc_src.function_check.check_program_full
   veristc_src.codegen.compile_program
   veristc_src.global_codegen.compile_program_g
+  veristc_src.global_codegen.compile_program_gc
   veristc_src.analysis.analyze
   veristc_src.encoder.encode_sasm_instr
   veristc_src.encoder.encode_module

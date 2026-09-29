@@ -125,7 +125,7 @@ step_st   : ST 小步执行一步
 | **WHILE 循环** | `LOOP [cond] BR_IF end [body] BR loop end:` | 先判断再执行 |
 | **REPEAT 循环** | `LOOP [body] [cond] BR_IF loop` | 先执行再判断 |
 | **函数调用** `F(args)` | `[args] CALL func_idx` | 栈传递参数 + 返回值 |
-| **FB 调用** `inst(a:=1)` | `[a] CALL fb_method_idx` | FB 数据在内存中，通过偏移访问 |
+| **FB 实例调用** `inst(a:=1)` | 当前拒绝未展开 FB 实例调用 | 带状态 FB 需由预处理器展开，或等待后续 FB 实例机制 |
 | **RETURN** | `RETURN` | 直接对应 |
 | **EXIT** | `BR exit_depth` | 跳出当前循环 |
 
@@ -405,17 +405,26 @@ ST:  result := Add(5, 3)
          Add := a + b;
      END_FUNCTION
       │
-      ▼  编译期展开为 SafeASM:
+      ▼  v1.4 工程实现：调用点生成 SafeASM CALL
       I32_CONST 5        ; 参数 a 实参
       I32_CONST 3        ; 参数 b 实参
-      I32_ADD            ; Add 表达式体 a + b
+      CALL add_idx       ; 调用 Add 函数体
       LOCAL_SET result_idx  ; 将返回值存入 result
+
+Add 函数体:
+      LOCAL_GET a_idx
+      LOCAL_GET b_idx
+      I32_ADD
+      LOCAL_SET add_result_idx ; Add := a + b
+      LOCAL_GET add_result_idx
+      RETURN
       
       │
       ▼  语义保持:
          ST 语义: result = Add(5, 3) = 5 + 3 = 8
-         ASM 语义: 参数替换 → 表达式体求值 → 栈顶=8
-         纯函数调用在前端展开，后续由核心编译正确性定理覆盖 ✅
+         ASM 语义: 参数压栈 → CALL 建帧 → 函数体求值 → 结果压栈 → RETURN
+         当前为工程实现，已通过 VM 与端到端测试；完整 Coq CALL/RETURN
+         语义保持证明属于 Phase 5 后续任务。
 ```
 
 ### 例 5：逻辑求值 (Short-circuit AND)
@@ -1283,7 +1292,7 @@ A: FOR 循环的语义保持通过 LOOP/BR_IF/BR 的组合实现。LOOP 标记�
 A: 编译正确性定理只保证"如果 VM 正确执行 SafeASM 指令，则结果与 ST 语义一致"。VM 本身的正确性需要通过 C 语言级别的测试和（可选）形式化验证来保证。这就是为什么我们将编译器证明和 VM 分开——编译器证明用 Coq，VM 正确性用测试。
 
 **Q: 函数调用怎么保证语义保持？**
-A: 当前实现先将单表达式、无副作用的 FUNCTION 在调用点做参数替换和递归展开，再进入已验证的核心 SafeST 编译管线。因此不依赖 SafeASM 的 CALL 指令。RS 触发器使用显式 `set/reset/q_previous` 参数，滤波器使用显式 `previous` 参数；需要跨扫描周期保留的状态由调用者持有。
+A: v1.4 工程实现将合法 `FUNCTION` 编译为 SafeASM 函数。调用点生成 `[args] CALL func_idx`；被调函数使用独立帧，参数和非参数局部变量每次调用重新初始化，返回前把隐式函数结果变量压入值栈。`FUNCTION` 仍是无状态纯函数，跨扫描周期状态必须由调用方或 `FUNCTION_BLOCK` 持有。单表达式函数未来可选择性内联，但内联只是优化，不再是语义或合法性前提。当前 CALL/RETURN 路径已由 VM 单元测试、函数控制流测试和核电端到端测试覆盖；完整 Coq 语义保持证明是 Phase 5 的后续任务。
 
 ---
 
@@ -1309,8 +1318,8 @@ A: 当前实现先将单表达式、无副作用的 FUNCTION 在调用点做参�
 | REPEAT 循环 | `codegen.v` | `compile_repeat_preservation` | `invariant induction; omega` |
 | EXIT | `codegen.v` | `compile_exit_preservation` | `unfold br_depth; auto` |
 | RETURN | `codegen.v` | `compile_return_preservation` | `unfold pop_frame; auto` |
-| 纯函数调用 | `inline.v` + `codegen.v` | `inline_program_preserves_io_mapping` + 核心表达式证明 | 参数替换；递归展开 |
-| FB 调用 | `codegen.v` | `compile_fb_preservation` | `eapply fb_memory_layout_correct` |
+| 纯函数调用 | `function_check.v` + `global_codegen.v` | 待补：`CALL`/`RETURN` 语义保持 | 当前为工程实现 + VM/端到端测试；单表达式内联可作为后续优化 |
+| FB 实例调用 | `function_check.v` | 当前拒绝未展开 FB 实例调用 | 带状态 FB 由预处理器展开，或等待后续 FB 实例机制 |
 | 类型转换 | `codegen.v` | `compile_typecast_preservation` | `case analysis on conversion type` |
 | **质量传播（二元运算）** | `codegen.v` | `compile_quality_binop_preservation` | **`destruct q1, q2; auto` (v1.1)** |
 | **质量传播（一元运算）** | `codegen.v` | `compile_quality_unop_preservation` | **`destruct q; auto` (v1.1)** |

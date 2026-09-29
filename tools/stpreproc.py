@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""stpreproc — SafeST 库模板预处理器（参考实现，演示 PRE/T 契约）
+"""stpreproc — SafeST 库模板预处理器（参考实现，演示 PRE/T 约束）
 
 用法:
     python3 tools/stpreproc.py input.st -o output.st
@@ -309,7 +309,7 @@ def process(src_path, out_path):
                       f" lib={t['meta'].get('lib', '?')}"
                       f" version={t['meta'].get('version', '?')}"
                       f" sha256={hashlib.sha256(raw).hexdigest()[:16]}")
-    header += ["   契约: PRE-1/2/5/7, T-1..T-4（实现一份: 共享函数实体）",
+    header += ["   约束: PRE-1/2/5/7, T-1..T-4（实现一份: 共享函数实体）",
                "   ================================================================ *)",
                ""]
 

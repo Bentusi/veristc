@@ -388,3 +388,270 @@ Proof.
     try discriminate.
   inversion H. reflexivity.
 Qed.
+
+(* ================================================================
+   Normalization for full FUNCTION support
+
+   This pass replaces the old mandatory single-expression inliner.
+   It expands only builtins and keeps user FUNCTION definitions so
+   the backend can emit real CALL instructions. Simple functions may
+   later be inlined as an optimization, but inlining is no longer a
+   validity requirement.
+   ================================================================ *)
+
+Fixpoint normalize_expr
+         (fuel : nat) (e : st_expr)
+         {struct fuel} : option st_expr :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match e with
+      | E_LIT lit => Some (E_LIT lit)
+      | E_VAR name => Some (E_VAR name)
+      | E_ARRAY_ACCESS arr idx =>
+          match normalize_expr fuel' arr, normalize_expr fuel' idx with
+          | Some arr', Some idx' => Some (E_ARRAY_ACCESS arr' idx')
+          | _, _ => None
+          end
+      | E_UNARY_OP op arg =>
+          match normalize_expr fuel' arg with
+          | Some arg' => Some (E_UNARY_OP op arg')
+          | None => None
+          end
+      | E_BIN_OP op lhs rhs =>
+          match normalize_expr fuel' lhs, normalize_expr fuel' rhs with
+          | Some lhs', Some rhs' => Some (E_BIN_OP op lhs' rhs')
+          | _, _ => None
+          end
+      | E_COMP op lhs rhs =>
+          match normalize_expr fuel' lhs, normalize_expr fuel' rhs with
+          | Some lhs', Some rhs' => Some (E_COMP op lhs' rhs')
+          | _, _ => None
+          end
+      | E_AND lhs rhs =>
+          match normalize_expr fuel' lhs, normalize_expr fuel' rhs with
+          | Some lhs', Some rhs' => Some (E_AND lhs' rhs')
+          | _, _ => None
+          end
+      | E_OR lhs rhs =>
+          match normalize_expr fuel' lhs, normalize_expr fuel' rhs with
+          | Some lhs', Some rhs' => Some (E_OR lhs' rhs')
+          | _, _ => None
+          end
+      | E_XOR lhs rhs =>
+          match normalize_expr fuel' lhs, normalize_expr fuel' rhs with
+          | Some lhs', Some rhs' => Some (E_XOR lhs' rhs')
+          | _, _ => None
+          end
+      | E_FUNC_CALL name args =>
+          match normalize_exprs fuel' args with
+          | Some args' =>
+              if is_builtin_function name then
+                match args' with
+                | nil => Some (E_VAR cycle_counter_name)
+                | _ => None
+                end
+              else
+                Some (E_FUNC_CALL name args')
+          | None => None
+          end
+      | E_QUALITY_OP op args =>
+          match normalize_exprs fuel' args with
+          | Some args' => Some (E_QUALITY_OP op args')
+          | None => None
+          end
+      end
+  end
+
+with normalize_exprs
+       (fuel : nat) (exprs : list st_expr)
+       {struct fuel} : option (list st_expr) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match exprs with
+      | nil => Some nil
+      | e :: rest =>
+          match normalize_expr fuel' e, normalize_exprs fuel' rest with
+          | Some e', Some rest' => Some (e' :: rest')
+          | _, _ => None
+          end
+      end
+  end.
+
+Fixpoint normalize_stmt
+         (fuel : nat) (stmt : st_stmt)
+         {struct fuel} : option st_stmt :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match stmt with
+      | S_ASSIGN name rhs =>
+          match normalize_expr fuel' rhs with
+          | Some rhs' => Some (S_ASSIGN name rhs')
+          | None => None
+          end
+      | S_ARRAY_ASSIGN name idx rhs =>
+          match normalize_expr fuel' idx, normalize_expr fuel' rhs with
+          | Some idx', Some rhs' => Some (S_ARRAY_ASSIGN name idx' rhs')
+          | _, _ => None
+          end
+      | S_IF cond then_body else_body =>
+          match normalize_expr fuel' cond,
+                normalize_stmts fuel' then_body,
+                normalize_opt_stmts fuel' else_body with
+          | Some cond', Some then', Some else' =>
+              Some (S_IF cond' then' else')
+          | _, _, _ => None
+          end
+      | S_CASE selector branches default =>
+          match normalize_expr fuel' selector,
+                normalize_case_elements fuel' branches,
+                normalize_opt_stmts fuel' default with
+          | Some selector', Some branches', Some default' =>
+              Some (S_CASE selector' branches' default')
+          | _, _, _ => None
+          end
+      | S_FOR name start finish step body =>
+          match normalize_expr fuel' start,
+                normalize_expr fuel' finish,
+                normalize_opt_expr fuel' step,
+                normalize_stmts fuel' body with
+          | Some start', Some finish', Some step', Some body' =>
+              Some (S_FOR name start' finish' step' body')
+          | _, _, _, _ => None
+          end
+      | S_WHILE cond body =>
+          match normalize_expr fuel' cond, normalize_stmts fuel' body with
+          | Some cond', Some body' => Some (S_WHILE cond' body')
+          | _, _ => None
+          end
+      | S_REPEAT body cond =>
+          match normalize_stmts fuel' body, normalize_expr fuel' cond with
+          | Some body', Some cond' => Some (S_REPEAT body' cond')
+          | _, _ => None
+          end
+      | S_FB_CALL inst params =>
+          match normalize_exprs fuel' (List.map snd params) with
+          | Some args' =>
+              Some (S_FB_CALL inst (List.combine (List.map fst params) args'))
+          | None => None
+          end
+      | S_RETURN => Some S_RETURN
+      | S_EXIT => Some S_EXIT
+      end
+  end
+
+with normalize_stmts
+       (fuel : nat) (stmts : list st_stmt)
+       {struct fuel} : option (list st_stmt) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match stmts with
+      | nil => Some nil
+      | stmt :: rest =>
+          match normalize_stmt fuel' stmt, normalize_stmts fuel' rest with
+          | Some stmt', Some rest' => Some (stmt' :: rest')
+          | _, _ => None
+          end
+      end
+  end
+
+with normalize_opt_stmts
+       (fuel : nat) (stmts : option (list st_stmt))
+       {struct fuel} : option (option (list st_stmt)) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match stmts with
+      | None => Some None
+      | Some body =>
+          match normalize_stmts fuel' body with
+          | Some body' => Some (Some body')
+          | None => None
+          end
+      end
+  end
+
+with normalize_opt_expr
+       (fuel : nat) (expr : option st_expr)
+       {struct fuel} : option (option st_expr) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match expr with
+      | None => Some None
+      | Some e =>
+          match normalize_expr fuel' e with
+          | Some e' => Some (Some e')
+          | None => None
+          end
+      end
+  end
+
+with normalize_case_elements
+       (fuel : nat) (branches : list case_element)
+       {struct fuel} : option (list case_element) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match branches with
+      | nil => Some nil
+      | CASE_ELEM values body :: rest =>
+          match normalize_stmts fuel' body,
+                normalize_case_elements fuel' rest with
+          | Some body', Some rest' =>
+              Some (CASE_ELEM values body' :: rest')
+          | _, _ => None
+          end
+      end
+  end.
+
+Definition normalize_pou (fuel : nat) (pou : st_pou) : option st_pou :=
+  match pou with
+  | P_PROGRAM name decls body =>
+      match normalize_stmts fuel body with
+      | Some body' =>
+          let increment :=
+            S_ASSIGN cycle_counter_name
+              (E_BIN_OP B_ADD (E_VAR cycle_counter_name)
+                              (E_LIT (L_INT 1%Z))) in
+          Some (P_PROGRAM name decls (increment :: body'))
+      | None => None
+      end
+  | P_FUNCTION name ty decls body =>
+      match normalize_stmts fuel body with
+      | Some body' => Some (P_FUNCTION name ty decls body')
+      | None => None
+      end
+  | P_FUNCTION_BLOCK name decls body =>
+      match normalize_stmts fuel body with
+      | Some body' => Some (P_FUNCTION_BLOCK name decls body')
+      | None => None
+      end
+  end.
+
+Fixpoint normalize_pous
+         (fuel : nat) (pous : list st_pou)
+         {struct pous} : option (list st_pou) :=
+  match pous with
+  | nil => Some nil
+  | pou :: rest =>
+      match normalize_pou fuel pou, normalize_pous fuel rest with
+      | Some pou', Some rest' => Some (pou' :: rest')
+      | _, _ => None
+      end
+  end.
+
+Definition normalize_program (p : st_program) : option st_program :=
+  match normalize_pous inline_fuel p.(pou_list) with
+  | Some pous =>
+      let counter_decl :=
+        Build_st_var_decl cycle_counter_name T_DINT D_GLOBAL Q_NONE None in
+      Some {| global_vars := p.(global_vars) ++ [counter_decl];
+              pou_list := pous;
+              io_mapping := p.(io_mapping);
+              entry_point := p.(entry_point) |}
+  | None => None
+  end.

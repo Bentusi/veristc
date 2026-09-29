@@ -12,6 +12,7 @@ module P = Parser
 module I = Inline
 module D = Desugar
 module T = Typechecker
+module F = Function_check
 module C = Codegen
 module G = Global_codegen
 module A = Analysis
@@ -128,15 +129,18 @@ let compile_st_to_sasm (source_path : string) : string =
      重复的全局变量/POU 声明会导致两个逻辑变量静默共享内存 *)
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
     failwith "duplicate global variable or POU name (naming conflict)";
-  let ast = match I.inline_program parsed with
+  let prepared = match F.prepare_program parsed with
     | Some p -> p
-    | None -> failwith "function inlining failed"
+    | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
+  in
+  if F.check_program_full prepared <> Datatypes.Coq_true then
+    failwith "type check failed";
+  let ast = match I.normalize_program prepared with
+    | Some p -> p
+    | None -> failwith "function normalization failed"
   in
   if coq_list_len ast.Safest.pou_list = 0 then
     failwith "parser produced empty program";
-  (match T.type_check_program ast with
-   | Some _ -> ()
-   | None -> failwith "type check failed");
   let corest = D.desugar_program ast in
   if coq_list_len corest.Desugar.cprog_functions = 0 then
     failwith "desugar produced empty function list";
@@ -148,7 +152,7 @@ let compile_st_to_sasm (source_path : string) : string =
     failwith
       (Printf.sprintf "static stack depth %d exceeds limit %d"
          stack_depth max_call_depth);
-  let sasm_module = G.compile_program_g corest in
+  let sasm_module = G.compile_program_gc corest in
   attach_crc32 (z_bytes_to_string (E.encode_module sasm_module))
 
 let write_file (path : string) (data : string) : unit =
@@ -178,9 +182,15 @@ let analyze_st (source_path : string) : unit =
   in
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
     failwith "duplicate global variable or POU name (naming conflict)";
-  let ast = match I.inline_program parsed with
+  let prepared = match F.prepare_program parsed with
     | Some p -> p
-    | None -> failwith "function inlining failed"
+    | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
+  in
+  if F.check_program_full prepared <> Datatypes.Coq_true then
+    failwith "type check failed";
+  let ast = match I.normalize_program prepared with
+    | Some p -> p
+    | None -> failwith "function normalization failed"
   in
   if coq_list_len ast.Safest.pou_list = 0 then
     failwith "parser produced empty program";

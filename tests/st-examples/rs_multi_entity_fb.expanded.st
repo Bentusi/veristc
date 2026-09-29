@@ -5,60 +5,44 @@
    契约: PRE-1/2/5/7, T-1..T-4（实现一份: 共享函数实体）
    ================================================================ *)
 
-VAR_GLOBAL  (* instance rs1 of RS_V1 *)
-  rs1_Q : BOOL;
+VAR_GLOBAL
+  fby1 : DINT;
 END_VAR
 
-VAR_GLOBAL  (* instance rs2 of RS_V1 *)
-  rs2_Q : BOOL;
-END_VAR
-
-FUNCTION RS_V1_Q : BOOL
+FUNCTION FBY_RESET : DINT
 VAR_INPUT
-  S : BOOL;
-  R : BOOL;
-  Q : BOOL;
+  fby   : DINT;
+  reset : DINT;
 END_VAR
-  RS_V1_Q := S OR (Q AND NOT R);
+  fby := reset;
+  FBY_RESET := reset;
 END_FUNCTION
+(* @tpl RESET_END *)
 
-(* ================================================================
-   rs_multi_entity_fb.st  --  授权源文件（FB 形式多实体 RS）
-
-   实现只在模板一份：lib-templates/rs_v1.tpl.st
-   MAIN 只调用、不重新实现。编译器实际接收的是预处理展开产物：
-     python3 tools/stpreproc.py \
-       tests/st-examples/rs_multi_entity_fb.st \
-       -o tests/st-examples/rs_multi_entity_fb.expanded.st
-   （展开产物含生成头，标注模板版本与 sha256，见 PRE-5）
-
-   与 FUNCTION 版 (rs_multi_entity.st) 的分工差异：
-     FUNCTION 版: 状态由调用方搬进搬出   q1 := RS(q1, s1, r1);
-     FB 版:      状态封装在实例上下文，MAIN 只见调用   rs1(S := ..., R := ...);
-   ================================================================ *)
-
+(* @tpl FUNCTION *)
+FUNCTION FBY : DINT
+VAR_INPUT
+  pre : DINT;
+  q   : DINT;
+END_VAR
+  FBY := pre;
+  pre := q;
+END_FUNCTION
 
 (* 实例声明：每个实体 = 同一模板的一份上下文 *)
 
 PROGRAM MAIN
 VAR
   tick  : DINT;
-  rs1__in_S : BOOL;
-  rs1__in_R : BOOL;
-  rs2__in_S : BOOL;
-  rs2__in_R : BOOL;
 END_VAR
   tick := CycleCounter();
-
-  (* 多实体调用：同一份模板实现，各绑各的输入 *)
-  rs1__in_S := tick = 2;
-  rs1__in_R := tick = 6;
-  rs1_Q := RS_V1_Q(rs1__in_S, rs1__in_R, rs1_Q);
-  rs2__in_S := tick = 4;
-  rs2__in_R := tick = 8;
-  rs2_Q := RS_V1_Q(rs2__in_S, rs2__in_R, rs2_Q);
+  IF tick = 1 THEN
+    (* 初始化：调用共享函数实体，传入实例上下文 *)
+    FBY_RESET(fby1, 0);
+  END_IF;
+  
+  FBY(fby1, tick);
 
   (* 输出消费：读实例上下文全局（本 demo 只消费状态 Q） *)
-  PRINT('tick=', tick, 'rs1_Q=', rs1_Q, '\n');
-  PRINT('tick=', tick, 'rs2_Q=', rs2_Q, '\n');
+  PRINT('tick=', tick, 'fby1=', fby1, '\n');
 END_PROGRAM

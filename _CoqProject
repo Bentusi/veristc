@@ -15,10 +15,13 @@ veristc/spec/compiler_correctness.v
 veristc/src/encoder.v
 veristc/src/lexer.v
 veristc/src/parser.v
+veristc/src/inline.v
 veristc/src/desugar.v
 veristc/src/analysis.v
 veristc/src/typechecker.v
+veristc/src/function_check.v
 veristc/src/codegen.v
+veristc/src/global_codegen.v
 
 # Extraction 文件
 veristc/extraction/extraction.v

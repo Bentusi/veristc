@@ -116,9 +116,10 @@ Fixpoint compile_expr_g
   | CE_UNARY_OP U_NOT e1 =>
       compile_expr_g locals globals e1 ++ [I32_EQZ]
   | CE_UNARY_OP U_ABS e1 =>
+      let temp := Z.of_nat (List.length locals) in
       compile_expr_g locals globals e1 ++
-      [LOCAL_SET 255; LOCAL_GET 255; I32_CONST 0; I32_LT_S;
-       I32_CONST 0; LOCAL_GET 255; I32_SUB; LOCAL_GET 255; SELECT]
+      [LOCAL_SET temp; LOCAL_GET temp; I32_CONST 0; I32_LT_S;
+       I32_CONST 0; LOCAL_GET temp; I32_SUB; LOCAL_GET temp; SELECT]
   | CE_BIN_OP B_ADD e1 e2 =>
       compile_expr_g locals globals e1 ++
       compile_expr_g locals globals e2 ++ [I32_ADD]
@@ -301,4 +302,294 @@ Definition compile_program_g (p : corest_program) : sasm_module :=
 Lemma compile_program_g_preserves_entry :
   forall (p : corest_program),
     (compile_program_g p).(sasm_entry_function) = 0.
+Proof. reflexivity. Qed.
+
+(* ================================================================
+   Call-aware global code generation
+
+   This is the engineering path for full stateless FUNCTION support.
+   User functions are kept as SafeASM functions and calls become CALL.
+   The old compile_program_g path is preserved for existing proofs and
+   compatibility while the new pipeline is stabilized.
+   ================================================================ *)
+
+Definition func_index_env : Type := list (ident * Z).
+
+Fixpoint lookup_func_index
+         (fenv : func_index_env) (x : ident) : option Z :=
+  match fenv with
+  | nil => None
+  | (y, idx) :: rest =>
+      if ident_eq x y then Some idx else lookup_func_index rest x
+  end.
+
+Fixpoint assign_func_indices
+         (funcs : list corest_function) (base : Z) : func_index_env :=
+  match funcs with
+  | nil => nil
+  | f :: rest =>
+      (f.(cfunc_name), base) :: assign_func_indices rest (base + 1)
+  end.
+
+Definition is_entry_function (entry : ident) (f : corest_function) : bool :=
+  ident_eq f.(cfunc_name) entry.
+
+Definition entry_first_functions (p : corest_program) : list corest_function :=
+  let parts :=
+    List.partition (is_entry_function p.(cprog_entry)) p.(cprog_functions)
+  in
+  fst parts ++ snd parts.
+
+Fixpoint compile_expr_gc
+         (locals : compile_env) (globals : list (ident * Z))
+         (fidx : func_index_env) (result_idx : option Z)
+         (e : corest_expr) {struct e} : list sasm_instr :=
+  match e with
+  | CE_LIT l =>
+      match l with
+      | L_BOOL b => [I32_CONST (if b then 1 else 0)]
+      | L_INT n => [I32_CONST n]
+      | L_REAL f => [F32_CONST f]
+      | L_TIME t => [I64_CONST t]
+      | L_LINT n => [I64_CONST n]
+      | L_LREAL f => [F64_CONST f]
+      end
+  | CE_VAR x =>
+      match lookup_var_idx locals x with
+      | Some idx => [LOCAL_GET idx]
+      | None => global_load globals x
+      end
+  | CE_ARRAY_ACCESS arr idx =>
+      compile_expr_gc locals globals fidx result_idx arr ++
+      compile_expr_gc locals globals fidx result_idx idx ++
+      [I32_ADD; I32_LOAD {| mem_align := 2; mem_offset := 0 |}]
+  | CE_UNARY_OP U_NEG e1 =>
+      [I32_CONST 0] ++ compile_expr_gc locals globals fidx result_idx e1 ++ [I32_SUB]
+  | CE_UNARY_OP U_NOT e1 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++ [I32_EQZ]
+  | CE_UNARY_OP U_ABS e1 =>
+      let temp := Z.of_nat (List.length locals) in
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      [LOCAL_SET temp; LOCAL_GET temp; I32_CONST 0; I32_LT_S;
+       I32_CONST 0; LOCAL_GET temp; I32_SUB; LOCAL_GET temp; SELECT]
+  | CE_BIN_OP B_ADD e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_ADD]
+  | CE_BIN_OP B_SUB e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_SUB]
+  | CE_BIN_OP B_MUL e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_MUL]
+  | CE_BIN_OP B_DIV e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_DIV_S]
+  | CE_BIN_OP B_MOD e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_REM_S]
+  | CE_COMP C_EQ e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_EQ]
+  | CE_COMP C_NE e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_NE]
+  | CE_COMP C_LT e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_LT_S]
+  | CE_COMP C_LE e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_LE_S]
+  | CE_COMP C_GT e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_GT_S]
+  | CE_COMP C_GE e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_GE_S]
+  | CE_AND e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_AND]
+  | CE_OR e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_OR]
+  | CE_XOR e1 e2 =>
+      compile_expr_gc locals globals fidx result_idx e1 ++
+      compile_expr_gc locals globals fidx result_idx e2 ++ [I32_XOR]
+  | CE_FUNC_CALL f args =>
+      match f, args with
+      | ID "CycleCounter", nil => compile_cycle_counter locals globals
+      | _, _ =>
+          match lookup_func_index fidx f with
+          | Some idx =>
+              List.concat
+                (List.map (compile_expr_gc locals globals fidx result_idx) args) ++
+              [CALL idx]
+          | None => [UNREACHABLE]
+          end
+      end
+  | CE_QUALITY_OP _ args =>
+      List.concat
+        (List.map (compile_expr_gc locals globals fidx result_idx) args)
+  end.
+
+Fixpoint compile_stmt_gc
+         (locals : compile_env) (globals : list (ident * Z))
+         (fidx : func_index_env) (result_idx : option Z)
+         (s : corest_stmt) : list sasm_instr :=
+  match s with
+  | CS_ASSIGN x e =>
+      match x with
+      | ID "__veristc_cycle_counter" =>
+          compile_cycle_counter locals globals ++ [DROP]
+      | _ =>
+          let rhs := compile_expr_gc locals globals fidx result_idx e in
+          match lookup_var_idx locals x with
+          | Some idx => rhs ++ [LOCAL_SET idx]
+          | None => global_store globals x rhs
+          end
+      end
+  | CS_ARRAY_ASSIGN x idx e =>
+      compile_expr_gc locals globals fidx result_idx (CE_VAR x) ++
+      compile_expr_gc locals globals fidx result_idx idx ++ [I32_ADD] ++
+      compile_expr_gc locals globals fidx result_idx e ++
+      [I32_STORE {| mem_align := 2; mem_offset := 0 |}]
+  | CS_IF cond then_body else_body =>
+      let compiled_cond :=
+        compile_expr_gc locals globals fidx result_idx cond in
+      let compiled_then :=
+        List.concat
+          (List.map (compile_stmt_gc locals globals fidx result_idx) then_body) in
+      let compiled_else :=
+        List.concat
+          (List.map (compile_stmt_gc locals globals fidx result_idx) else_body) ++
+        [BR 0] in
+      let inner_block_instrs :=
+        compiled_cond ++ [I32_EQZ; BR_IF 0] ++
+        compiled_then ++ [BR 1] in
+      let outer_block_instrs :=
+        [BLOCK (instr_seq_size inner_block_instrs)] ++
+        inner_block_instrs ++ compiled_else in
+      [BLOCK (instr_seq_size outer_block_instrs)] ++ outer_block_instrs
+  | CS_WHILE cond body =>
+      let compiled_cond :=
+        compile_expr_gc locals globals fidx result_idx cond in
+      let compiled_body :=
+        List.concat
+          (List.map (compile_stmt_gc locals globals fidx result_idx) body) in
+      let header_instrs := compiled_cond ++ [I32_EQZ; BR_IF 1] in
+      let loop_body := compiled_body ++ [BR 0] in
+      let loop_size := instr_seq_size (header_instrs ++ loop_body) in
+      let exit_instrs := [LOOP loop_size] ++ header_instrs ++ loop_body in
+      [BLOCK (instr_seq_size exit_instrs)] ++ exit_instrs
+  | CS_FB_CALL inst params =>
+      match inst with
+      | ID "PRINT" =>
+          List.concat
+            (List.map (fun p =>
+               let port :=
+                 match fst p with
+                 | ID "__print_char" => SASM_CHAR_PRINT_PORT
+                 | _ => SASM_PRINT_PORT
+                 end in
+               I32_CONST port ::
+               compile_expr_gc locals globals fidx result_idx (snd p) ++
+               [I32_STORE {| mem_align := 2; mem_offset := 0 |}])
+             params)
+      | _ => [UNREACHABLE]
+      end
+  | CS_RETURN =>
+      match result_idx with
+      | Some idx => [LOCAL_GET idx; RETURN]
+      | None => [RETURN]
+      end
+  | CS_EXIT => [BR 0]
+  | CS_BLOCK stmts =>
+      List.concat
+        (List.map (compile_stmt_gc locals globals fidx result_idx) stmts)
+  end.
+
+Definition compile_function_gc
+           (globals : list (ident * Z))
+           (fidx : func_index_env)
+           (idx : Z)
+           (f : corest_function)
+           : sasm_function :=
+  let env := build_compile_env f in
+  let env_ty := build_compile_type_env f in
+  let result_idx :=
+    match f.(cfunc_return_type) with
+    | Some _ => lookup_var_idx env f.(cfunc_name)
+    | None => None
+    end in
+  let body :=
+    List.concat
+      (List.map (compile_stmt_gc env globals fidx result_idx)
+                f.(cfunc_body)) in
+  let body :=
+    match result_idx with
+    | Some r => body ++ [LOCAL_GET r; RETURN]
+    | None =>
+        match f.(cfunc_return_type) with
+        | Some _ => body ++ [I32_CONST 0; RETURN]
+        | None => body
+        end
+    end in
+  let safeasm_types :=
+    List.map (fun p => st_type_to_sasm (snd p)) env_ty ++ [I32] in
+  {| sasm_func_type_idx := idx;
+     sasm_locals := safeasm_types;
+     sasm_body := body;
+     sasm_stack_depth := instr_seq_size body;
+     sasm_cycle_budget := 1000000;
+  |}.
+
+Fixpoint compile_functions_gc
+         (globals : list (ident * Z))
+         (fidx : func_index_env)
+         (idx : Z)
+         (funcs : list corest_function)
+         : list sasm_function :=
+  match funcs with
+  | nil => nil
+  | f :: rest =>
+      compile_function_gc globals fidx idx f ::
+      compile_functions_gc globals fidx (idx + 1) rest
+  end.
+
+Definition compile_program_gc (p : corest_program) : sasm_module :=
+  let core_funcs := entry_first_functions p in
+  let globals := build_global_env p in
+  let fidx := assign_func_indices core_funcs 0 in
+  let funcs := compile_functions_gc globals fidx 0 core_funcs in
+  let types := List.map build_sasm_func_type core_funcs in
+  let total_mem := estimate_total_memory_g p in
+  let global_seg :=
+    {| seg_type := SEG_GLOBAL;
+       seg_start := GLOBAL_BASE;
+       seg_size := global_memory_size p |} in
+  let io_offsets := assign_io_offsets p.(cprog_io_mapping) 1024 in
+  let io_map :=
+    List.map (fun e => io_entry_to_sasm (fst e) (snd e)) io_offsets in
+  {| sasm_magic := "SASM";
+     sasm_version := 1;
+     sasm_flags := 2;
+     sasm_types := types;
+     sasm_functions := funcs;
+     sasm_memory_segments := [global_seg];
+     sasm_total_memory_size := total_mem;
+     sasm_io_map := io_map;
+     sasm_safety :=
+       {| safe_level := 1;
+          safe_cycle_limit := 1000000;
+          safe_stack_depth := Z.max 1 (analyze_stack_depth p);
+          safe_loop_bounds := [];
+          safe_mem_access_map :=
+            [{| mar_low := 0; mar_high := total_mem |}];
+       |};
+     sasm_wcet := Some (build_wcet_data core_funcs);
+     sasm_entry_function := 0;
+  |}.
+
+Lemma compile_program_gc_preserves_entry :
+  forall (p : corest_program),
+    (compile_program_gc p).(sasm_entry_function) = 0.
 Proof. reflexivity. Qed.

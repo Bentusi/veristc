@@ -217,16 +217,20 @@ static void load_compiled_module(const char *path)
 
     assert(sasm_load(sasm_buffer, (uint32_t)len, &module) == 0);
     assert(sasm_validate(&module));
-    assert(module.func_count == 1);
-    assert(module.code_count == 1);
+    assert(module.func_count >= 1);
+    assert(module.code_count == module.func_count);
+    assert(module.entry_function == 0);
     assert(module.funcs[0].local_count == NFULL_LOCAL_COUNT);
-    assert(module.safety.global_stack_depth == 1);
+    assert(module.safety.global_stack_depth >= 1);
+    assert(module.safety.global_stack_depth <= SASM_MAX_CALL_DEPTH);
     assert(module.safety.safety_level == 1);
-    assert(module.safety.wcet_func_count == 1);
-    assert(module.safety.wcet_funcs[0].func_idx == 0);
-    assert(module.safety.wcet_funcs[0].cycles > 0);
-    assert(module.safety.wcet_funcs[0].ns ==
-           module.safety.wcet_funcs[0].cycles * 10);
+    assert(module.safety.wcet_func_count == module.func_count);
+    for (uint32_t i = 0; i < module.safety.wcet_func_count; i++) {
+        assert(module.safety.wcet_funcs[i].func_idx == i);
+        assert(module.safety.wcet_funcs[i].cycles > 0);
+        assert(module.safety.wcet_funcs[i].ns ==
+               module.safety.wcet_funcs[i].cycles * 10);
+    }
 }
 
 static void reset_entry_frame(void)

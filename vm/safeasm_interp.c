@@ -311,15 +311,31 @@ int vm_execute_cycle(VM *vm) {
         
         case OP_CALL: {
             uint32_t func_idx = read_u32_code(frame, &pc);
+            const SasmModule *m = vm->module;
+            uint32_t param_count;
+
+            if (!m || func_idx >= m->func_count || func_idx >= SASM_MAX_FUNCTIONS) {
+                return VM_ERR_INVALID_OPCODE;
+            }
+            if (m->funcs[func_idx].type_idx >= m->type_count) {
+                return VM_ERR_INVALID_OPCODE;
+            }
+            param_count = m->types[m->funcs[func_idx].type_idx].param_count;
+            if (param_count > m->funcs[func_idx].local_count ||
+                param_count > SASM_MAX_PARAMS ||
+                vm->val_stack_ptr < param_count) {
+                return VM_ERR_STACK_UNDERFLOW;
+            }
+
             /* 保存当前帧的 PC */
             frame->pc = pc;
             /* 创建新帧 */
             if (!push_frame(vm, func_idx)) {
                 return vm->last_error;
             }
-            /* 将值栈中的参数复制到新帧的局部变量 */
+            /* 按函数签名只弹出参数，其余局部变量保持 push_frame 清零值 */
             frame = current_frame(vm);
-            for (int32_t i = (int32_t)frame->local_count - 1; i >= 0; i--) {
+            for (int32_t i = (int32_t)param_count - 1; i >= 0; i--) {
                 frame->locals[i] = pop_value(vm);
             }
             pc = frame->pc;  /* 从新帧开始执行 */
