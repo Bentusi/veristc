@@ -36,6 +36,24 @@ let rec coq_string_of_native (s : string) : String.string =
   in
   go (len - 1) String.EmptyString
 
+let char_of_ascii (a : Ascii.ascii) : char =
+  match a with
+  | Ascii.Ascii (a0, a1, a2, a3, a4, a5, a6, a7) ->
+      let bit (b : Datatypes.bool) : int =
+        match b with
+        | Datatypes.Coq_true -> 1
+        | Datatypes.Coq_false -> 0
+      in
+      Char.chr
+        (bit a0 + 2 * bit a1 + 4 * bit a2 + 8 * bit a3 +
+         16 * bit a4 + 32 * bit a5 + 64 * bit a6 + 128 * bit a7)
+
+let rec native_of_coq_string (s : String.string) : string =
+  match s with
+  | String.EmptyString -> ""
+  | String.String (c, rest) ->
+      Stdlib.String.make 1 (char_of_ascii c) ^ native_of_coq_string rest
+
 let read_file (path : string) : string =
   let ch = open_in path in
   let n = in_channel_length ch in
@@ -133,12 +151,15 @@ let compile_st_to_sasm (source_path : string) : string =
     | Some p -> p
     | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
   in
-  if F.check_program_full prepared <> Datatypes.Coq_true then
-    failwith "type check failed";
-  let ast = match I.normalize_program prepared with
+  begin match F.check_program_full_diag prepared with
+  | None -> ()
+  | Some msg -> failwith (native_of_coq_string msg)
+  end;
+  let normalized = match I.normalize_program prepared with
     | Some p -> p
     | None -> failwith "function normalization failed"
   in
+  let ast = I.optimize_inline_program normalized in
   if coq_list_len ast.Safest.pou_list = 0 then
     failwith "parser produced empty program";
   let corest = D.desugar_program ast in
@@ -186,12 +207,15 @@ let analyze_st (source_path : string) : unit =
     | Some p -> p
     | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
   in
-  if F.check_program_full prepared <> Datatypes.Coq_true then
-    failwith "type check failed";
-  let ast = match I.normalize_program prepared with
+  begin match F.check_program_full_diag prepared with
+  | None -> ()
+  | Some msg -> failwith (native_of_coq_string msg)
+  end;
+  let normalized = match I.normalize_program prepared with
     | Some p -> p
     | None -> failwith "function normalization failed"
   in
+  let ast = I.optimize_inline_program normalized in
   if coq_list_len ast.Safest.pou_list = 0 then
     failwith "parser produced empty program";
   let result = A.analyze (D.desugar_program ast) in
@@ -246,3 +270,4 @@ let () =
       Printf.printf "compiled: %s -> %s\n" source output
   | `Analyze ->
       analyze_st source
+

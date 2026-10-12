@@ -655,3 +655,295 @@ Definition normalize_program (p : st_program) : option st_program :=
               entry_point := p.(entry_point) |}
   | None => None
   end.
+
+(* ================================================================
+   Selective inlining optimization
+
+   Inlining is optional and must preserve semantics. This pass only
+   expands small single-expression functions whose bodies contain no
+   remaining user calls and whose arguments contain no user calls.
+   Complex functions remain real SafeASM CALLs.
+   ================================================================ *)
+
+Definition inline_size_limit : nat := 64.
+
+Fixpoint expr_nodes_le (fuel : nat) (e : st_expr) {struct fuel} : bool :=
+  match fuel with
+  | O => false
+  | S fuel' =>
+      match e with
+      | E_LIT _ | E_VAR _ => true
+      | E_ARRAY_ACCESS a i =>
+          expr_nodes_le fuel' a && expr_nodes_le fuel' i
+      | E_UNARY_OP _ a => expr_nodes_le fuel' a
+      | E_BIN_OP _ a b | E_COMP _ a b
+      | E_AND a b | E_OR a b | E_XOR a b =>
+          expr_nodes_le fuel' a && expr_nodes_le fuel' b
+      | E_FUNC_CALL _ args | E_QUALITY_OP _ args =>
+          exprs_nodes_le fuel' args
+      end
+  end
+
+with exprs_nodes_le (fuel : nat) (es : list st_expr) {struct fuel} : bool :=
+  match fuel with
+  | O => false
+  | S fuel' =>
+      match es with
+      | nil => true
+      | e :: rest => expr_nodes_le fuel' e && exprs_nodes_le fuel' rest
+      end
+  end.
+
+Fixpoint expr_has_user_call (e : st_expr) {struct e} : bool :=
+  match e with
+  | E_LIT _ | E_VAR _ => false
+  | E_ARRAY_ACCESS a i => expr_has_user_call a || expr_has_user_call i
+  | E_UNARY_OP _ a => expr_has_user_call a
+  | E_BIN_OP _ a b | E_COMP _ a b
+  | E_AND a b | E_OR a b | E_XOR a b =>
+      expr_has_user_call a || expr_has_user_call b
+  | E_FUNC_CALL name args =>
+      negb (is_builtin_function name) ||
+      List.existsb expr_has_user_call args
+  | E_QUALITY_OP _ args => List.existsb expr_has_user_call args
+  end.
+
+Definition function_inline_decls_ok (name : ident)
+           (decls : list st_var_decl) : bool :=
+  List.forallb
+    (fun d =>
+       match d.(var_dir) with
+       | D_INPUT => true
+       | D_LOCAL => ident_eq d.(var_name) name
+       | _ => false
+       end) decls.
+
+Fixpoint lookup_inlineable_function
+         (name : ident) (defs : list st_pou)
+         : option (list ident * st_expr) :=
+  match defs with
+  | nil => None
+  | P_FUNCTION fn_name _ decls body :: rest =>
+      if ident_eq name fn_name then
+        match simple_function_body fn_name body with
+        | Some rhs =>
+            if function_inline_decls_ok fn_name decls &&
+               negb (expr_has_user_call rhs) &&
+               expr_nodes_le inline_size_limit rhs
+            then Some (function_param_names decls, rhs)
+            else None
+        | None => None
+        end
+      else
+        lookup_inlineable_function name rest
+  | _ :: rest => lookup_inlineable_function name rest
+  end.
+
+Fixpoint inline_leaf_expr (defs : list st_pou) (e : st_expr)
+         {struct e} : st_expr :=
+  match e with
+  | E_LIT lit => E_LIT lit
+  | E_VAR name => E_VAR name
+  | E_ARRAY_ACCESS arr idx =>
+      E_ARRAY_ACCESS (inline_leaf_expr defs arr)
+                     (inline_leaf_expr defs idx)
+  | E_UNARY_OP op arg => E_UNARY_OP op (inline_leaf_expr defs arg)
+  | E_BIN_OP op lhs rhs =>
+      E_BIN_OP op (inline_leaf_expr defs lhs) (inline_leaf_expr defs rhs)
+  | E_COMP op lhs rhs =>
+      E_COMP op (inline_leaf_expr defs lhs) (inline_leaf_expr defs rhs)
+  | E_AND lhs rhs =>
+      E_AND (inline_leaf_expr defs lhs) (inline_leaf_expr defs rhs)
+  | E_OR lhs rhs =>
+      E_OR (inline_leaf_expr defs lhs) (inline_leaf_expr defs rhs)
+  | E_XOR lhs rhs =>
+      E_XOR (inline_leaf_expr defs lhs) (inline_leaf_expr defs rhs)
+  | E_FUNC_CALL name args =>
+      let args' := List.map (inline_leaf_expr defs) args in
+      match lookup_inlineable_function name defs with
+      | Some (params, body) =>
+          if Nat.eqb (List.length params) (List.length args') &&
+             negb (List.existsb expr_has_user_call args')
+          then
+            let expanded := subst_expr params args' body in
+            if expr_nodes_le inline_size_limit expanded then
+              expanded
+            else
+              E_FUNC_CALL name args'
+          else
+            E_FUNC_CALL name args'
+      | None => E_FUNC_CALL name args'
+      end
+  | E_QUALITY_OP op args =>
+      E_QUALITY_OP op (List.map (inline_leaf_expr defs) args)
+  end.
+
+Fixpoint inline_leaf_stmt (defs : list st_pou) (s : st_stmt)
+         {struct s} : st_stmt :=
+  match s with
+  | S_ASSIGN x e => S_ASSIGN x (inline_leaf_expr defs e)
+  | S_ARRAY_ASSIGN x idx e =>
+      S_ARRAY_ASSIGN x (inline_leaf_expr defs idx) (inline_leaf_expr defs e)
+  | S_IF cond then_body else_body =>
+      S_IF (inline_leaf_expr defs cond)
+           (List.map (inline_leaf_stmt defs) then_body)
+           (match else_body with
+            | None => None
+            | Some body => Some (List.map (inline_leaf_stmt defs) body)
+            end)
+  | S_CASE sel branches default =>
+      S_CASE (inline_leaf_expr defs sel)
+             (List.map
+                (fun ce =>
+                   match ce with
+                   | CASE_ELEM values body =>
+                       CASE_ELEM values (List.map (inline_leaf_stmt defs) body)
+                   end) branches)
+             (match default with
+              | None => None
+              | Some body => Some (List.map (inline_leaf_stmt defs) body)
+              end)
+  | S_FOR v start finish step body =>
+      S_FOR v
+            (inline_leaf_expr defs start)
+            (inline_leaf_expr defs finish)
+            (match step with
+             | None => None
+             | Some e => Some (inline_leaf_expr defs e)
+             end)
+            (List.map (inline_leaf_stmt defs) body)
+  | S_WHILE cond body =>
+      S_WHILE (inline_leaf_expr defs cond)
+              (List.map (inline_leaf_stmt defs) body)
+  | S_REPEAT body cond =>
+      S_REPEAT (List.map (inline_leaf_stmt defs) body)
+               (inline_leaf_expr defs cond)
+  | S_FB_CALL inst params =>
+      S_FB_CALL inst
+                (List.map (fun p => (fst p, inline_leaf_expr defs (snd p)))
+                          params)
+  | S_RETURN => S_RETURN
+  | S_EXIT => S_EXIT
+  end.
+
+Definition inline_leaf_pou (defs : list st_pou) (pou : st_pou) : st_pou :=
+  match pou with
+  | P_PROGRAM name decls body =>
+      P_PROGRAM name decls (List.map (inline_leaf_stmt defs) body)
+  | P_FUNCTION name ty decls body =>
+      P_FUNCTION name ty decls (List.map (inline_leaf_stmt defs) body)
+  | P_FUNCTION_BLOCK name decls body =>
+      P_FUNCTION_BLOCK name decls (List.map (inline_leaf_stmt defs) body)
+  end.
+
+Fixpoint inline_leaf_pous_passes
+         (passes : nat) (pous : list st_pou) : list st_pou :=
+  match passes with
+  | O => pous
+  | S passes' =>
+      inline_leaf_pous_passes passes'
+        (List.map (inline_leaf_pou pous) pous)
+  end.
+
+Fixpoint expr_calls_name (name : ident) (e : st_expr) {struct e} : bool :=
+  match e with
+  | E_LIT _ | E_VAR _ => false
+  | E_ARRAY_ACCESS a i => expr_calls_name name a || expr_calls_name name i
+  | E_UNARY_OP _ a => expr_calls_name name a
+  | E_BIN_OP _ a b | E_COMP _ a b
+  | E_AND a b | E_OR a b | E_XOR a b =>
+      expr_calls_name name a || expr_calls_name name b
+  | E_FUNC_CALL f args =>
+      ident_eq f name || List.existsb (expr_calls_name name) args
+  | E_QUALITY_OP _ args => List.existsb (expr_calls_name name) args
+  end.
+
+Fixpoint stmt_calls_name (name : ident) (s : st_stmt) {struct s} : bool :=
+  match s with
+  | S_ASSIGN _ e => expr_calls_name name e
+  | S_ARRAY_ASSIGN _ idx e =>
+      expr_calls_name name idx || expr_calls_name name e
+  | S_IF cond then_body else_body =>
+      expr_calls_name name cond ||
+      List.existsb (stmt_calls_name name) then_body ||
+      match else_body with
+      | None => false
+      | Some body => List.existsb (stmt_calls_name name) body
+      end
+  | S_CASE sel branches default =>
+      expr_calls_name name sel ||
+      List.existsb
+        (fun ce =>
+           match ce with
+           | CASE_ELEM _ body => List.existsb (stmt_calls_name name) body
+           end) branches ||
+      match default with
+      | None => false
+      | Some body => List.existsb (stmt_calls_name name) body
+      end
+  | S_FOR _ start finish step body =>
+      expr_calls_name name start ||
+      expr_calls_name name finish ||
+      (match step with
+       | None => false
+       | Some e => expr_calls_name name e
+       end) ||
+      List.existsb (stmt_calls_name name) body
+  | S_WHILE cond body =>
+      expr_calls_name name cond ||
+      List.existsb (stmt_calls_name name) body
+  | S_REPEAT body cond =>
+      List.existsb (stmt_calls_name name) body ||
+      expr_calls_name name cond
+  | S_FB_CALL _ params =>
+      List.existsb (fun p => expr_calls_name name (snd p)) params
+  | S_RETURN | S_EXIT => false
+  end.
+
+Definition pou_calls_name (name : ident) (pou : st_pou) : bool :=
+  let body :=
+    match pou with
+    | P_PROGRAM _ _ b => b
+    | P_FUNCTION _ _ _ b => b
+    | P_FUNCTION_BLOCK _ _ b => b
+    end in
+  List.existsb (stmt_calls_name name) body.
+
+Definition pou_name_of (pou : st_pou) : ident :=
+  match pou with
+  | P_PROGRAM name _ _ => name
+  | P_FUNCTION name _ _ _ => name
+  | P_FUNCTION_BLOCK name _ _ => name
+  end.
+
+Definition other_pous_call_name
+           (name : ident) (pous : list st_pou) : bool :=
+  List.existsb
+    (fun pou =>
+       negb (ident_eq (pou_name_of pou) name) && pou_calls_name name pou)
+    pous.
+
+Definition remove_dead_functions (pous : list st_pou) : list st_pou :=
+  List.filter
+    (fun pou =>
+       match pou with
+       | P_FUNCTION name _ _ _ => other_pous_call_name name pous
+       | _ => true
+       end) pous.
+
+Fixpoint remove_dead_functions_iter
+         (passes : nat) (pous : list st_pou) : list st_pou :=
+  match passes with
+  | O => pous
+  | S passes' =>
+      remove_dead_functions_iter passes' (remove_dead_functions pous)
+  end.
+
+Definition optimize_inline_program (p : st_program) : st_program :=
+  let inline_passes := S (List.length p.(pou_list)) in
+  let pous1 := inline_leaf_pous_passes inline_passes p.(pou_list) in
+  let pous2 := remove_dead_functions_iter (S (List.length pous1)) pous1 in
+  {| global_vars := p.(global_vars);
+     pou_list := pous2;
+     io_mapping := p.(io_mapping);
+     entry_point := p.(entry_point) |}.

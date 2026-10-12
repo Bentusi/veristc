@@ -1,5 +1,5 @@
-(* Negative test: loops are not yet allowed inside FUNCTION bodies.
-   They require bounded-loop analysis in a call frame and additional proofs. *)
+(* Positive test: constant-bound FOR is allowed inside a stateless FUNCTION.
+   WHILE/REPEAT remain rejected until loop-variant analysis is complete. *)
 
 FUNCTION SumTo : DINT
 VAR_INPUT

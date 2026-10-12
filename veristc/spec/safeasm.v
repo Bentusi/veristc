@@ -1310,6 +1310,42 @@ Definition pop_top_frame_cycle (s : runtime_state) : runtime_state :=
   | nil => s
   end.
 
+(* CALL/RETURN 调用约定：
+   - 调用方按源语言顺序压入参数，值栈表头是最后一个参数；
+   - CALL 只消费函数签名声明的参数个数；
+   - 被调帧的非参数局部变量清零；
+   - 被调函数在 RETURN 前把返回值压入共享值栈；
+   - RETURN 只弹帧，不移除返回值。 *)
+
+Definition lookup_func_type (m : sasm_module) (idx : Z)
+  : option sasm_func_type :=
+  List.nth_error m.(sasm_types) (Z.to_nat idx).
+
+Fixpoint zero_values (n : nat) : list sasm_value :=
+  match n with
+  | O => nil
+  | S n' => V_I32 0 :: zero_values n'
+  end.
+
+Definition call_frame_locals
+           (arg_vals : list sasm_value) (local_count : nat) : list sasm_value :=
+  arg_vals ++ zero_values (local_count - List.length arg_vals).
+
+Definition make_call_frame (idx : Z) (locals : list sasm_value) : sasm_frame :=
+  {| frame_locals := locals;
+     frame_func_idx := idx;
+     frame_pc := 0;
+     frame_block_stack := [] |}.
+
+Definition push_call_frame_cycle
+           (s : runtime_state) (caller : sasm_frame) (next : Z)
+           (callee_frame : sasm_frame) (rest : frame_stack)
+           (remaining_values : value_stack) : runtime_state :=
+  {| rt_values := remaining_values;
+     rt_frames := callee_frame :: set_frame_pc caller next :: rest;
+     rt_memory := s.(rt_memory);
+     rt_cycle_cnt := s.(rt_cycle_cnt) + 1 |}.
+
 (* 基于 frame_pc 的小步语义：先取指，再按指令推进 PC/值栈/局部变量。 *)
 Inductive pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
   | Pc_i32_const : forall (m : sasm_module) (s : runtime_state)
@@ -1538,6 +1574,26 @@ Inductive pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
       List.nth_error f.(frame_block_stack) (Z.to_nat depth) = Some target ->
       pc_step m s
         (set_top_values_cycle s (frame_branch_to f depth target) vs)
+  | Pc_call : forall (m : sasm_module) (s : runtime_state)
+                     (f : sasm_frame) (rest : frame_stack)
+                     (idx next : Z) (callee : sasm_function)
+                     (ft : sasm_func_type)
+                     (arg_vals : list sasm_value) (vs : value_stack)
+                     (param_count local_count : nat),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (CALL idx, next) ->
+      lookup_function m idx = Some callee ->
+      lookup_func_type m idx = Some ft ->
+      param_count = List.length ft.(sasm_param_types) ->
+      List.length arg_vals = param_count ->
+      s.(rt_values) = List.rev arg_vals ++ vs ->
+      local_count = List.length callee.(sasm_locals) ->
+      (param_count <= local_count)%nat ->
+      pc_step m s
+        (push_call_frame_cycle s f next
+           (make_call_frame idx
+              (call_frame_locals arg_vals local_count))
+           rest vs)
 .
 
 Lemma fetch_frame_instr_head :

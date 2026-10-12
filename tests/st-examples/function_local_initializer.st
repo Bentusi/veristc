@@ -1,5 +1,5 @@
-(* Negative test: FUNCTION local initializers are not yet implemented.
-   The compiler rejects them instead of silently zero-initializing. *)
+(* Positive test: FUNCTION local initializers are lowered to entry assignments.
+   Each call re-initializes r before executing the body. *)
 
 FUNCTION Next : DINT
 VAR_INPUT

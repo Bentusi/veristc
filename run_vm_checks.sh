@@ -31,7 +31,7 @@ if ./veristc/extraction/veristc -c tests/st-examples/function_impure.st \
     echo "compiler accepted an impure FUNCTION" >&2
     exit 1
 fi
-grep -Fq 'type check failed' /tmp/veristc-function-impure.out
+grep -Fq 'purity violation' /tmp/veristc-function-impure.out
 
 if ./veristc/extraction/veristc -c tests/st-examples/function_recursive.st \
     -o /tmp/veristc-function-recursive.sasm \
@@ -41,21 +41,27 @@ if ./veristc/extraction/veristc -c tests/st-examples/function_recursive.st \
 fi
 grep -Fq 'recursive calls are not supported' /tmp/veristc-function-recursive.out
 
-if ./veristc/extraction/veristc -c tests/st-examples/function_loop.st \
+./veristc/extraction/veristc -c tests/st-examples/function_loop.st \
     -o /tmp/veristc-function-loop.sasm \
-    > /tmp/veristc-function-loop.out 2>&1; then
-    echo "compiler accepted a loop inside FUNCTION" >&2
-    exit 1
-fi
-grep -Fq 'type check failed' /tmp/veristc-function-loop.out
+    > /tmp/veristc-function-loop.out
+./vm/svm -n 1 -p 0 /tmp/veristc-function-loop.sasm \
+    > /tmp/veristc-function-loop-run.out
+grep -Fq 'y=11,' /tmp/veristc-function-loop-run.out
 
-if ./veristc/extraction/veristc -c tests/st-examples/function_local_initializer.st \
+./veristc/extraction/veristc -c tests/st-examples/function_local_initializer.st \
     -o /tmp/veristc-function-local-initializer.sasm \
-    > /tmp/veristc-function-local-initializer.out 2>&1; then
-    echo "compiler accepted an unimplemented FUNCTION local initializer" >&2
+    > /tmp/veristc-function-local-initializer.out
+./vm/svm -n 1 -p 0 /tmp/veristc-function-local-initializer.sasm \
+    > /tmp/veristc-function-local-initializer-run.out
+grep -Fq 'y=11,' /tmp/veristc-function-local-initializer-run.out
+
+if ./veristc/extraction/veristc -c tests/st-examples/function_while.st \
+    -o /tmp/veristc-function-while.sasm \
+    > /tmp/veristc-function-while.out 2>&1; then
+    echo "compiler accepted WHILE inside FUNCTION" >&2
     exit 1
 fi
-grep -Fq 'type check failed' /tmp/veristc-function-local-initializer.out
+grep -Fq 'unsupported control flow' /tmp/veristc-function-while.out
 
 echo "[4/4] SVM dump, SIL3, CRC, period and corrupt CRC rejection"
 ./vm/svm -d tests/veristc-tests/out/core_assign.sasm \

@@ -42,11 +42,13 @@ Separate Extraction
   veristc_src.parser.parse
   veristc_src.inline.inline_program
   veristc_src.inline.normalize_program
+  veristc_src.inline.optimize_inline_program
   veristc_src.desugar.desugar_program
   veristc_src.typechecker.type_check_program
   veristc_src.typechecker.check_no_duplicate_declarations
   veristc_src.function_check.prepare_program
   veristc_src.function_check.check_program_full
+  veristc_src.function_check.check_program_full_diag
   veristc_src.codegen.compile_program
   veristc_src.global_codegen.compile_program_g
   veristc_src.global_codegen.compile_program_gc

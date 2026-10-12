@@ -166,18 +166,19 @@ Definition check_all_loops_bounded (p : corest_program) : bool :=
 (* 计算程序所有函数中的最大无递归调用链深度。
    为保证入口不可达分支也被保守覆盖，这里对所有函数取最大值。
    非递归程序的简单路径最多包含函数总数个节点，因而是精确上界。 *)
-Fixpoint graph_max_call_chain (fuel : nat) (graph : call_graph) : nat :=
+Fixpoint graph_max_call_chain
+         (fuel : nat) (full_graph : call_graph) (graph : call_graph) : nat :=
  match graph with
  | nil => 0%nat
  | (f, _) :: rest =>
-   Nat.max (max_call_chain fuel graph f)
-           (graph_max_call_chain fuel rest)
+   Nat.max (max_call_chain fuel full_graph f)
+           (graph_max_call_chain fuel full_graph rest)
  end.
 
 Definition analyze_stack_depth (p : corest_program) : Z :=
  let graph := build_call_graph p in
  let fuel := Datatypes.S (List.length graph) in
- Z.of_nat (graph_max_call_chain fuel graph).
+ Z.of_nat (graph_max_call_chain fuel graph graph).
 
 (* ================================================================
   第 4 部分：WCET 估算 (WCET Estimation)
