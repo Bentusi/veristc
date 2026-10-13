@@ -119,3 +119,4 @@ __pycache__/
 /tests/*.out
 docs/veristc-paper.html
 .vorg.db
+vm/svm-asan

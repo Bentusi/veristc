@@ -1,2 +1,13 @@
-; VeriSTC extraction -- by Makefile, not dune
+; VeriSTC extraction
+; Build OCaml executable from extracted code
 
+(executable
+ (name veristc)
+ (public_name veristc)
+ (modules 
+   veristc_main
+   PrimFloat
+   safeasm safest st_semantics function_semantics asm_semantics
+   encoder lexer parser inline desugar analysis typechecker function_check codegen global_codegen)
+ (libraries str)
+ (flags (:standard -w -26-27)))

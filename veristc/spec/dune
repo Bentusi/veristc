@@ -1,3 +1,5 @@
 (rocq.theory
  (name veristc_spec)
- (synopsis "VeriSTC spec libraries"))
+ (synopsis "VeriSTC specification libraries")
+ (boot)
+ (flags (:standard -w -all)))

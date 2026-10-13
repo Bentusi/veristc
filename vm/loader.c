@@ -107,6 +107,8 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
     
     /* 3. 临时保存数据起始位置用于 CRC 校验 */
     const uint8_t *crc_start = p;
+    /* 安全检查：确保剩余长度足够容纳 CRC32 (4 字节) */
+    if (remaining < 4) return -1;
     uint32_t crc_len = remaining - 4;  /* 减去最后的 CRC32 */
     
     /* 4. 解析各个 Section */

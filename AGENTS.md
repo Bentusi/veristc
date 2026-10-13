@@ -148,6 +148,8 @@ veristc/
   - 禁止递归调用
   - 所有数组访问带边界检查
 - **构建工具**：dune（Coq/OCaml）+ Makefile（C）
+  - dune 配置文件：`veristc/dune-project`、`veristc/spec/dune`、`veristc/src/dune`、`veristc/extraction/dune`
+  - MISRA-C 检查：`make misra-check`（使用 cppcheck）
 
 ### `.sasm` 格式
 
@@ -169,6 +171,27 @@ veristc/
 
 ## 常用构建命令
 
+### 使用 dune 构建（推荐）
+
+```bash
+# 进入 veristc 目录
+cd veristc
+
+# 构建所有 Coq 库
+dune build
+
+# 提取 OCaml 代码
+dune build @extraction
+
+# 构建 veristc 可执行程序
+dune build extraction/veristc.exe
+
+# 清理构建
+dune clean
+```
+
+### 使用 Make 构建
+
 ```bash
 # 构建全部（Coq .vo + C 库 + svm）
 make all
@@ -187,6 +210,15 @@ make build-tests
 
 # 仅运行核电端到端
 ./run_nuclear_e2e.sh
+
+# MISRA-C 检查
+make misra-check
+
+# ASan/UBSan 内存安全检测 (P2)
+./run_sanitizer.sh
+
+# .sasm 加载器模糊测试 (P2)
+./run_fuzzer.sh [迭代次数]  # 默认 100000 次
 
 # 清理所有构建产物
 make clean

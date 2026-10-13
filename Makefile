@@ -6,6 +6,12 @@ CFLAGS = -Wall -Wextra -std=c11 -g -O0 -I.
 AR = ar
 ARFLAGS = rcs
 
+# ── Sanitizer 变体 (P2: ASan/UBSan) ──
+# 用法: make sanitize-test   (构建 ASan/UBSan 测试二进制)
+#        make run-sanitize   (构建并运行 sanitizer 测试)
+SANITIZE_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
+SANITIZE_LDFLAGS = -fsanitize=address,undefined
+
 # ================================================================
 # VM 核心库
 # ================================================================
@@ -56,7 +62,8 @@ RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
 .PHONY: all build-tests build-vm-test build-smoke build-nuclear-e2e build-channel-e2e
-.PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean
+.PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean misra-check dune-build
+.PHONY: sanitize-test run-sanitize build-fuzzer
 
 all: coq veristc vm-lib vm-hs vm-io svm
 
@@ -270,11 +277,111 @@ $(VERISTC_BIN): $(EXTRACT_STAMP)
 veristc: $(VERISTC_BIN)
 
 # ================================================================
+# Dune 构建目标 (P1: 迁移 Coq 构建到 dune)
+# ================================================================
+
+dune-build:
+	@echo "  [DUNE] Building Coq libraries..."
+	cd veristc && dune build
+	@echo "  [DUNE] Coq libraries built successfully"
+
+dune-extract: dune-build
+	@echo "  [DUNE] Extracting OCaml code..."
+	cd veristc && dune build @extraction
+	@echo "  [DUNE] Extraction complete"
+
+dune-veristc: dune-extract
+	@echo "  [DUNE] Building veristc executable..."
+	cd veristc && dune build extraction/veristc.exe
+	@echo "  [DUNE] veristc executable built"
+
+# ================================================================
+# Sanitizer 变体 (P2: ASan/UBSan 内存安全检测)
+# ================================================================
+
+SANITIZE_SVM_BIN = vm/svm-asan
+SANITIZE_TEST_VM_BIN = $(VM_TEST_DIR)/test_vm-asan
+SANITIZE_FUZZER_BIN = tests/fuzz/sasm_fuzzer
+
+# 使用 sanitizer 标志编译 SVM
+sanitize-svm: vm/svm.c vm/sasm_dump.c vm/loader.c vm/safeasm_interp.c vm/vm.h
+	@echo "  [SANITIZE] Building SVM with ASan/UBSan..."
+	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -o $(SANITIZE_SVM_BIN) \
+		vm/svm.c vm/sasm_dump.c vm/loader.c vm/safeasm_interp.c \
+		$(SANITIZE_LDFLAGS) -lm
+	@echo "  [SANITIZE] SVM (ASan/UBSan) built: $(SANITIZE_SVM_BIN)"
+
+# 使用 sanitizer 标志编译 VM 测试
+sanitize-test: $(SANITIZE_TEST_VM_BIN)
+
+$(SANITIZE_TEST_VM_BIN): $(VM_TEST_DIR)/test_vm.c $(VM_CORE_SRCS) vm/vm.h \
+		$(VM_CORE_LIB) $(VM_IO_LIB)
+	@echo "  [SANITIZE] Building test_vm with ASan/UBSan..."
+	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -o $@ $< \
+		-Lvm -Lvm/io -lvm_io -lvm_core $(SANITIZE_LDFLAGS) -lm
+	@echo "  [SANITIZE] test_vm (ASan/UBSan) built: $@"
+
+# 构建并运行 sanitizer 测试（需要先正常构建 .sasm 测试文件）
+run-sanitize: sanitize-svm sanitize-test build-smoke build-function-tests
+	@echo "  [SANITIZE] Running test_vm under ASan/UBSan..."
+	@$(SANITIZE_TEST_VM_BIN)
+	@echo "  [SANITIZE] Running SVM under ASan/UBSan..."
+	@$(SANITIZE_SVM_BIN) -n 1 -p 0 tests/veristc-tests/out/core_assign.sasm 42 > /dev/null
+	@$(SANITIZE_SVM_BIN) -n 6 -p 0 tests/veristc-tests/out/function_control_flow.sasm > /dev/null
+	@echo "  [SANITIZE] All sanitizer checks passed"
+
+# ================================================================
+# Fuzz 测试 (P2: .sasm 加载器模糊测试)
+# ================================================================
+
+FUZZ_DIR = tests/fuzz
+FUZZ_SRC = $(FUZZ_DIR)/sasm_fuzzer.c
+
+build-fuzzer: $(SANITIZE_FUZZER_BIN)
+
+$(SANITIZE_FUZZER_BIN): $(FUZZ_SRC) vm/loader.c vm/vm.h vm/crc32_table.inc
+	@echo "  [FUZZ] Building .sasm fuzzer..."
+	@mkdir -p $(FUZZ_DIR)/corpus
+	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -I. \
+		-o $@ $< $(SANITIZE_LDFLAGS) -lm
+	@echo "  [FUZZ] Fuzzer built: $@"
+
+# ================================================================
+# MISRA-C 检查 (P1: 集成静态分析工具)
+# ================================================================
+
+MISRA_RULES = 1.1,1.2,2.1,2.2,8.1,8.2,10.1,10.2,10.3,10.4,11.1,11.2,11.3,11.4,11.5,12.1,12.2,13.1,13.2,13.3,14.1,14.2,15.1,15.2,15.3,15.4,15.5,15.6,15.7,16.1,16.2,16.3,16.4,16.5,16.6,16.7,17.1,17.2,17.3,17.4,17.5,17.6,17.7,17.8,18.1,18.2,18.3,18.4,19.1,19.2,19.3,19.4,19.5,19.6,19.7,19.8,19.9,19.10,19.11,19.12,19.13,19.14,19.15,19.16,19.17,20.1,20.2,20.3,20.4,20.5,20.6,20.7,20.8,20.9,20.10,20.11,20.12,20.13,20.14,21.1,21.2,21.3,21.4,21.5,21.6,21.7,21.8,21.9,21.10,21.11,21.12,21.13,21.14,21.15,21.16,21.17,21.18,21.19,21.20,21.21,22.1,22.2,22.3,22.4,22.5,22.6
+
+VM_C_FILES = vm/safeasm_interp.c vm/loader.c vm/svm.c vm/sasm_dump.c \
+             vm/io/io_mapping.c \
+             vm/hotstandby/snapshot.c vm/hotstandby/sync.c \
+             vm/hotstandby/state_machine.c vm/hotstandby/download.c
+
+misra-check:
+	@echo "  [MISRA] Running MISRA-C check on VM source files..."
+	@command -v cppcheck >/dev/null 2>&1 || { echo "ERROR: cppcheck not installed. Install with: sudo apt-get install cppcheck"; exit 1; }
+	cppcheck --enable=all --std=c11 \
+		--suppress=missingIncludeSystem \
+		--suppress=unmatchedSuppression \
+		--addon=misra \
+		-I. -Ivm \
+		$(VM_C_FILES) 2>&1 | tee .misra_report.txt
+	@echo "  [MISRA] Report saved to .misra_report.txt"
+
+# 简化的 MISRA-C 检查（只检查关键规则）
+misra-check-basic:
+	@echo "  [MISRA] Running basic MISRA-C check..."
+	@command -v cppcheck >/dev/null 2>&1 || { echo "ERROR: cppcheck not installed"; exit 1; }
+	cppcheck --enable=warning,style --std=c11 \
+		-I. -Ivm \
+		$(VM_C_FILES)
+
+# ================================================================
 # 清理
 # ================================================================
 
 clean:
-	rm -f $(VM_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN)
+	rm -f $(VM_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN) $(SANITIZE_TEST_VM_BIN) $(SANITIZE_SVM_BIN) $(SANITIZE_FUZZER_BIN)
 	rm -f $(SVM_BIN) $(SMOKE_SASM) $(NUCLEAR_FULL_SASM)
 	rm -f veristc/extraction/veristc veristc/extraction/.extract_stamp
 	rm -f output.sasm output.txt .lia.cache .test_fix.aux
@@ -300,4 +407,4 @@ clean:
 		-name '__pycache__' -o -name '.coq-native' -o \
 		-name '_build' \) -exec rm -rf {} + 2>/dev/null || true
 	cd veristc && dune clean 2>/dev/null || true
-	cd vstac && dune clean 2>/dev/null || true
+	rm -f .misra_report.txt

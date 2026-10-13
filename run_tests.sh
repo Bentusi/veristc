@@ -13,4 +13,11 @@ make all build-tests
 "$ROOT/run_channel_e2e.sh"
 "$ROOT/run_nuclear_e2e.sh"
 
+# P2: ASan/UBSan 内存安全检测（可选，需要 gcc 支持）
+if echo 'int main(void){return 0;}' | gcc -fsanitize=address,undefined -x c - -o /dev/null 2>/dev/null; then
+    "$ROOT/run_sanitizer.sh"
+else
+    echo "[SKIP] ASan/UBSan not supported by gcc, skipping sanitizer tests"
+fi
+
 echo "All tests passed"

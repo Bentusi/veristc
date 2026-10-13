@@ -1,0 +1,8 @@
+// cppcheck configuration for MISRA-C check
+// Usage: cppcheck --addon=misra --library=vm ...
+
+// MISRA-C 2012 Rules Configuration
+{
+  "script": "misra",
+  "args": ["--rule-texts=misra_rules.txt"]
+}

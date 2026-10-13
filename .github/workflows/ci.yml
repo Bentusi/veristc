@@ -1,0 +1,97 @@
+name: VeriSTC CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up OCaml
+      uses: ocaml/setup-ocaml@v3
+      with:
+        ocaml-compiler: '5.2.0'
+        dune-version: '3.16.1'
+
+    - name: Set up Coq
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y coq libcoq-ocaml-dev
+
+    - name: Set up C toolchain
+      run: |
+        sudo apt-get install -y gcc make cppcheck
+
+    - name: Cache Coq build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          veristc/spec/*.vo
+          veristc/src/*.vo
+          veristc/extraction/*.vo
+        key: coq-${{ runner.os }}-${{ hashFiles('veristc/**/*.v') }}
+        restore-keys: |
+          coq-${{ runner.os }}-
+
+    - name: Build Coq spec (dune)
+      run: |
+        cd veristc
+        dune build spec/
+
+    - name: Build Coq src (dune)
+      run: |
+        cd veristc
+        dune build src/
+
+    - name: Build Coq extraction (dune)
+      run: |
+        cd veristc
+        dune build extraction/
+
+    - name: Extract OCaml code
+      run: |
+        cd veristc
+        dune build @extraction
+
+    - name: Build veristc executable
+      run: |
+        cd veristc
+        dune build extraction/veristc.exe
+
+    - name: Build VM libraries
+      run: |
+        make vm-lib vm-io vm-hs
+
+    - name: Build SVM
+      run: |
+        make svm
+
+    - name: Run smoke test
+      run: |
+        make build-smoke
+
+    - name: Run function tests
+      run: |
+        make build-function-tests
+
+    - name: Run VM tests
+      run: |
+        make build-vm-test
+        ./tests/vm-tests/test_vm
+
+    - name: Run MISRA-C check
+      run: |
+        make misra-check
+
+    - name: Upload veristc artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: veristc-binary
+        path: veristc/extraction/veristc.exe
+        retention-days: 7
