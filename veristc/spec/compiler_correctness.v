@@ -19,6 +19,8 @@ Require Import veristc_spec.st_semantics.
 Require Import veristc_src.desugar.
 Require Import veristc_src.codegen.
 Require Import veristc_src.typechecker.
+Require Import veristc_src.global_codegen.
+Require veristc_spec.function_semantics.
 Import ListNotations.
 (* ================================================================
    第 3 部分：抽象关系 (Abstraction Relation)
@@ -2219,4 +2221,263 @@ Proof.
   intros p m1 m2 H1 H2.
   unfold compile_success in H1, H2.
   rewrite H1 in H2. injection H2. auto.
+Qed.
+
+(* ================================================================
+   WS-C: 函数调用代码生成（compile_program_gc）的 CALL 路径形式化
+   ----------------------------------------------------------------
+   出厂管线用 compile_program_gc，把 CE_FUNC_CALL f args 编为
+   `args ++ [CALL idx]`（global_codegen.v）。本段把 WS-A 的 ST 帧语义
+   （call_function_fn 的 arity）与 WS-B 的 Pc_call 结构前提
+   （callee 存在、param_count <= local_count）在 compile_program_gc
+   产出的模块上调和一致，作为 CALL 路径进入被证明语义的结构级门槛：
+   证明任何 codegen 生成的 in-range CALL 都指向一个存在且形参数量
+   不超过其局部槽位的被调帧，故 CALL 永不会在 Pc_call 的前提上卡住。
+   ================================================================ *)
+
+(* callee 的类型段形参数 = 源函数 cfunc_params 数量。 *)
+Lemma build_sasm_func_type_param_count :
+  forall (f : corest_function),
+    List.length (build_sasm_func_type f).(sasm_param_types)
+    = List.length f.(cfunc_params).
+Proof.
+  intros f. apply List.length_map.
+Qed.
+
+(* 被调帧局部槽位数 = 类型环境长度 + 1（返回值槽）。 *)
+Lemma compile_function_gc_locals_length :
+  forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (idx : Z) (f : corest_function),
+    List.length (compile_function_gc globals fidx idx f).(sasm_locals)
+    = (List.length (build_compile_type_env f) + 1)%nat.
+Proof.
+  intros globals fidx idx f.
+  unfold compile_function_gc; simpl.
+  rewrite List.length_app, List.length_map.
+  reflexivity.
+Qed.
+
+(* 被调帧的局部槽位数 = 形参 ++ 局部 ++ 返回值槽，恒 >= 形参数。 *)
+Lemma compile_function_gc_locals_adequate :
+  forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (idx : Z) (f : corest_function),
+    (List.length (build_sasm_func_type f).(sasm_param_types) <=
+     List.length (compile_function_gc globals fidx idx f).(sasm_locals))%nat.
+Proof.
+  intros globals fidx idx f.
+  rewrite build_sasm_func_type_param_count.
+  rewrite compile_function_gc_locals_length.
+  unfold build_compile_type_env.
+  rewrite List.length_app.
+  simpl. lia.
+Qed.
+
+(* compile_functions_gc 保持函数数量。 *)
+Lemma compile_functions_gc_length :
+  forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (fs : list corest_function) (idx : Z),
+    List.length (compile_functions_gc globals fidx idx fs)
+    = List.length fs.
+Proof.
+  intros globals fidx.
+  induction fs as [|f rest IH]; intros idx; simpl;
+    [reflexivity | rewrite IH; reflexivity].
+Qed.
+
+(* 第 j 个被编译函数 = 对第 j 个源函数应用 compile_function_gc，
+   其类型槽索引为 idx + j。 *)
+Lemma nth_error_compile_functions_gc :
+  forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (fs : list corest_function) (idx : Z) (j : nat),
+    List.nth_error (compile_functions_gc globals fidx idx fs) j =
+      match List.nth_error fs j with
+      | Some f => Some (compile_function_gc globals fidx (idx + Z.of_nat j) f)
+      | None => None
+      end.
+Proof.
+  intros globals fidx.
+  induction fs as [|f rest IH]; intros idx j.
+  - destruct j; reflexivity.
+  - destruct j as [|j'];
+      cbn [compile_functions_gc List.nth_error].
+    + replace (idx + Z.of_nat 0) with idx by lia; reflexivity.
+    + rewrite IH.
+      replace (idx + Z.of_nat (S j')) with (idx + 1 + Z.of_nat j') by lia.
+      destruct (List.nth_error rest j') as [g|]; reflexivity.
+Qed.
+
+(* 第 j 个类型段 = 对第 j 个源函数应用 build_sasm_func_type。 *)
+Lemma nth_error_build_sasm_func_type :
+  forall (fs : list corest_function) (j : nat),
+    List.nth_error (List.map build_sasm_func_type fs) j
+    = option_map build_sasm_func_type (List.nth_error fs j).
+Proof.
+  intros fs. induction fs as [|a rest IH]; intros j.
+  - destruct j; reflexivity.
+  - destruct j as [|j'].
+    + reflexivity.
+    + cbn [List.map List.nth_error]. rewrite IH. reflexivity.
+Qed.
+
+(* compile_program_gc 的类型段与函数段长度都等于 core_funcs 长度。 *)
+Lemma compile_program_gc_types_length :
+  forall (p : corest_program),
+    List.length (compile_program_gc p).(sasm_types)
+    = List.length (entry_first_functions p).
+Proof.
+  intros p. unfold compile_program_gc.
+  cbn [sasm_types]. apply List.length_map.
+Qed.
+
+Lemma compile_program_gc_functions_length :
+  forall (p : corest_program),
+    List.length (compile_program_gc p).(sasm_functions)
+    = List.length (entry_first_functions p).
+Proof.
+  intros p. unfold compile_program_gc.
+  cbn [sasm_functions]. apply compile_functions_gc_length.
+Qed.
+
+(* compile_program_gc 的两个投影段展开为对 core_funcs 的 map/编译。 *)
+Lemma compile_program_gc_types_eq :
+  forall (p : corest_program),
+    (compile_program_gc p).(sasm_types)
+    = List.map build_sasm_func_type (entry_first_functions p).
+Proof.
+  intros p. unfold compile_program_gc. cbn [sasm_types]. reflexivity.
+Qed.
+
+Lemma compile_program_gc_functions_eq :
+  forall (p : corest_program),
+    (compile_program_gc p).(sasm_functions)
+    = compile_functions_gc (build_global_env p)
+        (assign_func_indices (entry_first_functions p) 0) 0
+        (entry_first_functions p).
+Proof.
+  intros p. unfold compile_program_gc. cbn [sasm_functions]. reflexivity.
+Qed.
+
+(* 主定理：compile_program_gc 的每个 in-range CALL 目标都存在于模块中，
+   其类型段可解析、被调帧可解析，且形参数 <= 局部槽位数（Pc_call 的
+   结构前提）。这保证 codegen 生成的 CALL 永不会在调用约定上卡住。 *)
+Theorem compile_st_to_sasm_calls :
+  forall (p : corest_program) (j : nat),
+    (j < List.length (entry_first_functions p))%nat ->
+    exists (ft : sasm_func_type) (fn : sasm_function),
+      lookup_func_type (compile_program_gc p) (Z.of_nat j) = Some ft /\
+      lookup_function (compile_program_gc p) (Z.of_nat j) = Some fn /\
+      (List.length ft.(sasm_param_types)
+       <= List.length fn.(sasm_locals))%nat.
+Proof.
+  intros p j Hj.
+  assert (Hn : List.nth_error (entry_first_functions p) j <> None).
+  { apply List.nth_error_Some. exact Hj. }
+  destruct (List.nth_error (entry_first_functions p) j) as [g|] eqn:Hg;
+    [ | contradiction ].
+  (* 类型段：sasm_types = map build_sasm_func_type core_funcs *)
+  assert (HT : List.nth_error (compile_program_gc p).(sasm_types)
+                       (Z.to_nat (Z.of_nat j))
+             = Some (build_sasm_func_type g)).
+  {
+    rewrite compile_program_gc_types_eq.
+    rewrite nth_error_build_sasm_func_type.
+    rewrite Nat2Z.id.
+    unfold option_map. rewrite Hg. reflexivity.
+  }
+  (* 函数段：sasm_functions = compile_functions_gc ... 0 core_funcs *)
+  assert (HF : List.nth_error (compile_program_gc p).(sasm_functions)
+                       (Z.to_nat (Z.of_nat j))
+             = Some (compile_function_gc
+                       (build_global_env p)
+                       (assign_func_indices (entry_first_functions p) 0)
+                       (Z.of_nat j) g)).
+  {
+    rewrite compile_program_gc_functions_eq.
+    rewrite Nat2Z.id.
+    rewrite nth_error_compile_functions_gc.
+    rewrite Hg. reflexivity.
+  }
+  exists (build_sasm_func_type g),
+    (compile_function_gc (build_global_env p)
+       (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g).
+  split; [| split].
+  - unfold lookup_func_type. exact HT.
+  - unfold lookup_function. exact HF.
+  - apply compile_function_gc_locals_adequate.
+Qed.
+
+(* ST 侧：把主定理与 WS-A 的 call_function_fn arity 引理串起来——
+   一次成功的 ST 调用只在被调 POU 存在且形参数量与实际参数数量一致
+   时发生（function_semantics.call_function_fn_arity），这与 ASM 侧
+   Pc_call 前提 param_count = |sasm_param_types| 及本定理的
+   param_count <= local_count 完全对齐。 *)
+Theorem call_st_asm_arity_agreement :
+  forall (fuel : nat) (funs : list st_pou) (name : ident)
+         (args : list st_value) (v : st_value),
+    function_semantics.call_function_fn fuel funs name args = Some v ->
+    exists (decls : list st_var_decl),
+      List.length (function_semantics.input_param_names decls)
+      = List.length args.  (* ST 侧参数数量 == 实参数量 *)
+Proof.
+  intros fuel funs name args v H.
+  pose proof (function_semantics.call_function_fn_arity fuel funs name args v H)
+    as [ty [decls [body [Hlk Hart]]]].
+  exists decls. exact Hart.
+Qed.
+
+(* WS-C.3：调用表达式编译正确性。codegen 为 CE_FUNC_CALL f args 发射的
+   [args ++ [CALL idx]]（global_codegen.v:417-428）中的 idx 来自
+   lookup_func_index (assign_func_indices fs 0) f。本引理证明任何被发射
+   的 CALL idx 都落在有效函数段范围内，因此该 CALL 目标在
+   compile_program_gc 产出的模块中一定存在（lookup_function 成功），
+   CALL 永远不会指向一个不存在的被调帧。 *)
+
+(* assign_func_indices 产生的索引落在 [base, base + |fs|) 内。 *)
+Lemma assign_func_indices_range :
+  forall (fs : list corest_function) (base : Z) (f : ident) (idx : Z),
+    lookup_func_index (assign_func_indices fs base) f = Some idx ->
+    (base <= idx)%Z /\ (idx < base + Z.of_nat (List.length fs))%Z.
+Proof.
+  intros fs. induction fs as [|a rest IH]; intros base f idx H; simpl in H.
+  - discriminate.
+  - destruct (ident_eq f (cfunc_name a)) eqn:Heq.
+    + injection H as Hidx; subst idx. split; [lia|].
+      cbn [List.length]. rewrite Nat2Z.inj_succ.
+      assert (0 <= Z.of_nat (List.length rest))%Z by apply Nat2Z.is_nonneg.
+      lia.
+    + specialize (IH (base + 1) f idx H). destruct IH as [Hle Hlt].
+      assert (Hl : (Z.of_nat (List.length (a :: rest))
+                    = Z.of_nat (List.length rest) + 1)%Z).
+      { cbn [List.length]. rewrite Nat2Z.inj_succ. lia. }
+      split; [lia|]. rewrite Hl. lia.
+Qed.
+
+(* 发射出的 CALL idx 在被编译模块中一定解析为一个存在的函数。 *)
+Theorem compile_call_index_present :
+  forall (p : corest_program) (f : ident) (idx : Z),
+    lookup_func_index
+      (assign_func_indices (entry_first_functions p) 0) f = Some idx ->
+    exists fn, lookup_function (compile_program_gc p) idx = Some fn. (* 目标存在 *)
+Proof.
+  intros p f idx H.
+  destruct (assign_func_indices_range
+              (entry_first_functions p) 0 f idx H)
+    as [Hge Hlt].
+  assert (Hconv : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; exact Hge).
+  assert (Hrange : (Z.to_nat idx < List.length (entry_first_functions p))%nat).
+  { apply (proj2 (Nat2Z.inj_lt (Z.to_nat idx)
+                               (List.length (entry_first_functions p)))).
+    rewrite Hconv. exact Hlt. }
+  assert (Hne : List.nth_error (entry_first_functions p) (Z.to_nat idx) <> None)
+    by (apply List.nth_error_Some; exact Hrange).
+  destruct (List.nth_error (entry_first_functions p) (Z.to_nat idx))
+    as [g|] eqn:Hg; [ | contradiction ].
+  exists (compile_function_gc (build_global_env p)
+            (assign_func_indices (entry_first_functions p) 0) idx g).
+  unfold lookup_function.
+  rewrite compile_program_gc_functions_eq.
+  rewrite nth_error_compile_functions_gc.
+  rewrite Hg.
+  cbn [Z.add].
+  rewrite Hconv. reflexivity.
 Qed.

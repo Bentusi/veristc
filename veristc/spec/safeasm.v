@@ -1596,6 +1596,203 @@ Inductive pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
            rest vs)
 .
 
+(* ================================================================
+   WS-B: PC-based CALL/RETURN calling-convention properties.
+
+   These lemmas pin down the calling convention encoded by the
+   Pc_call / Pc_return rules above, exactly as documented:
+     - CALL consumes precisely `param_count` value-stack slots
+       (the callee reads `vs`, i.e. everything below the args);
+     - the callee frame's locals are `arg_vals ++ zeros`, of length
+       `local_count`;
+     - RETURN only pops the frame and never touches the value stack,
+       so the single return value pushed by the callee survives.
+   ================================================================ *)
+
+Lemma zero_values_length :
+  forall n : nat, List.length (zero_values n) = n.
+Proof.
+  induction n as [|n IH]; simpl; [reflexivity | rewrite IH; reflexivity].
+Qed.
+
+Lemma call_frame_locals_length :
+  forall (arg_vals : list sasm_value) (local_count : nat),
+    (List.length arg_vals <= local_count)%nat ->
+    List.length (call_frame_locals arg_vals local_count) = local_count.
+Proof.
+  intros arg_vals local_count Hlen.
+  unfold call_frame_locals.
+  rewrite List.length_app, zero_values_length.
+  simpl in Hlen; lia.
+Qed.
+
+(* RETURN pops the top frame but preserves the whole value stack, so
+   the return value that the callee pushed stays on top. *)
+Lemma pop_top_frame_cycle_preserves_values :
+  forall s : runtime_state,
+    (pop_top_frame_cycle s).(rt_values) = s.(rt_values).
+Proof.
+  intros s. unfold pop_top_frame_cycle.
+  destruct (s.(rt_frames)); reflexivity.
+Qed.
+
+(* CALL consumes exactly param_count values: the pre-call stack is
+   (rev arg_vals ++ vs) with |arg_vals| = param_count, and the post-call
+   stack is vs. *)
+Lemma pc_call_value_stack_equation :
+  forall (arg_vals vs : list sasm_value) (param_count : nat),
+    List.length arg_vals = param_count ->
+    (List.length (List.rev arg_vals ++ vs)
+     = param_count + List.length vs)%nat.
+Proof.
+  intros arg_vals vs param_count Hlen.
+  rewrite List.length_app, List.length_rev. simpl in Hlen. lia.
+Qed.
+
+(* CALL grows the frame stack by exactly one frame. *)
+Lemma pc_call_frame_growth :
+  forall (s : runtime_state) (f : sasm_frame) (rest : frame_stack)
+         (callee_frame : sasm_frame) (next : Z) (vs : value_stack),
+    s.(rt_frames) = f :: rest ->
+    (List.length
+      (push_call_frame_cycle s f next callee_frame rest vs).(rt_frames) =
+     List.length (s.(rt_frames)) + 1)%nat.
+Proof.
+  intros s f rest callee_frame next vs Hfr.
+  unfold push_call_frame_cycle.
+  rewrite Hfr.
+  simpl. lia.
+Qed.
+
+(* RETURN shrinks the frame stack by exactly one frame. *)
+Lemma pc_return_frame_shrink :
+  forall (s : runtime_state) (f : sasm_frame) (rest : frame_stack),
+    s.(rt_frames) = f :: rest ->
+    (List.length (pop_top_frame_cycle s).(rt_frames) =
+     List.length (s.(rt_frames)) - 1)%nat.
+Proof.
+  intros s f rest Hfr.
+  unfold pop_top_frame_cycle.
+  rewrite Hfr.
+  simpl. lia.
+Qed.
+
+(* List helpers used to reason about the CALL value-stack convention:
+   an append whose prefix lengths agree is injective, and rev is
+   injective. *)
+Lemma app_injective_by_length :
+  forall (A : Type) (x y u v : list A),
+    List.length x = List.length u ->
+    x ++ y = u ++ v ->
+    x = u /\ y = v.
+Proof.
+  induction x as [|a xs IH]; intros y u v Hlen Heq.
+  - destruct u as [|b us]; simpl in Hlen; try discriminate.
+    simpl in Heq. split; [reflexivity | exact Heq].
+  - destruct u as [|b us]; simpl in Hlen; try discriminate.
+    simpl in Heq.
+    injection Heq as Hab Htail.
+    subst b. simpl in Hlen. injection Hlen as Hlen0.
+    specialize (IH y us v Hlen0 Htail).
+    destruct IH as [Hxs Hyv].
+    split; [f_equal; exact Hxs | exact Hyv].
+Qed.
+
+Lemma rev_injective :
+  forall (A : Type) (l l' : list A), List.rev l = List.rev l' -> l = l'.
+Proof.
+  intros A l l' H.
+  rewrite <- (rev_involutive l), <- (rev_involutive l').
+  apply f_equal. exact H.
+Qed.
+
+(* Each transition preserves the linear memory: every step builder
+   (push_value / replace_top_frame_noinc / set_top_values_cycle /
+   pop_top_frame_cycle / push_call_frame_cycle) copies rt_memory
+   unchanged.  Combined with the frame-delta lemmas above this bounds
+   how the frame stack can grow over a multi-step run (used by the
+   WCET / stack-depth analysis). *)
+Lemma push_value_preserves_memory :
+  forall (v : sasm_value) (s : runtime_state),
+    (push_value v s).(rt_memory) = s.(rt_memory).
+Proof. intros v s; reflexivity. Qed.
+
+Lemma replace_top_frame_noinc_preserves_memory :
+  forall (f : sasm_frame) (s : runtime_state),
+    (replace_top_frame_noinc s f).(rt_memory) = s.(rt_memory).
+Proof.
+  intros f s. unfold replace_top_frame_noinc.
+  destruct (s.(rt_frames)); reflexivity.
+Qed.
+
+Lemma set_top_values_cycle_preserves_memory :
+  forall (f : sasm_frame) (s : runtime_state) (vs : value_stack),
+    (set_top_values_cycle s f vs).(rt_memory) = s.(rt_memory).
+Proof.
+  intros f s vs. unfold set_top_values_cycle.
+  destruct (s.(rt_frames)); reflexivity.
+Qed.
+
+Lemma pop_top_frame_cycle_preserves_memory :
+  forall s : runtime_state,
+    (pop_top_frame_cycle s).(rt_memory) = s.(rt_memory).
+Proof.
+  intros s. unfold pop_top_frame_cycle.
+  destruct (s.(rt_frames)); reflexivity.
+Qed.
+
+Lemma push_call_frame_cycle_preserves_memory :
+  forall (s : runtime_state) (caller : sasm_frame) (next : Z)
+         (callee_frame : sasm_frame) (rest : frame_stack)
+         (vs : value_stack),
+    (push_call_frame_cycle s caller next callee_frame rest vs).(rt_memory)
+    = s.(rt_memory).
+Proof. reflexivity. Qed.
+
+Lemma pc_step_preserves_memory :
+  forall (m : sasm_module) (s s' : runtime_state),
+    pc_step m s s' -> s'.(rt_memory) = s.(rt_memory).
+Proof.
+  intros m s s' H; induction H;
+    try (apply push_value_preserves_memory);
+    try (apply replace_top_frame_noinc_preserves_memory);
+    try (apply set_top_values_cycle_preserves_memory);
+    try (apply pop_top_frame_cycle_preserves_memory);
+    try (apply push_call_frame_cycle_preserves_memory);
+    reflexivity.
+Qed.
+
+(* Determinism of the instruction decoder: a frame's pc decodes to at
+   most one (instruction, next-pc) pair, since fetch_frame_instr is a
+   pure function. *)
+Lemma fetch_frame_instr_unique :
+  forall (m : sasm_module) (f : sasm_frame) (r1 r2
+    : option (sasm_instr * Z)),
+    fetch_frame_instr m f = r1 -> fetch_frame_instr m f = r2 -> r1 = r2.
+Proof. intros m f r1 r2 H1 H2. rewrite H1 in H2. exact H2. Qed.
+
+(* pc_step determinism is not required by the top-level preservation
+   theorem; the WS-B.3 goal is stack-depth bounding.  The precise,
+   directly usable fact is that a single transition grows the frame
+   stack by at most one (CALL adds one, RETURN removes one, every
+   other rule leaves it unchanged).  Together with fetch_frame_instr
+   being a pure decoder this is what the WCET/stack-depth argument
+   leans on, so we establish the frame-count progress bound instead of
+   a full-state determinism axiom. *)
+Lemma pc_step_frame_count_progress :
+  forall (m : sasm_module) (s s' : runtime_state),
+    pc_step m s s' ->
+    (List.length s'.(rt_frames) <= S (List.length s.(rt_frames)))%nat.
+Proof.
+  intros m s s' H; induction H;
+    unfold push_value, replace_top_frame_noinc, set_top_values_cycle,
+           pop_top_frame_cycle, push_call_frame_cycle;
+    match goal with
+    | Hx : rt_frames _ = ?f :: ?rest |- _ => rewrite Hx; cbn; lia
+    end.
+Qed.
+
+
 Lemma fetch_frame_instr_head :
   forall (m : sasm_module) (f : sasm_frame) (fn : sasm_function)
          (i : sasm_instr) (rest : list sasm_instr),
@@ -1680,6 +1877,65 @@ Proof.
   - eapply Multi_pc_step.
     + exact Hstep.
     + exact (IH s_dest H23).
+Qed.
+
+(* ================================================================
+   WS-D.2b: 有限步数预算 ⟹ 帧数（栈深）有界。
+
+   pc_step_frame_count_progress 已经证明单步至多 +1 帧。这里用步数
+   索引的传递闭包 pc_step_n 精确计量执行步数，得出 n 步后
+   帧数 <= 初始帧数 + n。前端在“所有循环有界 + 无递归调用图”
+   （analysis.v 的 ar_all_loops_bounded / ar_max_stack_depth）下保证
+   存在有限的步数预算 N，故由本定理整段执行期间 SafeASM 栈深
+   按 N 有界。无递归时帧数只因 CALL 线性增长、因 RETURN 收缩，不会
+   无限累加。
+   ================================================================ *)
+
+Inductive pc_step_n : nat -> sasm_module -> runtime_state
+           -> runtime_state -> Prop :=
+  | Psn_refl : forall m s, pc_step_n 0 m s s
+  | Psn_step : forall n m s1 s2 s3,
+      pc_step m s1 s2 -> pc_step_n n m s2 s3 -> pc_step_n (S n) m s1 s3
+.
+
+(* n 步链后帧数 <= 初始帧数 + n。 *)
+Lemma pc_step_n_frame_bound :
+  forall (n : nat) (m : sasm_module) (s s' : runtime_state),
+    pc_step_n n m s s' ->
+    (List.length s'.(rt_frames) <= List.length s.(rt_frames) + n)%nat.
+Proof.
+  intros n m s s' H. induction H as
+    [ | n0 m0 s1 s2 s3 Hstep Hrest IH ].
+  - simpl. lia.
+  - pose proof (pc_step_frame_count_progress m0 s1 s2 Hstep) as B1.
+    lia.
+Qed.
+
+(* 任意有限的 multi_pc_step 链都有具体的步数 n。 *)
+Lemma multi_pc_step_to_pc_step_n :
+  forall (m : sasm_module) (s s' : runtime_state),
+    multi_pc_step m s s' -> exists n, pc_step_n n m s s'.
+Proof.
+  intros m s s' H. induction H as
+    [ | m0 s1 s2 s3 Hstep Hrest IH ].
+  - exists 0%nat. constructor.
+  - destruct IH as [n Hn]. exists (S n)%nat.
+    econstructor; eauto.
+Qed.
+
+(* 推论：给定步数预算 D（前端有界循环/无递归分析提供），
+   执行期间帧数（栈深）以 D 为界。 *)
+Corollary multi_pc_step_frame_depth_bounded :
+  forall (D : nat) (m : sasm_module) (s s' : runtime_state),
+    (forall n, pc_step_n n m s s' -> (n <= D)%nat) ->
+    multi_pc_step m s s' ->
+    (List.length s'.(rt_frames) <= List.length s.(rt_frames) + D)%nat.
+Proof.
+  intros D m s s' Hbudget Hmulti.
+  destruct (multi_pc_step_to_pc_step_n m s s' Hmulti) as [n Hn].
+  pose proof (pc_step_n_frame_bound n m s s' Hn) as B.
+  pose proof (Hbudget n Hn) as Hnb.
+  lia.
 Qed.
 
 Lemma pc_i32_const_multi :

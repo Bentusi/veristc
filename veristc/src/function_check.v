@@ -37,6 +37,59 @@ Definition prepend_msg (prefix : string) (o : option string) : option string :=
   end.
 
 (* ------------------------------------------------------------
+   WS-F：结构化诊断记录
+   ------------------------------------------------------------
+   旧实现把 POU 级错误压成一个自由文本 string，丢失了"这是哪个
+   POU、哪一类错误、涉及哪个变量"的结构信息。这里引入诊断记录，
+   每个错误携带 {pou_name; var_name; kind; msg} 四元组；对外的
+   option string API（check_program_full_diag）改为由该记录渲染，
+   渲染结果保留原有关键子串（如 "purity violation"），因此既有
+   测试断言不回退。LOC 字段在解析阶段由 token 源位置填充；类型/
+   纯性等检查阶段尚无 AST 内源位置，故渲染为 "-"（后续增量）。 *)
+
+Inductive diag_kind : Type :=
+  | DK_TYPE
+  | DK_PURITY
+  | DK_DECLARATIONS
+  | DK_CONTROL
+  | DK_FOR_BOUND
+  | DK_RESERVED
+  | DK_MISSING_ENTRY.
+
+Record diagnostic : Type := {
+  dg_pou  : ident;
+  dg_var  : option ident;
+  dg_kind : diag_kind;
+  dg_msg  : string;
+}.
+
+Definition diag_kind_to_string (k : diag_kind) : string :=
+  match k with
+  | DK_TYPE => "type"
+  | DK_PURITY => "purity"
+  | DK_DECLARATIONS => "declaration"
+  | DK_CONTROL => "control-flow"
+  | DK_FOR_BOUND => "for-bound"
+  | DK_RESERVED => "reserved-name"
+  | DK_MISSING_ENTRY => "missing-entry"
+  end.
+
+Definition diag_var_string (o : option ident) : string :=
+  match o with
+  | Some v => ident_to_string v
+  | None => "-"
+  end.
+
+Definition diagnostic_render (d : diagnostic) : string :=
+  String.append "POU="
+    (String.append (ident_to_string d.(dg_pou))
+      (String.append " VAR="
+        (String.append (diag_var_string d.(dg_var))
+          (String.append " KIND="
+            (String.append (diag_kind_to_string d.(dg_kind))
+              (String.append " LOC=- MSG=" d.(dg_msg))))))).
+
+(* ------------------------------------------------------------
    Call-aware expression typing
    ------------------------------------------------------------ *)
 
@@ -531,9 +584,9 @@ Definition prepare_program (p : st_program) : option st_program :=
   | None => None
   end.
 
-Definition check_pou_full_diag
+Definition check_pou_full_struct
            (globals : type_env) (fenv : type_env_func)
-           (pou : st_pou) : option string :=
+           (pou : st_pou) : option diagnostic :=
   let decls := pou_var_decls pou in
   let env := List.app (build_env_from_decls decls) globals in
   match pou with
@@ -541,44 +594,48 @@ Definition check_pou_full_diag
       if type_check_stmts_f true fenv env body then
         None
       else
-        Some (String.append "PROGRAM "
-              (String.append (ident_to_string name) ": type error"))
+        Some {| dg_pou := name; dg_var := None;
+                dg_kind := DK_TYPE; dg_msg := "type error" |}
   | P_FUNCTION name _ fdecls body =>
-      let prefix := String.append "FUNCTION " (ident_to_string name) in
       if negb (function_decls_ok fdecls) then
-        Some (String.append prefix
-              ": declarations may only use VAR_INPUT and local VAR")
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_DECLARATIONS;
+                dg_msg :=
+                  "declarations may only use VAR_INPUT and local VAR" |}
       else if negb (function_control_stmts_ok body) then
-        Some (String.append prefix
-              ": unsupported control flow (WHILE/REPEAT/EXIT/FB calls are not allowed in FUNCTION yet)")
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_CONTROL;
+                dg_msg :=
+                  "unsupported control flow (WHILE/REPEAT/EXIT/FB calls are not allowed in FUNCTION yet)" |}
       else if negb (function_for_bounds_stmts_ok body) then
-        Some (String.append prefix
-              ": FOR inside FUNCTION currently requires constant INT bounds and positive constant step")
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_FOR_BOUND;
+                dg_msg :=
+                  "FOR inside FUNCTION currently requires constant INT bounds and positive constant step" |}
       else if negb (function_writable_stmts_ok
                       (name :: local_writable_names fdecls) body) then
-        Some (String.append prefix
-              ": purity violation (only local VAR and function result may be assigned)")
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_PURITY;
+                dg_msg :=
+                  "purity violation (only local VAR and function result may be assigned)" |}
       else if negb (type_check_stmts_f false fenv env body) then
-        Some (String.append prefix ": type error")
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_TYPE;
+                dg_msg := "type error" |}
       else
         None
   | P_FUNCTION_BLOCK name _ body =>
       if type_check_stmts_f true fenv env body then
         None
       else
-        Some (String.append "FUNCTION_BLOCK "
-              (String.append (ident_to_string name) ": type error"))
+        Some {| dg_pou := name; dg_var := None; dg_kind := DK_TYPE;
+                dg_msg := "type error" |}
   end.
 
-Fixpoint check_pous_full_diag
+Fixpoint check_pous_full_struct
          (globals : type_env) (fenv : type_env_func)
-         (pous : list st_pou) : option string :=
+         (pous : list st_pou) : option diagnostic :=
   match pous with
   | nil => None
   | pou :: rest =>
-      match check_pou_full_diag globals fenv pou with
-      | Some m => Some m
-      | None => check_pous_full_diag globals fenv rest
+      match check_pou_full_struct globals fenv pou with
+      | Some d => Some d
+      | None => check_pous_full_struct globals fenv rest
       end
   end.
 
@@ -587,17 +644,34 @@ Definition uses_reserved_cycle_counter (globals : list st_var_decl) : bool :=
     (fun d => ident_eq d.(var_name) (ID "__veristc_cycle_counter"))
     globals.
 
-Definition check_program_full_diag (p : st_program) : option string :=
+Definition check_program_full_diag_struct (p : st_program) : option diagnostic :=
   if uses_reserved_cycle_counter p.(global_vars) then
-    Some "global variable uses reserved name __veristc_cycle_counter"
+    Some {| dg_pou := ID ""; dg_var := None; dg_kind := DK_RESERVED;
+            dg_msg :=
+              "global variable uses reserved name __veristc_cycle_counter" |}
   else
     match find_program_entry p.(pou_list) with
-    | None => Some "missing PROGRAM entry point"
+    | None =>
+        Some {| dg_pou := ID ""; dg_var := None; dg_kind := DK_MISSING_ENTRY;
+                dg_msg := "missing PROGRAM entry point" |}
     | Some _ =>
         let globals := build_env_from_decls p.(global_vars) in
         let fenv := build_fenv_from_pous p.(pou_list) in
-        check_pous_full_diag globals fenv p.(pou_list)
+        check_pous_full_struct globals fenv p.(pou_list)
     end.
+
+Definition check_pou_full_diag
+           (globals : type_env) (fenv : type_env_func)
+           (pou : st_pou) : option string :=
+  option_map diagnostic_render (check_pou_full_struct globals fenv pou).
+
+Definition check_pous_full_diag
+           (globals : type_env) (fenv : type_env_func)
+           (pous : list st_pou) : option string :=
+  option_map diagnostic_render (check_pous_full_struct globals fenv pous).
+
+Definition check_program_full_diag (p : st_program) : option string :=
+  option_map diagnostic_render (check_program_full_diag_struct p).
 
 Definition check_program_full (p : st_program) : bool :=
   match check_program_full_diag p with

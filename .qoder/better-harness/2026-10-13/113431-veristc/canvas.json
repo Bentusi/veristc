@@ -1,0 +1,187 @@
+{
+  "version": "1.0",
+  "title": "VeriSTC Harness 实践分析",
+  "subtitle": "形式化验证编译器 + 安全虚拟机的工程化实践评估",
+  "grade": "B",
+  "score": 78,
+  "sections": [
+    {
+      "id": "overview",
+      "title": "项目概览",
+      "type": "summary",
+      "content": "VeriSTC 将 IEC 61131-3 Structured Text 编译为 SafeASM 字节码，配套 C 语言虚拟机用于安全级仪控设备。项目以 25,397 行 Coq 代码实现编译器并证明 4 大核心定理，以 4,751 行 C 代码实现虚拟机。",
+      "metrics": [
+        { "label": "Harness 评分", "value": "78/100", "color": "#4CAF50" },
+        { "label": "Coq 代码", "value": "25,397 行", "color": "#2196F3" },
+        { "label": "C 代码", "value": "4,751 行", "color": "#FF9800" },
+        { "label": "测试覆盖", "value": "4 层", "color": "#9C27B0" }
+      ]
+    },
+    {
+      "id": "radar",
+      "title": "维度评分",
+      "type": "radar",
+      "axes": [
+        { "label": "构建系统", "value": 72, "max": 100 },
+        { "label": "测试体系", "value": 85, "max": 100 },
+        { "label": "CI/CD", "value": 45, "max": 100 },
+        { "label": "形式化验证", "value": 95, "max": 100 },
+        { "label": "代码架构", "value": 82, "max": 100 },
+        { "label": "文档规范", "value": 88, "max": 100 },
+        { "label": "安全质量", "value": 80, "max": 100 }
+      ]
+    },
+    {
+      "id": "strengths",
+      "title": "核心优势",
+      "type": "list",
+      "items": [
+        {
+          "icon": "🏛️",
+          "title": "形式化验证深度",
+          "description": "25,397 行 Coq 代码，4 大核心定理覆盖完整编译管线语义保持（ST→CoreST→SafeASM→.sasm）"
+        },
+        {
+          "icon": "🔬",
+          "title": "特性探针矩阵",
+          "description": "12 个单特性探针采用 PASS/XFAIL/TRAP 三态设计，显式管理规范与实现的差值，XFAIL→PASS 自动检测防漂移"
+        },
+        {
+          "icon": "🎯",
+          "title": "独立黄金验证",
+          "description": "核电 RPS 通道 38 周期黄金时间线由设计文档手算推导，非 SVM 输出捕获，避免循环论证"
+        },
+        {
+          "icon": "📐",
+          "title": "编译器管线分层",
+          "description": "lexer→parser→function_check→inline→desugar→analysis→typechecker→codegen→global_codegen→encoder，每层独立证明"
+        },
+        {
+          "icon": "📚",
+          "title": "三层文档体系",
+          "description": "Spec（4,745 行规范）→ Plan（6 个 Phase 文件）→ AGENTS.md（304 行项目指引），交叉引用完整"
+        }
+      ]
+    },
+    {
+      "id": "weaknesses",
+      "title": "待改进项",
+      "type": "list",
+      "items": [
+        {
+          "icon": "🚨",
+          "title": "无 CI/CD 自动化",
+          "description": "无 GitHub Actions 或其他 CI 配置，所有测试需手动执行 run_tests.sh。对于安全级项目，回归可能长时间未被发现",
+          "severity": "critical"
+        },
+        {
+          "icon": "⚠️",
+          "title": "Coq 依赖手动维护",
+          "description": "Makefile 中 .vo 文件依赖关系手动声明（21 条），未使用 coqdep 自动生成或迁移到 dune 原生构建",
+          "severity": "warning"
+        },
+        {
+          "icon": "⚠️",
+          "title": "VM 测试构建路径不一致",
+          "description": "test_vm.c 通过 #include 源码内联 loader.c/safeasm_interp.c，而非链接 libvm_core.a，与产品构建方式不同",
+          "severity": "warning"
+        },
+        {
+          "icon": "⚠️",
+          "title": "MISRA-C 未自动检查",
+          "description": "声明使用 MISRA-C 子集但无 cppcheck/PC-lint 集成，禁止 malloc/递归等约束仅靠开发者自律",
+          "severity": "warning"
+        },
+        {
+          "icon": "ℹ️",
+          "title": "无模糊测试/sanitizer",
+          "description": "VM 处理外部 .sasm 输入，但未集成 ASan/UBSan 或 AFL 模糊测试，可能遗漏内存安全问题",
+          "severity": "info"
+        }
+      ]
+    },
+    {
+      "id": "architecture",
+      "title": "数据流架构",
+      "type": "flow",
+      "nodes": [
+        { "id": "st", "label": ".st 源文件", "x": 0, "y": 2 },
+        { "id": "lexer", "label": "lexer.v", "x": 1, "y": 2 },
+        { "id": "parser", "label": "parser.v", "x": 2, "y": 2 },
+        { "id": "fcheck", "label": "function_check.v", "x": 3, "y": 2 },
+        { "id": "inline", "label": "inline.v", "x": 4, "y": 2 },
+        { "id": "desugar", "label": "desugar.v", "x": 5, "y": 2 },
+        { "id": "analysis", "label": "analysis.v", "x": 6, "y": 2 },
+        { "id": "codegen", "label": "codegen.v\n(8200行)", "x": 7, "y": 2 },
+        { "id": "global", "label": "global_codegen.v", "x": 8, "y": 2 },
+        { "id": "encoder", "label": "encoder.v", "x": 9, "y": 2 },
+        { "id": "sasm", "label": ".sasm 字节码", "x": 10, "y": 2 },
+        { "id": "vm", "label": "C VM\n(safeasm_interp.c)", "x": 11, "y": 2 },
+        { "id": "proof", "label": "compiler_correctness.v\n(4 定理)", "x": 5, "y": 0 }
+      ],
+      "edges": [
+        { "from": "st", "to": "lexer" },
+        { "from": "lexer", "to": "parser" },
+        { "from": "parser", "to": "fcheck" },
+        { "from": "fcheck", "to": "inline" },
+        { "from": "inline", "to": "desugar" },
+        { "from": "desugar", "to": "analysis" },
+        { "from": "analysis", "to": "codegen" },
+        { "from": "codegen", "to": "global" },
+        { "from": "global", "to": "encoder" },
+        { "from": "encoder", "to": "sasm" },
+        { "from": "sasm", "to": "vm" },
+        { "from": "proof", "to": "codegen", "style": "dashed", "label": "证明" },
+        { "from": "proof", "to": "global", "style": "dashed" }
+      ]
+    },
+    {
+      "id": "test-pyramid",
+      "title": "测试金字塔",
+      "type": "pyramid",
+      "layers": [
+        { "label": "端到端验证", "count": "1 用例", "detail": "nuclear_rps_esfas_full.st (>10000行) → 全管线", "color": "#E91E63" },
+        { "label": "特性探针矩阵", "count": "12 探针", "detail": "8 PASS + 4 XFAIL，golden 比对", "color": "#9C27B0" },
+        { "label": "VM/SVM 检查", "count": "4 组", "detail": "单元+周期+FUNCTION安全门+CRC+定时", "color": "#FF9800" },
+        { "label": "指令级单元", "count": "4 测试", "detail": "算术/分支/除零/CALL", "color": "#4CAF50" }
+      ]
+    },
+    {
+      "id": "recommendations",
+      "title": "改进建议",
+      "type": "roadmap",
+      "items": [
+        {
+          "priority": "P0",
+          "title": "添加 GitHub Actions CI",
+          "description": "Coq 编译 → OCaml extraction → C 构建 → 全量测试，PR 合并前自动验证",
+          "effort": "中"
+        },
+        {
+          "priority": "P1",
+          "title": "迁移 Coq 构建到 dune",
+          "description": "使用 dune 原生 rocq.theory 模式，自动处理依赖和并行编译",
+          "effort": "中"
+        },
+        {
+          "priority": "P1",
+          "title": "集成 MISRA-C 检查",
+          "description": "cppcheck 或 PC-lint 自动验证 C 代码安全约束",
+          "effort": "低"
+        },
+        {
+          "priority": "P2",
+          "title": "添加 ASan/UBSan 测试变体",
+          "description": "CI 中增加 -fsanitize=address,undefined 构建，捕获内存安全漏洞",
+          "effort": "低"
+        },
+        {
+          "priority": "P2",
+          "title": ".sasm 模糊测试",
+          "description": "使用 AFL 或 libFuzzer 对 loader.c 进行模糊测试，验证 CRC 校验和边界检查",
+          "effort": "中"
+        }
+      ]
+    }
+  ]
+}

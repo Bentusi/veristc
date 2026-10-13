@@ -1311,6 +1311,24 @@ Definition parse (tokens : list token) : option st_program :=
   | _ => None
   end.
 
+(* WS-F：当 parse 失败时，返回一个用于定位的 token 索引（无
+   法定位时返回 None）。主语法错（缺分号/非法 token）会经过
+   expect_token 的"毒化"流，最终由 parse 的 EOF 安全网拒绝，
+   此时 ps_pos 正好停在出错 token 之后，可作为定位线索。 *)
+Definition parse_fail_pos (tokens : list token) : option Z :=
+  let init_state := Build_parser_state tokens 0 in
+  let fuel := (List.length tokens * 32)%nat in
+  match parse_program fuel init_state with
+  | Parse_ok (_, st) =>
+      match peek st with
+      | Some TK_EOF => None
+      | None => None
+      | _ => Some (ps_pos st)
+      end
+  | Parse_error _ => None
+  | Parse_fail => None
+  end.
+
 (* ================================================================
    第 5 部分：正确性定理 (Correctness Theorems)
    ================================================================ *)

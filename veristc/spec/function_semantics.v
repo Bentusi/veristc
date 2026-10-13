@@ -13,6 +13,7 @@
 From Stdlib Require Import List.
 From Stdlib Require Import Bool.
 From Stdlib Require Import ZArith.
+From Stdlib Require Import String.
 From Stdlib Require Import Lia.
 Require Import veristc_spec.safest.
 Require Import veristc_spec.st_semantics.
@@ -90,6 +91,34 @@ Fixpoint lookup_function_pou
       if ident_eq name fn_name then Some (ty, decls, body)
       else lookup_function_pou name rest
   | _ :: rest => lookup_function_pou name rest
+  end.
+
+(* Extract an integer index value from a selector/current value (FOR control
+   variables and CASE selectors are integer-typed in the FUNCTION subset). *)
+Definition case_sel_to_z (v : st_value) : option Z :=
+  match v with
+  | ST_V_INT n => Some n
+  | ST_V_DINT n => Some n
+  | _ => None
+  end.
+
+Definition int_add_val (a b : st_value) : option st_value :=
+  match a, b with
+  | ST_V_INT x, ST_V_INT y => Some (ST_V_INT (x + y))
+  | ST_V_DINT x, ST_V_DINT y => Some (ST_V_DINT (x + y))
+  | ST_V_INT x, ST_V_DINT y => Some (ST_V_DINT (x + y))
+  | ST_V_DINT x, ST_V_INT y => Some (ST_V_DINT (x + y))
+  | _, _ => None
+  end.
+
+(* Select the first CASE branch whose value list matches the selector. *)
+Fixpoint pick_case_branch (z : Z) (bs : list case_element)
+         : option (list st_stmt) :=
+  match bs with
+  | nil => None
+  | CASE_ELEM vals body :: rest =>
+      if match_case_values z vals then Some body
+      else pick_case_branch z rest
   end.
 
 Inductive fn_result : Type :=
@@ -264,6 +293,68 @@ with exec_stmt_fn
               end
           | _ => None
           end
+      | S_CASE sel branches default =>
+          match eval_expr_fn fuel' funs env sel with
+          | Some sv =>
+              match case_sel_to_z sv with
+              | Some z =>
+                  match pick_case_branch z branches with
+                  | Some body => exec_stmts_fn fuel' funs env body
+                  | None =>
+                      match default with
+                      | Some body => exec_stmts_fn fuel' funs env body
+                      | None => Some (FN_CONTINUE env)
+                      end
+                  end
+              | None => None
+              end
+          | None => None
+          end
+      | S_WHILE cond body =>
+          match eval_expr_fn fuel' funs env cond with
+          | Some (ST_V_BOOL true) =>
+              match exec_stmts_fn fuel' funs env body with
+              | Some (FN_RETURN env'') => Some (FN_RETURN env'')
+              | Some (FN_CONTINUE env'') =>
+                  exec_stmt_fn fuel' funs env'' (S_WHILE cond body)
+              | None => None
+              end
+          | Some (ST_V_BOOL false) => Some (FN_CONTINUE env)
+          | _ => None
+          end
+      | S_REPEAT body cond =>
+          match exec_stmts_fn fuel' funs env body with
+          | Some (FN_RETURN env'') => Some (FN_RETURN env'')
+          | Some (FN_CONTINUE env'') =>
+              match eval_expr_fn fuel' funs env'' cond with
+              | Some (ST_V_BOOL false) =>
+                  exec_stmt_fn fuel' funs env'' (S_REPEAT body cond)
+              | Some (ST_V_BOOL true) => Some (FN_CONTINUE env'')
+              | _ => None
+              end
+          | None => None
+          end
+      | S_FOR v start finish mstep body =>
+          match eval_expr_fn fuel' funs env start with
+          | Some sv =>
+              match eval_expr_fn fuel' funs env finish with
+              | Some fv =>
+                  match mstep with
+                  | None =>
+                      exec_for fuel' funs v fv (ST_V_INT 1) body
+                        (update_env env v sv)
+                  | Some se =>
+                      match eval_expr_fn fuel' funs env se with
+                      | Some stepv =>
+                          exec_for fuel' funs v fv stepv body
+                            (update_env env v sv)
+                      | None => None
+                      end
+                  end
+              | None => None
+              end
+          | None => None
+          end
       | S_RETURN => Some (FN_RETURN env)
       | _ => None
       end
@@ -284,6 +375,45 @@ with exec_stmts_fn
               exec_stmts_fn fuel' funs env' rest
           | None => None
           end
+      end
+  end
+
+(* Ascending FOR loop over an integer control variable: the loop continues
+   while the current value is <= the (constant) finish bound; after each body
+   the control variable is advanced by the step. The env already holds the
+   initialized control variable. *)
+with exec_for
+       (fuel : nat) (funs : list st_pou)
+       (v : ident) (finish stepv : st_value) (body : list st_stmt)
+       (env : st_env) {struct fuel} : option fn_result :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match lookup_env env v with
+      | Some cur =>
+          match case_sel_to_z cur, case_sel_to_z finish with
+          | Some c, Some f =>
+              if (c <=? f) then
+                match exec_stmts_fn fuel' funs env body with
+                | Some (FN_RETURN env'') => Some (FN_RETURN env'')
+                | Some (FN_CONTINUE env'') =>
+                    match lookup_env env'' v with
+                    | Some cur' =>
+                        match int_add_val cur' stepv with
+                        | Some next =>
+                            exec_for fuel' funs v finish stepv body
+                              (update_env env'' v next)
+                        | None => None
+                        end
+                    | None => None
+                    end
+                | None => None
+                end
+              else
+                Some (FN_CONTINUE env)
+          | _, _ => None
+          end
+      | None => None
       end
   end.
 
@@ -307,10 +437,165 @@ Lemma lookup_env_update_same :
     lookup_env (update_env env x v) x = Some v.
 Proof.
   induction env as [|hd rest IH]; intros x v.
-  - simpl. destruct x; simpl.
-    reflexivity.
-  - destruct hd as [y old]. simpl.
-    destruct (ident_eq x y) eqn:Hxy.
-    + apply ident_eq_eq in Hxy. subst y. reflexivity.
-    + exact IH.
+  - destruct x as [s]. simpl.
+    rewrite String.eqb_refl. reflexivity.
+  - destruct x as [s]. destruct hd as [[sy] old]. simpl.
+    destruct (String.eqb s sy) eqn:Hxy.
+    + simpl. rewrite String.eqb_refl. reflexivity.
+    + simpl. rewrite Hxy. simpl. apply IH.
+Qed.
+
+(* ================================================================
+   WS-A.4: frame invariants for FUNCTION calls.
+
+   These lemmas capture the properties that WS-B/WS-C rely on when
+   relating a source-level call to the SafeASM Pc_call / Pc_return
+   step: identifier equality is a proper boolean equality, reading a
+   variable is single-valued and unaffected by writes to *other*
+   variables (so the function-result variable stays uniquely
+   determined), argument binding enforces the parameter/argument
+   arity, and executing an empty body preserves the frame.
+   ================================================================ *)
+
+Lemma ident_eq_sym :
+  forall x y : ident, ident_eq x y = ident_eq y x.
+Proof.
+  destruct x as [s1]; destruct y as [s2]. simpl.
+  rewrite String.eqb_sym. reflexivity.
+Qed.
+
+Lemma ident_eq_refl :
+  forall x : ident, ident_eq x x = true.
+Proof.
+  destruct x as [s]. simpl. rewrite String.eqb_refl. reflexivity.
+Qed.
+
+Lemma ident_eq_true_iff :
+  forall x y : ident, ident_eq x y = true <-> x = y.
+Proof.
+  destruct x as [s1]; destruct y as [s2]. simpl. split.
+  - intro H. apply f_equal. apply (proj1 (String.eqb_eq _ _)). exact H.
+  - intro H. injection H as Hs. apply (proj2 (String.eqb_eq _ _)). exact Hs.
+Qed.
+
+(* Writing to one variable never changes the value read for a
+   different variable. *)
+Lemma lookup_env_update_other :
+  forall (env : st_env) (x y : ident) (v : st_value),
+    ident_eq x y = false ->
+    lookup_env (update_env env x v) y = lookup_env env y.
+Proof.
+  induction env as [|hd rest IH]; intros x y v Hne.
+  - simpl. rewrite (ident_eq_sym y x), Hne. reflexivity.
+  - destruct hd as [sy old]. simpl.
+    destruct (ident_eq x sy) eqn:Hx.
+    + simpl. apply ident_eq_true_iff in Hx.
+      rewrite <- Hx.
+      destruct (ident_eq y x) eqn:Hy.
+      * exfalso.
+        apply ident_eq_true_iff in Hy.
+        rewrite Hy in Hne.
+        rewrite ident_eq_refl in Hne. discriminate.
+      * reflexivity.
+    + simpl.
+      destruct (ident_eq y sy) eqn:Hy.
+      * reflexivity.
+      * rewrite (IH x y v Hne). reflexivity.
+Qed.
+
+(* The result-variable read is single-valued: a frame determines at
+   most one value for any name. *)
+Lemma lookup_env_unique :
+  forall (env : st_env) (x : ident) (v1 v2 : st_value),
+    lookup_env env x = Some v1 ->
+    lookup_env env x = Some v2 ->
+    v1 = v2.
+Proof.
+  intros env x v1 v2 H1 H2. rewrite H1 in H2. inversion H2. reflexivity.
+Qed.
+
+(* An empty statement list leaves the frame environment untouched. *)
+Lemma exec_stmts_fn_nil_step :
+  forall fuel funs env,
+    exec_stmts_fn (S fuel) funs env nil = Some (FN_CONTINUE env).
+Proof. reflexivity. Qed.
+
+(* Binding arguments produces a frame of exactly the parameter count. *)
+Lemma bind_args_env_length :
+  forall (params : list ident) (args : list st_value) (env : st_env),
+    bind_args params args = Some env ->
+    List.length env = List.length params.
+Proof.
+  induction params as [|p ps IH]; intros args env H.
+  - destruct args as [|a rest]; simpl in H; try discriminate.
+    inversion H; subst; reflexivity.
+  - destruct args as [|a rest]; simpl in H; try discriminate.
+    destruct (bind_args ps rest) eqn:Hb; try discriminate.
+    inversion H; subst.
+    specialize (IH rest s Hb).
+    simpl. rewrite <- IH. reflexivity.
+Qed.
+
+(* A successful call only happens when the callee is present and its
+   formal input-parameter count matches the actual argument count. *)
+Lemma call_function_fn_arity :
+  forall fuel funs name args v,
+    call_function_fn fuel funs name args = Some v ->
+    exists ty decls body,
+      lookup_function_pou name funs = Some (ty, decls, body) /\
+      List.length (input_param_names decls) = List.length args.
+Proof.
+  intros fuel. induction fuel as [|f IH]; intros funs name args v H.
+  - simpl in H. discriminate.
+  - simpl in H.
+    destruct (lookup_function_pou name funs) as [fo|] eqn:Hlk;
+      try discriminate.
+    destruct fo as [[ty decls] body].
+    destruct (Nat.eqb (List.length (input_param_names decls))
+                      (List.length args)) eqn:Hlen; try discriminate.
+    destruct (bind_args (input_param_names decls) args) eqn:Hb;
+      try discriminate.
+    exists ty, decls, body.
+    split.
+    + reflexivity.
+    + apply (bind_args_length _ _ _ Hb).
+Qed.
+
+(* ================================================================
+   WS-D.2a: 有界 FOR 循环的终止度量（source-level）。
+
+   出厂管线仅放行常数界的 FOR（function_check.v），desugar 后循环统一
+   以 fuel 大步模型执行。exec_for 的递归结构是 {struct fuel}，并且每
+   迭代一次消耗一格 fuel、控制变量按 step 前进。下面两个引理刻画该
+   终止度量：其一，燃料耗尽（fuel = O）时循环不求值；其二，一旦控制
+   变量越过常数上界（c > finish），循环在仅一格 fuel 下立即返回，不再
+   执行循环体——即迭代次数由 (finish - start)/step + 1 有界，与燃料预
+   算一致。
+   ================================================================ *)
+
+(* 燃料耗尽时 exec_for 不求值（fuel 是循环的终止度量）。 *)
+Lemma exec_for_zero_fuel_none :
+  forall (funs : list st_pou) (v : ident)
+         (finish stepv : st_value) (body : list st_stmt) (env : st_env),
+    exec_for O funs v finish stepv body env = None.
+Proof. reflexivity. Qed.
+
+(* 控制变量已超过常数上界：循环立即终止，返回原帧，不执行循环体。 *)
+Lemma exec_for_past_bound_terminates :
+  forall (fuel : nat) (funs : list st_pou) (v : ident)
+         (finish stepv : st_value) (body : list st_stmt) (env : st_env)
+         (cur : st_value) (c f : Z),
+    lookup_env env v = Some cur ->
+    case_sel_to_z cur = Some c ->
+    case_sel_to_z finish = Some f ->
+    (f < c)%Z ->
+    exec_for (S fuel) funs v finish stepv body env = Some (FN_CONTINUE env).
+Proof.
+  intros fuel funs v finish stepv body env cur c f Hv Hc Hf Hlt.
+  cbn [exec_for].
+  rewrite Hv, Hc, Hf.
+  cbn [case_sel_to_z].
+  destruct (Z.leb c f) eqn:Hle.
+  - assert (c <= f)%Z by (apply Z.leb_le; exact Hle). lia.
+  - reflexivity.
 Qed.

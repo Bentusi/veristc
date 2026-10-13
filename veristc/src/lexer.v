@@ -377,6 +377,31 @@ Fixpoint lex_fuel (fuel : nat) (s : string) {struct fuel} : option (list token) 
 Definition lex (s : string) : option (list token) :=
   lex_fuel (S (String.length s)) s.
 
+(* WS-F：词法分析同时产出每个 token 的起始字节偏移（与 lex 的
+   token 序列一一对齐）。仅偏移序列足以供上位机把失败位置映射
+   到行/列，无需改变 token 类型（不触及 parser 与正确性定理）。 *)
+Fixpoint lex_fuel_off
+         (fuel : nat) (full : string) (s : string) {struct fuel}
+         : option (list nat) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      let s1 := skip_trivia s in
+      let off := (String.length full - String.length s1)%nat in
+      match next_token s1 with
+      | None => None
+      | Some (TK_EOF, _) => Some (off :: nil)
+      | Some (tok, rest) =>
+          match lex_fuel_off fuel' full rest with
+          | None => None
+          | Some offs => Some (off :: offs)
+          end
+      end
+  end.
+
+Definition lex_offsets (s : string) : option (list nat) :=
+  lex_fuel_off (S (String.length s)) s s.
+
 (* 辅助函数：将字符串转为 ascii 列表 *)
 Fixpoint string_to_list (s : string) : list ascii :=
   match s with

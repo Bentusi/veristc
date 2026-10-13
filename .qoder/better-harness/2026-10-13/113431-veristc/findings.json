@@ -1,0 +1,366 @@
+{
+  "project": "VeriSTC",
+  "description": "Verified ST Compiler: IEC 61131-3 Structured Text → SafeASM bytecode, with C VM for safety-critical I&C systems",
+  "analyzed_at": "2026-10-13T11:34:31+08:00",
+  "harness_score": 78,
+  "harness_grade": "B",
+  "summary": "VeriSTC 是一个形式化验证编译器项目，将 Coq 证明、OCaml extraction 和 C 虚拟机统一在 Makefile 驱动构建中。项目拥有出色的形式化验证体系和多层测试策略，但缺少 CI/CD 自动化和现代化开发者工具链。",
+  "categories": [
+    {
+      "name": "构建系统",
+      "score": 72,
+      "findings": [
+        {
+          "id": "BUILD-01",
+          "title": "Makefile 统一编排 Coq + C 双语言构建",
+          "severity": "positive",
+          "description": "单个 Makefile（304 行）完整管理 Coq 编译（.v → .vo）、OCaml extraction、C 库编译（vm_core/vm_io/vm_hs 三个静态库）、SVM 可执行程序构建和 RT-Thread 适配层。依赖关系显式声明，增量构建正确。",
+          "impact": "降低构建复杂度，开发者只需 make all 即可完成全栈构建",
+          "evidence": "Makefile:61 — all: coq veristc vm-lib vm-hs vm-io svm"
+        },
+        {
+          "id": "BUILD-02",
+          "title": "Coq 依赖关系手动维护，存在漂移风险",
+          "severity": "warning",
+          "description": "Makefile 中 .vo 文件间的依赖关系（215-235 行）为手动声明。当新增 .v 文件或修改 Import 时，需同步更新 Makefile 依赖。dune 文件（veristc/spec/dune, veristc/src/dune）仅做占位，实际构建由 Makefile 驱动而非 dune。",
+          "impact": "新增模块时可能遗漏依赖导致并行构建失败",
+          "recommendation": "考虑使用 coqdep 自动生成依赖，或迁移到 dune 原生 Coq 构建",
+          "evidence": "Makefile:220-235 — 手动依赖声明；veristc/extraction/dune — 注释 'by Makefile, not dune'"
+        },
+        {
+          "id": "BUILD-03",
+          "title": "OCaml extraction 编译使用 ocamlfind + ocamldep 排序",
+          "severity": "positive",
+          "description": "extraction 后的 OCaml 代码通过 ocamldep -sort 自动确定编译顺序，支持 ocamlfind 和裸 ocamlopt 两种路径（fallback）。stamp 文件避免重复提取。",
+          "impact": "确保 extraction 产物的确定性构建",
+          "evidence": "Makefile:260-268"
+        },
+        {
+          "id": "BUILD-04",
+          "title": "C 构建使用 -O0 调试优化级别",
+          "severity": "info",
+          "description": "CFLAGS 固定为 -Wall -Wextra -std=c11 -g -O0。对于安全级项目，-O0 适合调试但不应是发布配置。无 Release/Debug 构建变体切换机制。",
+          "impact": "生产部署时可能遗漏优化级别配置",
+          "recommendation": "添加 CONFIG=debug|release 变量，release 使用 -O2 -DNDEBUG",
+          "evidence": "Makefile:5 — CFLAGS = -Wall -Wextra -std=c11 -g -O0 -I."
+        },
+        {
+          "id": "BUILD-05",
+          "title": "clean 目标覆盖彻底但引用不存在的目录",
+          "severity": "minor",
+          "description": "clean 目标清理所有 .vo/.cmx/.o 等中间产物，但引用了 vstac/ 目录（可能为历史遗留），该目录在当前项目树中不存在。",
+          "impact": "无功能影响，但代码卫生欠佳",
+          "evidence": "Makefile:303 — cd vstac && dune clean 2>/dev/null || true"
+        }
+      ]
+    },
+    {
+      "name": "测试体系",
+      "score": 85,
+      "findings": [
+        {
+          "id": "TEST-01",
+          "title": "四层测试金字塔：单元 → VM检查 → 特性探针 → 端到端",
+          "severity": "positive",
+          "description": "测试体系分层清晰：(1) test_vm.c — SafeASM 指令级单元测试（算术/分支/除零/CALL）；(2) run_vm_checks.sh — SVM 周期运行、FUNCTION 控制流/纯性/递归拒绝、dump/CRC/周期定时；(3) run_feature_probes.sh — 12 个单特性探针矩阵（PASS/XFAIL/TRAP 三态）；(4) run_nuclear_e2e.sh — >10000 行核电 ST 全管线验证。",
+          "impact": "从指令级到系统级的完整覆盖，回归检测粒度精细",
+          "evidence": "run_tests.sh → run_vm_checks.sh + run_feature_probes.sh + run_channel_e2e.sh + run_nuclear_e2e.sh"
+        },
+        {
+          "id": "TEST-02",
+          "title": "特性探针矩阵的 PASS/XFAIL 三态设计",
+          "severity": "positive",
+          "description": "feature-probes 采用 pass/xfail/trap 三态标记，配合 golden/ 目录的期望输出。关键创新：XFAIL 组若通过测试会触发 RESOLVED 错误，强制开发者升级 golden 并标记为 PASS，防止'意外修复无人知'的漂移。",
+          "impact": "显式管理语言特性的'规范声称'与'实现可用'之间的差值",
+          "evidence": "run_feature_probes.sh:66-67 — RESOLVED 检测；tests/st-examples/feature-probes/README.md"
+        },
+        {
+          "id": "TEST-03",
+          "title": "编译确定性验证",
+          "severity": "positive",
+          "description": "run_channel_e2e.sh 包含编译确定性检查：同一源文件两次编译，逐字节比对 .sasm 输出（cmp），确保编译器输出的唯一性。这与 compiler_correctness.v 中证明的 compile_determinism 定理对应。",
+          "impact": "验证形式化证明的编译确定性属性在实现中成立",
+          "evidence": "run_channel_e2e.sh:33-37 — determinism: compile twice, byte-compare"
+        },
+        {
+          "id": "TEST-04",
+          "title": "负向测试覆盖编译器安全守门",
+          "severity": "positive",
+          "description": "run_vm_checks.sh 验证编译器正确拒绝非法程序：impure FUNCTION（写全局变量）→ 'purity violation'；recursive FUNCTION → 'recursive calls are not supported'；FUNCTION 内 WHILE → 'unsupported control flow'。使用 grep -Fq 精确匹配错误消息。",
+          "impact": "确保编译器的安全约束不被意外放松",
+          "evidence": "run_vm_checks.sh:28-64"
+        },
+        {
+          "id": "TEST-05",
+          "title": "VM 测试使用 #include 源码内联而非链接",
+          "severity": "warning",
+          "description": "test_vm.c 通过 #include \"../../vm/loader.c\" 和 #include \"../../vm/safeasm_interp.c\" 直接内联源码，而非链接静态库。这绕过了正常的编译单元边界，可能掩盖符号可见性问题。",
+          "impact": "测试构建与实际产品构建方式不一致",
+          "recommendation": "改为链接 libvm_core.a，保持测试与产品构建路径一致",
+          "evidence": "tests/vm-tests/test_vm.c:16-17"
+        },
+        {
+          "id": "TEST-06",
+          "title": "无独立 Coq 证明测试目标",
+          "severity": "warning",
+          "description": "Coq 证明验证依赖 make coq（编译所有 .vo 文件），没有独立的 'make verify' 或 'make check-proofs' 目标。证明正确性隐含在 .vo 编译成功中，但缺少显式的 Check/Print 验证步骤。",
+          "impact": "新开发者可能不清楚如何单独验证证明",
+          "recommendation": "添加 verify 目标，明确输出证明状态"
+        },
+        {
+          "id": "TEST-07",
+          "title": "黄金时间线独立推导，非捕获式",
+          "severity": "positive",
+          "description": "nuclear_rps_channel.golden.out 由设计文档手算推导而来（非 SVM 输出捕获），确保测试验证的是'实现符合规范'而非'实现符合自身'。38 周期保护场景逐行比对。",
+          "impact": "避免'自己验证自己'的循环论证风险",
+          "evidence": "run_channel_e2e.sh:2 — 注释'黄金值独立推导自设计文档，非捕获'"
+        }
+      ]
+    },
+    {
+      "name": "CI/CD 与自动化",
+      "score": 45,
+      "findings": [
+        {
+          "id": "CICD-01",
+          "title": "无 GitHub Actions 或其他 CI 配置",
+          "severity": "critical",
+          "description": ".github/workflows/ 目录不存在。所有测试通过手动执行 run_tests.sh 触发。对于安全级仪控项目，缺少自动化持续集成意味着回归可能在下一次手动测试前长时间存在。",
+          "impact": "无法在 PR 合并前自动验证编译正确性和测试通过",
+          "recommendation": "添加 GitHub Actions workflow：Coq 编译 → OCaml extraction → C 构建 → 全量测试，至少在 main 分支启用"
+        },
+        {
+          "id": "CICD-02",
+          "title": "AGENTS.md 提供优秀 AI 辅助开发指引",
+          "severity": "positive",
+          "description": "AGENTS.md（项目级指引）包含完整的项目结构说明、数据流、Phase 导航、核心定理列表、构建命令和命名约定。对 AI 编码助手和人类新成员同样友好。",
+          "impact": "显著降低 AI 辅助开发的上下文获取成本",
+          "evidence": "AGENTS.md — 304 行详细项目指引"
+        },
+        {
+          "id": "CICD-03",
+          "title": "Phase 导航文件提供开发路线可追溯性",
+          "severity": "positive",
+          "description": "plan/ 目录包含 6 个 phase 描述文件（phase0-5），每个文件定义目标、前置依赖和当前状态。AGENTS.md 中的 Phase 导航表标注了完成状态（✅/🚧），与 plan/ 文件交叉引用。",
+          "impact": "项目演进路线清晰可追溯",
+          "evidence": "plan/phase0-spec-skeleton.prompt.md ~ plan/phase5-function-semantics.prompt.md"
+        },
+        {
+          "id": "CICD-04",
+          "title": "无 pre-commit hooks 或 lint 检查",
+          "severity": "warning",
+          "description": "项目未配置 pre-commit hooks、editorconfig 或统一的代码风格检查。C 代码使用 gcc -Wall -Wextra 提供基本警告覆盖，Coq 代码无风格约束。",
+          "impact": "代码风格一致性依赖个人自律",
+          "recommendation": "添加 .editorconfig 和 pre-commit hook（至少检查 Coq/C 基本风格）"
+        }
+      ]
+    },
+    {
+      "name": "形式化验证",
+      "score": 95,
+      "findings": [
+        {
+          "id": "FORMAL-01",
+          "title": "25,397 行 Coq 代码，实现与证明同文件",
+          "severity": "positive",
+          "description": "编译器核心（veristc/）包含 25,397 行 Coq 代码，分为 spec/（7,879 行，形式化规范）和 src/（17,518 行，实现+证明）。采用 CompCert 风格的'实现+证明同文件'模式。codegen.v 单文件 8,200 行，是核心代码生成器。",
+          "impact": "证明与实现不会脱节，每个函数都有对应的正确性定理",
+          "evidence": "wc -l veristc/spec/*.v veristc/src/*.v"
+        },
+        {
+          "id": "FORMAL-02",
+          "title": "4 大核心正确性定理",
+          "severity": "positive",
+          "description": "compiler_correctness.v（2,483 行）证明：(1) compile_st_to_sasm_core — 核心编译正确性；(2) compile_st_to_sasm — 完整管线正确性；(3) noncore_program_rejected — 非核心子集拒绝；(4) compile_determinism — 编译确定性。这些定理覆盖了从源程序到字节码的完整语义保持链。",
+          "impact": "形式化保证编译不引入语义偏差",
+          "evidence": "veristc/spec/compiler_correctness.v"
+        },
+        {
+          "id": "FORMAL-03",
+          "title": "Spec 文档与 Coq 形式化双向交叉引用",
+          "severity": "positive",
+          "description": "spec/ 目录下的 Markdown 文档（safest-spec.md 2232 行、safeasm-spec.md 1134 行、semantics-preservation.md 1379 行）均标注'对应 Coq 文件'。Coq 文件中的定义名与文档中的规则编号（Sx.y/Tx.y/Lx.y）对应。",
+          "impact": "非 Coq 专家也能理解形式化保证的范围和边界",
+          "evidence": "spec/safest-spec.md:6 — '对应 Coq 文件：safest.v（形式化镜像）'"
+        },
+        {
+          "id": "FORMAL-04",
+          "title": "验证边界显式声明，区分已完成与待完成",
+          "severity": "positive",
+          "description": "semantics-preservation.md 开头明确列出'当前验证边界（2026-09-12）'，区分已用 Qed 闭合的定理和仍待完成的部分（如 encoder/CRC 可逆性、数组、FB/函数、RETURN/EXIT 等）。",
+          "impact": "防止过度声称验证覆盖范围",
+          "evidence": "spec/semantics-preservation.md:10-26"
+        },
+        {
+          "id": "FORMAL-05",
+          "title": "Coq → OCaml Extraction 管线完整",
+          "severity": "positive",
+          "description": "extraction.v 配置 Coq → OCaml 提取，生成完整可编译的 OCaml 程序（含 PrimFloat 支持文件）。Makefile 管理提取→编译→可执行文件的完整链路，stamp 文件避免重复提取。",
+          "impact": "形式化证明的编译器可直接用于实际 ST 文件编译",
+          "evidence": "veristc/extraction/extraction.v; Makefile:240-270"
+        }
+      ]
+    },
+    {
+      "name": "代码组织与架构",
+      "score": 82,
+      "findings": [
+        {
+          "id": "ARCH-01",
+          "title": "清晰的编译器管线分层",
+          "severity": "positive",
+          "description": "编译器实现严格分层：lexer.v → parser.v → function_check.v → inline.v → desugar.v → analysis.v → typechecker.v → codegen.v → global_codegen.v → encoder.v。每层有明确的输入/输出类型和对应的 Coq 证明。",
+          "impact": "各层可独立验证和替换",
+          "evidence": "AGENTS.md 数据流图"
+        },
+        {
+          "id": "ARCH-02",
+          "title": "VM 模块化分层：核心/I/O/热备 三个静态库",
+          "severity": "positive",
+          "description": "C 虚拟机分为 libvm_core.a（解释器+加载器）、libvm_io.a（I/O 映射层）和 libvm_hs.a（热备模块），依赖关系为 hs→io→core。RTOS 适配层通过 VM_Interface 函数指针表解耦。",
+          "impact": "支持按需裁剪（如裸机部署可去掉热备模块）",
+          "evidence": "Makefile:12-28; rtos/abstract.h — VM_Interface 定义"
+        },
+        {
+          "id": "ARCH-03",
+          "title": "MISRA-C 约束未强制执行",
+          "severity": "warning",
+          "description": "AGENTS.md 声明 VM 使用 'C11 (MISRA-C 子集)'，禁止 malloc/free 和递归，但无自动化检查工具验证这些约束。仅依赖开发者自律和代码审查。",
+          "impact": "安全级项目应有机读化的编码规范检查",
+          "recommendation": "集成 cppcheck 或 PC-lint 进行 MISRA-C 子集自动检查"
+        },
+        {
+          "id": "ARCH-04",
+          "title": "SasmModule 结构体使用固定大小数组",
+          "severity": "info",
+          "description": "vm.h 中 SasmModule 结构体使用固定大小数组（如 SASM_MAX_FUNCTIONS=4096, SASM_MAX_CODE_POOL_SIZE=2MB），符合安全级无动态分配约束。但 SasmModule 实例化在栈上或静态区时，总大小可能超出栈限制。",
+          "impact": "需注意内存布局，避免栈溢出",
+          "evidence": "vm/vm.h:263-281 — SasmModule 定义"
+        },
+        {
+          "id": "ARCH-05",
+          "title": "RTOS 抽象层设计完整但仅一个实现",
+          "severity": "info",
+          "description": "rtos/abstract.h 定义了完整的 VM_Interface（301 行，含线程/信号量/互斥锁/I/O/定时器/临界区），但仅 rtthread/ 一个适配实现。FreeRTOS 目录存在但为空。",
+          "impact": "抽象层设计质量需通过第二实现来验证",
+          "evidence": "rtos/abstract.h; rtos/freertos/ — 空目录"
+        }
+      ]
+    },
+    {
+      "name": "文档与规范",
+      "score": 88,
+      "findings": [
+        {
+          "id": "DOC-01",
+          "title": "三层文档体系：Spec → 说明文档 → AGENTS.md",
+          "severity": "positive",
+          "description": "(1) spec/ 下三份顶层 Spec（safest-spec 2232行、safeasm-spec 1134行、semantics-preservation 1379行），面向语言设计者和审计方；(2) plan/ 下 6 个 phase 描述文件，面向开发者；(3) AGENTS.md 面向 AI 助手和新成员。三层文档交叉引用，版本控制严格。",
+          "impact": "不同角色都能找到适合的文档入口",
+          "evidence": "spec/*.md; plan/*.prompt.md; AGENTS.md"
+        },
+        {
+          "id": "DOC-02",
+          "title": "Spec 文档版本控制规范",
+          "severity": "positive",
+          "description": "每份 Spec 文档包含版本历史表（v0.1→v1.4）、生效日期、对应 Coq 文件映射。变更说明详细到具体新增/修改的章节和内容。",
+          "impact": "可追溯每次规范变更的影响范围",
+          "evidence": "spec/safest-spec.md:13-22 — 版本历史表"
+        },
+        {
+          "id": "DOC-03",
+          "title": "feature-probes README 维护已知后端差值清单",
+          "severity": "positive",
+          "description": "tests/st-examples/feature-probes/README.md 不仅包含探针矩阵表，还维护了 5 项'已知后端差值'清单，明确标注每个差值的层级（词法/语法/后端/类型）和影响范围。",
+          "impact": "新开发者可快速了解当前实现的已知限制",
+          "evidence": "tests/st-examples/feature-probes/README.md:24-33"
+        }
+      ]
+    },
+    {
+      "name": "安全与质量",
+      "score": 80,
+      "findings": [
+        {
+          "id": "SAFE-01",
+          "title": "CRC32 完整性校验覆盖 .sasm 加载路径",
+          "severity": "positive",
+          "description": "SVM 加载 .sasm 文件时执行 CRC32 校验，损坏文件被拒绝（run_vm_checks.sh 验证了此路径：注入坏字节 → 'sasm_load failed: -2'）。CRC 覆盖 6 字节文件头之后的 Section 数据。",
+          "impact": "防止损坏的字节码在安全级设备上执行",
+          "evidence": "run_vm_checks.sh:81-90 — CRC 损坏测试"
+        },
+        {
+          "id": "SAFE-02",
+          "title": "安全注解内置于 .sasm 格式",
+          "severity": "positive",
+          "description": "SafeASM 二进制格式包含 SafetyAnnotation 段（safety_level、cycle_limit、global_stack_depth、loop_bounds、mem_access_ranges、wcet_funcs），VM 加载时可静态验证。SIL3 安全等级在 dump 中可见。",
+          "impact": "安全元数据与代码一起分发，不会丢失",
+          "evidence": "vm/vm.h:245-255 — SafetyAnnotation 定义"
+        },
+        {
+          "id": "SAFE-03",
+          "title": "VM 运行时无动态内存分配",
+          "severity": "positive",
+          "description": "所有数据结构（SasmModule、VM、Frame）使用固定大小数组。VALUE_STACK_SIZE=1024、FRAME_STACK_SIZE=256、MEMORY_SIZE=1MB 均在编译期确定。符合安全级系统禁止动态分配的要求。",
+          "impact": "消除运行时内存分配失败的不确定性",
+          "evidence": "vm/vm.h:296-312 — VM 结构体定义"
+        },
+        {
+          "id": "SAFE-04",
+          "title": "编译期安全守门：纯性/递归/控制流检查",
+          "severity": "positive",
+          "description": "function_check.v 实现函数纯性检查（禁止写全局变量/输入参数）、递归检测（禁止直接/间接递归）和控制流限制（函数内禁止 WHILE/REPEAT）。违反者在编译期被拒绝，错误消息明确。",
+          "impact": "在编译期而非运行期捕获安全违规",
+          "evidence": "run_vm_checks.sh:28-64 — 负向测试验证"
+        },
+        {
+          "id": "SAFE-05",
+          "title": "无模糊测试或静态分析工具集成",
+          "severity": "warning",
+          "description": "VM 的 C 代码未集成 AddressSanitizer、Valgrind 或模糊测试（如 AFL）。对于处理外部输入（.sasm 文件）的组件，缺少这些工具可能遗漏缓冲区溢出等漏洞。",
+          "impact": "潜在的内存安全问题可能未被发现",
+          "recommendation": "在 CI 中添加 ASan/UBSan 构建变体和 .sasm 模糊测试"
+        }
+      ]
+    }
+  ],
+  "highlights": {
+    "strengths": [
+      "形式化验证深度：25,397 行 Coq 代码，4 大核心定理覆盖完整编译管线语义保持",
+      "测试分层设计：单元→VM检查→特性探针→端到端的四层金字塔，含负向测试和编译确定性验证",
+      "特性探针矩阵的 PASS/XFAIL/TRAP 三态设计，显式管理'规范声称'与'实现可用'的差值",
+      "黄金时间线独立推导（非捕获式），避免循环论证",
+      "三层文档体系（Spec→Plan→AGENTS.md）交叉引用，版本控制规范"
+    ],
+    "weaknesses": [
+      "无 CI/CD 自动化（无 GitHub Actions），所有测试需手动触发",
+      "Coq 依赖关系手动维护，未使用 coqdep 或 dune 原生构建",
+      "VM 测试通过 #include 源码内联，与产品构建路径不一致",
+      "MISRA-C 约束声明但未自动化检查",
+      "无模糊测试或 sanitizer 集成"
+    ],
+    "opportunities": [
+      "迁移 Coq 构建到 dune 原生模式，自动处理依赖和并行",
+      "添加 GitHub Actions CI：Coq 编译 → extraction → C 构建 → 全量测试",
+      "集成 cppcheck/PC-lint 进行 MISRA-C 自动检查",
+      "添加 ASan/UBSan 构建变体用于测试",
+      "实现 FreeRTOS 适配层以验证 RTOS 抽象层的可移植性"
+    ]
+  },
+  "metrics": {
+    "total_coq_lines": 25397,
+    "spec_coq_lines": 7879,
+    "src_coq_lines": 17518,
+    "c_vm_lines": 4751,
+    "st_test_lines": 12580,
+    "c_test_lines": 777,
+    "spec_doc_lines": 4745,
+    "coq_theorems_proven": 4,
+    "test_probes_total": 12,
+    "test_probes_pass": 8,
+    "test_probes_xfail": 4,
+    "build_targets": 15,
+    "makefile_lines": 304,
+    "shell_test_scripts": 5
+  }
+}

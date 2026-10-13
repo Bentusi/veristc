@@ -947,3 +947,143 @@ Definition optimize_inline_program (p : st_program) : st_program :=
      pou_list := pous2;
      io_mapping := p.(io_mapping);
      entry_point := p.(entry_point) |}.
+
+(* ================================================================
+   WS-E：选择性内联的可靠性引理（结构级）
+   ----------------------------------------------------------------
+   本段证明 optimize_inline_program 的两个安全前置：
+   (E.2) 只有“纯叶子单表达式函数”会被 lookup_inlineable_function
+         判定为可内联：函数体恰为单条 result := rhs、rhs 不含任何
+         用户调用 (expr_has_user_call rhs = false)、形参恰为 D_INPUT
+         声明、非输入声明只允许是结果变量本身；
+   (E.3) remove_dead_functions 只会删除 P_FUNCTION，且仅当没有任何
+         其它 POU 引用它；非函数 POU（含入口 PROGRAM）永不因该 pass
+         被删除。
+   这两点是“内联=call-site 替换、删死代码不改变可观测行为”的必要前置；
+   跨 subst_expr 与 call_function_fn 的完整大步值级等价仍为后续前沿。
+   ================================================================ *)
+
+Lemma ident_eq_true :
+  forall x y : ident, ident_eq x y = true -> x = y.
+Proof.
+  destruct x as [s1]; destruct y as [s2]. simpl.
+  intro H. apply f_equal. apply (proj1 (String.eqb_eq _ _)). exact H.
+Qed.
+
+(* E.2：判定可内联蕴含被内联者为纯叶子单表达式函数。 *)
+Lemma lookup_inlineable_function_Some :
+  forall (defs : list st_pou) (name : ident)
+         (params : list ident) (rhs : st_expr),
+    lookup_inlineable_function name defs = Some (params, rhs) ->
+    exists ty decls body,
+      In (P_FUNCTION name ty decls body) defs /\
+      simple_function_body name body = Some rhs /\
+      params = function_param_names decls /\
+      function_inline_decls_ok name decls = true /\
+      expr_has_user_call rhs = false /\
+      expr_nodes_le inline_size_limit rhs = true.
+Proof.
+  induction defs as [|d rest IH]; intros name params rhs H;
+    cbn [lookup_inlineable_function] in H.
+  - discriminate.
+  - destruct d as [pn pdecls pbody | fn fty fdecls fbody | bn bdecls bbody].
+    + destruct (IH name params rhs H)
+        as [ty [decls [body [Hin [Hb [Hp [Hok [Huc Hnl]]]]]]]].
+      exists ty, decls, body.
+      split; [apply List.in_cons; exact Hin |].
+      split; [exact Hb |].
+      split; [exact Hp |].
+      split; [exact Hok |].
+      split; [exact Huc |].
+      exact Hnl.
+    + destruct (ident_eq name fn) eqn:Heq.
+      * apply ident_eq_true in Heq. subst fn.
+        destruct (simple_function_body name fbody) as [rhs'|] eqn:Hb;
+          try discriminate.
+        destruct (function_inline_decls_ok name fdecls
+                    && negb (expr_has_user_call rhs')
+                    && expr_nodes_le inline_size_limit rhs') eqn:Hok.
+        {
+          inversion H; subst.
+          apply (proj1 (andb_true_iff _ _)) in Hok.
+          destruct Hok as [HAB HC].
+          apply (proj1 (andb_true_iff _ _)) in HAB.
+          destruct HAB as [Hok1 HB].
+          exists fty, fdecls, fbody.
+          split; [apply List.in_eq |].
+          split; [exact Hb |].
+          split; [reflexivity |].
+          split; [exact Hok1 |].
+          split; [apply (proj1 (negb_true_iff _)); exact HB |].
+          exact HC.
+        }
+        { discriminate. }
+      * destruct (IH name params rhs H)
+          as [ty [decls [body [Hin [Hb [Hp [Hok [Huc Hnl]]]]]]]].
+        exists ty, decls, body.
+        split; [apply List.in_cons; exact Hin |].
+        split; [exact Hb |].
+        split; [exact Hp |].
+        split; [exact Hok |].
+        split; [exact Huc |].
+        exact Hnl.
+    + destruct (IH name params rhs H)
+        as [ty [decls [body [Hin [Hb [Hp [Hok [Huc Hnl]]]]]]]].
+      exists ty, decls, body.
+      split; [apply List.in_cons; exact Hin |].
+      split; [exact Hb |].
+      split; [exact Hp |].
+      split; [exact Hok |].
+      split; [exact Huc |].
+      exact Hnl.
+Qed.
+
+(* E.2 补充：function_inline_decls_ok 为真时，每个声明要么为输入，
+   要么是名字等于结果变量的局部（不允许其它方向/额外局部）。 *)
+Lemma function_inline_decls_ok_spec :
+  forall (name : ident) (decls : list st_var_decl),
+    function_inline_decls_ok name decls = true ->
+    forall d, In d decls ->
+      var_dir d = D_INPUT \/
+      (var_dir d = D_LOCAL /\ var_name d = name).
+Proof.
+  intros name decls Hok d Hd.
+  unfold function_inline_decls_ok in Hok.
+  rewrite forallb_forall in Hok.
+  specialize (Hok d Hd). cbn beta in Hok.
+  destruct (var_dir d) eqn:Hdr; cbn in Hok;
+    [ left; reflexivity
+    | discriminate
+    | discriminate
+    | right; split; [reflexivity | apply ident_eq_true; exact Hok]
+    | discriminate ].
+Qed.
+
+(* E.3：非函数 POU 不会被 remove_dead_functions 删除。 *)
+Lemma remove_dead_functions_keeps :
+  forall pous pou, In pou pous ->
+    (match pou with
+     | P_FUNCTION _ _ _ _ => True
+     | _ => In pou (remove_dead_functions pous) end).
+Proof.
+  intros pous pou Hin.
+  destruct pou as [pn d b | fn ty d b | bn d b].
+  - unfold remove_dead_functions.
+    apply (proj2 (List.filter_In _ _ _)). split; [exact Hin | reflexivity].
+  - exact I.
+  - unfold remove_dead_functions.
+    apply (proj2 (List.filter_In _ _ _)). split; [exact Hin | reflexivity].
+Qed.
+
+(* E.3：被删除的函数一定没有任何其它 POU 引用它。 *)
+Lemma remove_dead_functions_drop_not_called :
+  forall pous name ty decls body,
+    other_pous_call_name name pous = false ->
+    ~ In (P_FUNCTION name ty decls body) (remove_dead_functions pous).
+Proof.
+  intros pous name ty decls body Hfalse Hin.
+  unfold remove_dead_functions in Hin.
+  apply (proj1 (List.filter_In _ _ _)) in Hin.
+  destruct Hin as [_ HPred]. simpl in HPred.
+  rewrite Hfalse in HPred. discriminate.
+Qed.

@@ -101,6 +101,53 @@ let analysis_has_recursion (result : Analysis.analysis_result) : bool =
 
 let max_call_depth = 256
 
+(* WS-F：把字节偏移映射回源文件的行/列，用于定位解析错误。 *)
+let rec nat_to_int (n : Datatypes.nat) : int =
+  match n with
+  | Datatypes.O -> 0
+  | Datatypes.S rest -> 1 + nat_to_int rest
+
+let offset_to_line_col (src : string) (off : int) : int * int =
+  let len = Stdlib.String.length src in
+  let stop = if off > len then len else if off < 0 then 0 else off in
+  let line = ref 1 in
+  let col = ref 1 in
+  for i = 0 to stop - 1 do
+    if Stdlib.String.get src i = '\n' then (incr line; col := 1)
+    else incr col
+  done;
+  (!line, !col)
+
+let nth_nat (l : Datatypes.nat Datatypes.list) (idx : int) : int option =
+  let rec go i l =
+    match l with
+    | Datatypes.Coq_cons (n, rest) -> if i = 0 then Some (nat_to_int n) else go (i - 1) rest
+    | Datatypes.Coq_nil -> None
+  in
+  if idx < 0 then None else go idx l
+
+(* Lex + parse; on failure report a source location instead of the
+   generic "parser failed" message. *)
+let parse_or_fail (native_src : string) (coq_src : String.string) =
+  let tokens = match L.lex coq_src with
+    | Some ts -> ts
+    | None -> failwith "lexer failed"
+  in
+  match P.parse tokens with
+  | Some p -> p
+  | None ->
+      let msg =
+        match P.parse_fail_pos tokens, L.lex_offsets coq_src with
+        | Some z, Some offs ->
+            (match nth_nat offs (z_to_int z) with
+             | Some off ->
+                 let (ln, col) = offset_to_line_col native_src off in
+                 Printf.sprintf "parser failed at line %d, col %d" ln col
+             | None -> "parser failed")
+        | _ -> "parser failed"
+      in
+      failwith msg
+
 let crc32_table =
   Array.init 256 (fun n ->
       let crc = ref n in
@@ -134,15 +181,9 @@ let attach_crc32 (data : string) : string =
   Bytes.to_string bytes
 
 let compile_st_to_sasm (source_path : string) : string =
-  let source = coq_string_of_native (read_file source_path) in
-  let tokens = match L.lex source with
-    | Some ts -> ts
-    | None -> failwith "lexer failed"
-  in
-  let parsed = match P.parse tokens with
-    | Some p -> p
-    | None -> failwith "parser failed"
-  in
+  let native_src = read_file source_path in
+  let source = coq_string_of_native native_src in
+  let parsed = parse_or_fail native_src source in
   (* 命名冲突 = 编译错误：上游库展开后的扁平命名空间中，
      重复的全局变量/POU 声明会导致两个逻辑变量静默共享内存 *)
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
@@ -181,26 +222,15 @@ let write_file (path : string) (data : string) : unit =
   output_string ch data;
   close_out ch
 
-let rec nat_to_int (n : Datatypes.nat) : int =
-  match n with
-  | Datatypes.O -> 0
-  | Datatypes.S rest -> 1 + nat_to_int rest
-
 let bool_to_string (b : Datatypes.bool) : string =
   match b with
   | Datatypes.Coq_true -> "true"
   | Datatypes.Coq_false -> "false"
 
 let analyze_st (source_path : string) : unit =
-  let source = coq_string_of_native (read_file source_path) in
-  let tokens = match L.lex source with
-    | Some ts -> ts
-    | None -> failwith "lexer failed"
-  in
-  let parsed = match P.parse tokens with
-    | Some p -> p
-    | None -> failwith "parser failed"
-  in
+  let native_src = read_file source_path in
+  let source = coq_string_of_native native_src in
+  let parsed = parse_or_fail native_src source in
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
     failwith "duplicate global variable or POU name (naming conflict)";
   let prepared = match F.prepare_program parsed with

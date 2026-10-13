@@ -39,7 +39,9 @@ Require Import veristc_src.encoder.
 (* 提取 OCaml 代码 *)
 Separate Extraction
   veristc_src.lexer.lex
+  veristc_src.lexer.lex_offsets
   veristc_src.parser.parse
+  veristc_src.parser.parse_fail_pos
   veristc_src.inline.inline_program
   veristc_src.inline.normalize_program
   veristc_src.inline.optimize_inline_program

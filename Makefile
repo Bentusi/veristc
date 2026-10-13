@@ -180,7 +180,7 @@ ROQC = $(COQC)
 ROQCFLAGS = -Q spec veristc_spec -Q src veristc_src
 
 # Spec files (compile in order due to dependencies)
-SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/asm_semantics.v
+SPEC_FILES = spec/safeasm.v spec/safest.v spec/st_semantics.v spec/function_semantics.v spec/asm_semantics.v
 
 # Src files (depend on spec files)
 SRC_FILES = src/encoder.v src/lexer.v src/parser.v src/inline.v src/desugar.v src/analysis.v src/typechecker.v src/function_check.v src/codegen.v src/global_codegen.v
@@ -219,6 +219,7 @@ $(COMPILER_VO): $(COMPILER_SRC) $(SPEC_VO) $(SRC_VO)
 
 $(VERISTC_DIR)/spec/safest.vo:        $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/spec/st_semantics.vo:  $(VERISTC_DIR)/spec/safest.vo
+$(VERISTC_DIR)/spec/function_semantics.vo: $(VERISTC_DIR)/spec/safest.vo $(VERISTC_DIR)/spec/st_semantics.vo
 $(VERISTC_DIR)/spec/asm_semantics.vo: $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/encoder.vo:       $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/src/lexer.vo:         $(VERISTC_DIR)/spec/safest.vo
