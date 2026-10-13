@@ -15,6 +15,7 @@ veristc/
 ├── run_nuclear_e2e.sh            ← 核电 ST→SASM→VM 端到端验证
 ├── run_feature_probes.sh         ← SafeST 特性面探针矩阵（PASS/XFAIL 覆盖表）
 ├── run_channel_e2e.sh            ← 单组 RPS 4 通道保护黄金时间线 e2e
+├── run_misra_check.sh            ← MISRA-C 静态检查（逐文件用例式输出，可传文件参数）
 ├── plan/                         ← Phase 描述文件（见下方导航）
 │   ├── phase0-spec-skeleton.prompt.md
 │   ├── phase1-compiler-proofs.prompt.md
@@ -149,7 +150,7 @@ veristc/
   - 所有数组访问带边界检查
 - **构建工具**：dune（Coq/OCaml）+ Makefile（C）
   - dune 配置文件：`veristc/dune-project`、`veristc/spec/dune`、`veristc/src/dune`、`veristc/extraction/dune`
-  - MISRA-C 检查：`make misra-check`（使用 cppcheck）
+  - MISRA-C 检查：`./run_misra_check.sh`（cppcheck MISRA addon，逐文件用例式输出；`make misra-check` 为其薄封装）
 
 ### `.sasm` 格式
 
@@ -212,7 +213,8 @@ make build-tests
 ./run_nuclear_e2e.sh
 
 # MISRA-C 检查
-make misra-check
+./run_misra_check.sh          # 全部 VM C 源文件；make misra-check 等价转发
+./run_misra_check.sh vm/loader.c vm/svm.c   # 仅检查指定文件（修改时快速回归）
 
 # ASan/UBSan 内存安全检测 (P2)
 ./run_sanitizer.sh

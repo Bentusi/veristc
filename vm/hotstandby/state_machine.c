@@ -71,7 +71,7 @@ const char *hs_state_name(HS_State state)
 
 HS_State hs_get_state(const HotStandbySystem *hs)
 {
-    return hs ? hs->state : HS_STATE_UNINIT;
+    return (hs != NULL) ? hs->state : HS_STATE_UNINIT;
 }
 
 /* ================================================================
@@ -80,13 +80,13 @@ HS_State hs_get_state(const HotStandbySystem *hs)
 
 static void set_state(HotStandbySystem *hs, HS_State new_state)
 {
-    if (!hs) return;
+    if (!hs) { return; }
     HS_State old = hs->state;
     hs->prev_state = old;
     hs->state = new_state;
     hs->state_enter_tick = 0;  /* 由外部填充 */
 
-    if (hs->on_state_change) {
+    if (hs->on_state_change != NULL) {
         hs->on_state_change(old, new_state);
     }
 }
@@ -97,7 +97,7 @@ static void set_state(HotStandbySystem *hs, HS_State new_state)
 
 int hs_handle_event(HotStandbySystem *hs, HS_Event event)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
 
     switch (hs->state) {
 
@@ -122,7 +122,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
             hs->fault_count++;
             if (hs->fault_count >= HS_SYNC_RETRY_MAX) {
                 set_state(hs, HS_STATE_FAILED);
-                if (hs->on_fault_detected) {
+                if (hs->on_fault_detected != NULL) {
                     hs->on_fault_detected(1);  /* 心跳丢失故障 */
                 }
             }
@@ -138,7 +138,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
             hs->fault_count++;
             if (hs->fault_count >= HS_SYNC_RETRY_MAX) {
                 set_state(hs, HS_STATE_FAILED);
-                if (hs->on_fault_detected) {
+                if (hs->on_fault_detected != NULL) {
                     hs->on_fault_detected(2);  /* 同步失败故障 */
                 }
             }
@@ -148,7 +148,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
             /* 检测到严重故障 — 立即切换到 FAILED */
             hs->fault_count++;
             set_state(hs, HS_STATE_FAILED);
-            if (hs->on_fault_detected) {
+            if (hs->on_fault_detected != NULL) {
                 hs->on_fault_detected(3);
             }
             return 0;
@@ -178,7 +178,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
         case HS_EVENT_HEARTBEAT_LOST:
             /* 主站心跳丢失 */
             hs->heartbeat_lost_count++;
-            if (hs->heartbeat_lost_count >= 3) {
+            if (hs->heartbeat_lost_count >= 3u) {
                 /* 连续丢失 → 执行备→主切换 */
                 set_state(hs, HS_STATE_SWITCHING);
             }
@@ -240,7 +240,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
                 set_state(hs, HS_STATE_STANDBY);
             }
             hs->switchover_count++;
-            if (hs->on_switchover) {
+            if (hs->on_switchover != NULL) {
                 hs->on_switchover();
             }
             return 0;
@@ -260,7 +260,7 @@ int hs_handle_event(HotStandbySystem *hs, HS_Event event)
 
 int hs_request_switch(HotStandbySystem *hs)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
     return hs_handle_event(hs, HS_EVENT_SWITCH_REQUEST);
 }
 
@@ -270,14 +270,14 @@ int hs_request_switch(HotStandbySystem *hs)
 
 int hs_init(HotStandbySystem *hs, VM *vm, bool is_master, uint32_t node_id)
 {
-    if (!hs || !vm) return -1;
+    if (!hs || !vm) { return -1; }
 
-    memset(hs, 0, sizeof(HotStandbySystem));
+    (void)memset(hs, 0, sizeof(HotStandbySystem));
 
     hs->vm        = vm;
     hs->is_master = is_master;
     hs->node_id   = node_id;
-    hs->peer_node_id = (node_id == 0) ? 1 : 0;
+    hs->peer_node_id = (node_id == 0u) ? 1u : 0u;
 
     hs->state            = HS_STATE_UNINIT;
     hs->prev_state       = HS_STATE_UNINIT;
@@ -313,7 +313,7 @@ int hs_init(HotStandbySystem *hs, VM *vm, bool is_master, uint32_t node_id)
 
 void hs_deinit(HotStandbySystem *hs)
 {
-    if (!hs) return;
+    if (!hs) { return; }
     hs->running = false;
     hs->initialized = false;
     hs->state = HS_STATE_UNINIT;
@@ -325,14 +325,14 @@ void hs_deinit(HotStandbySystem *hs)
 
 int hs_master_cycle(HotStandbySystem *hs)
 {
-    if (!hs || hs->state != HS_STATE_ACTIVE) return -1;
+    if ((!hs) || (hs->state != HS_STATE_ACTIVE)) { return -1; }
 
     VM *vm = hs->vm;
 
     /* 1. 执行 VM 扫描周期 */
     int ret = vm_run(vm);
     if (ret != VM_OK) {
-        hs_handle_event(hs, HS_EVENT_FAULT_DETECTED);
+        (void)hs_handle_event(hs, HS_EVENT_FAULT_DETECTED);
         return ret;
     }
 
@@ -343,23 +343,23 @@ int hs_master_cycle(HotStandbySystem *hs)
     /* 3. 发送状态快照到备站 */
     ret = hs_sync_send(hs);
     if (ret != 0) {
-        hs_handle_event(hs, HS_EVENT_SYNC_FAILED);
+        (void)hs_handle_event(hs, HS_EVENT_SYNC_FAILED);
     } else {
-        hs_handle_event(hs, HS_EVENT_SYNC_SUCCESS);
+        (void)hs_handle_event(hs, HS_EVENT_SYNC_SUCCESS);
     }
 
     /* 4. 发送心跳 */
-    hs_heartbeat_send(hs);
+    (void)hs_heartbeat_send(hs);
 
     return ret;
 }
 
 int hs_standby_cycle(HotStandbySystem *hs)
 {
-    if (!hs || hs->state != HS_STATE_STANDBY) return -1;
+    if ((!hs) || (hs->state != HS_STATE_STANDBY)) { return -1; }
 
     /* 1. 检查心跳 */
-    hs_heartbeat_check(hs);
+    (void)hs_heartbeat_check(hs);
 
     /* 2. 接收主站快照 */
     int ret = hs_sync_receive(hs, HS_SYNC_TIMEOUT_MS);
@@ -370,15 +370,17 @@ int hs_standby_cycle(HotStandbySystem *hs)
 
 int hs_run_cycle(HotStandbySystem *hs)
 {
-    if (!hs || !hs->running) return -1;
+    if (!hs || !hs->running) { return -1; }
 
     if (hs->state == HS_STATE_ACTIVE) {
         return hs_master_cycle(hs);
-    } else if (hs->state == HS_STATE_STANDBY) {
+    }
+    if (hs->state == HS_STATE_STANDBY) {
         return hs_standby_cycle(hs);
-    } else if (hs->state == HS_STATE_SWITCHING) {
+    }
+    if (hs->state == HS_STATE_SWITCHING) {
         /* 切换完成 */
-        hs_handle_event(hs, HS_EVENT_NONE);
+        (void)hs_handle_event(hs, HS_EVENT_NONE);
         return 0;
     }
 

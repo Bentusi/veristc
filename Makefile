@@ -37,6 +37,10 @@ VM_HS_LIB    = vm/hotstandby/libvm_hs.a
 VM_TEST_DIR  = tests/vm-tests
 VM_TEST_SRCS = $(VM_TEST_DIR)/test_vm.c
 VM_TEST_BIN  = $(VM_TEST_DIR)/test_vm
+IO_TEST_SRCS = $(VM_TEST_DIR)/test_io_mapping.c
+IO_TEST_BIN  = $(VM_TEST_DIR)/test_io_mapping
+HS_TEST_SRCS = $(VM_TEST_DIR)/test_hotstandby.c
+HS_TEST_BIN  = $(VM_TEST_DIR)/test_hotstandby
 SMOKE_ST = tests/st-examples/core_assign.st
 SMOKE_SASM = tests/veristc-tests/out/core_assign.sasm
 FUNCTION_ST = tests/st-examples/function_control_flow.st
@@ -61,13 +65,13 @@ RTTHREAD_SRCS = $(RTTHREAD_DIR)/vm_rtthread.c
 RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
 RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
 
-.PHONY: all build-tests build-vm-test build-smoke build-nuclear-e2e build-channel-e2e
+.PHONY: all build-tests build-vm-test build-io-test build-hs-test build-smoke build-nuclear-e2e build-channel-e2e
 .PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean misra-check dune-build
 .PHONY: sanitize-test run-sanitize build-fuzzer
 
 all: coq veristc vm-lib vm-hs vm-io svm
 
-build-tests: build-vm-test build-smoke build-function-tests build-nuclear-e2e
+build-tests: build-vm-test build-io-test build-hs-test build-smoke build-function-tests build-nuclear-e2e
 
 # ================================================================
 # VM 核心库编译
@@ -113,6 +117,16 @@ build-vm-test: $(VM_TEST_BIN)
 
 $(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h $(VM_CORE_LIB) $(VM_IO_LIB) -lm
 	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+
+build-io-test: $(IO_TEST_BIN)
+
+$(IO_TEST_BIN): $(IO_TEST_SRCS) vm/io/io_mapping.h vm/vm.h $(VM_CORE_LIB) $(VM_IO_LIB)
+	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+
+build-hs-test: $(HS_TEST_BIN)
+
+$(HS_TEST_BIN): $(HS_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h vm/hotstandby/hotstandby.h
+	$(CC) $(CFLAGS) -o $@ $< -lm
 
 # 统一 VM 可执行程序: 默认周期运行; -d 为 dump 模式
 svm: $(SVM_BIN)
@@ -350,38 +364,19 @@ $(SANITIZE_FUZZER_BIN): $(FUZZ_SRC) vm/loader.c vm/vm.h vm/crc32_table.inc
 # MISRA-C 检查 (P1: 集成静态分析工具)
 # ================================================================
 
-MISRA_RULES = 1.1,1.2,2.1,2.2,8.1,8.2,10.1,10.2,10.3,10.4,11.1,11.2,11.3,11.4,11.5,12.1,12.2,13.1,13.2,13.3,14.1,14.2,15.1,15.2,15.3,15.4,15.5,15.6,15.7,16.1,16.2,16.3,16.4,16.5,16.6,16.7,17.1,17.2,17.3,17.4,17.5,17.6,17.7,17.8,18.1,18.2,18.3,18.4,19.1,19.2,19.3,19.4,19.5,19.6,19.7,19.8,19.9,19.10,19.11,19.12,19.13,19.14,19.15,19.16,19.17,20.1,20.2,20.3,20.4,20.5,20.6,20.7,20.8,20.9,20.10,20.11,20.12,20.13,20.14,21.1,21.2,21.3,21.4,21.5,21.6,21.7,21.8,21.9,21.10,21.11,21.12,21.13,21.14,21.15,21.16,21.17,21.18,21.19,21.20,21.21,22.1,22.2,22.3,22.4,22.5,22.6
-
-VM_C_FILES = vm/safeasm_interp.c vm/loader.c vm/svm.c vm/sasm_dump.c \
-             vm/io/io_mapping.c \
-             vm/hotstandby/snapshot.c vm/hotstandby/sync.c \
-             vm/hotstandby/state_machine.c vm/hotstandby/download.c
+# 检查实现已拆分到独立脚本 run_misra_check.sh：逐文件运行 cppcheck MISRA addon，
+# 输出与其它 run_*.sh 一致的用例式结果，便于统计违规与定位修改。
+# 保留 make misra-check 作为薄封装，兼容既有 CI 调用（可直接运行脚本并传入文件参数）。
 
 misra-check:
-	@echo "  [MISRA] Running MISRA-C check on VM source files..."
-	@command -v cppcheck >/dev/null 2>&1 || { echo "ERROR: cppcheck not installed. Install with: sudo apt-get install cppcheck"; exit 1; }
-	cppcheck --enable=all --std=c11 \
-		--suppress=missingIncludeSystem \
-		--suppress=unmatchedSuppression \
-		--addon=misra \
-		-I. -Ivm \
-		$(VM_C_FILES) 2>&1 | tee .misra_report.txt
-	@echo "  [MISRA] Report saved to .misra_report.txt"
-
-# 简化的 MISRA-C 检查（只检查关键规则）
-misra-check-basic:
-	@echo "  [MISRA] Running basic MISRA-C check..."
-	@command -v cppcheck >/dev/null 2>&1 || { echo "ERROR: cppcheck not installed"; exit 1; }
-	cppcheck --enable=warning,style --std=c11 \
-		-I. -Ivm \
-		$(VM_C_FILES)
+	@./run_misra_check.sh
 
 # ================================================================
 # 清理
 # ================================================================
 
 clean:
-	rm -f $(VM_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN) $(SANITIZE_TEST_VM_BIN) $(SANITIZE_SVM_BIN) $(SANITIZE_FUZZER_BIN)
+	rm -f $(VM_TEST_BIN) $(IO_TEST_BIN) $(HS_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN) $(SANITIZE_TEST_VM_BIN) $(SANITIZE_SVM_BIN) $(SANITIZE_FUZZER_BIN)
 	rm -f $(SVM_BIN) $(SMOKE_SASM) $(NUCLEAR_FULL_SASM)
 	rm -f veristc/extraction/veristc veristc/extraction/.extract_stamp
 	rm -f output.sasm output.txt .lia.cache .test_fix.aux
@@ -408,3 +403,4 @@ clean:
 		-name '_build' \) -exec rm -rf {} + 2>/dev/null || true
 	cd veristc && dune clean 2>/dev/null || true
 	rm -f .misra_report.txt
+	rm -rf .misra_reports

@@ -9,35 +9,42 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+. "$ROOT/tests/test_framework.sh"
+
+test_begin "Nuclear RPS Channel E2E"
+
 ST=tests/st-examples/nuclear_rps_channel.st
 OUT=tests/veristc-tests/out/nuclear_rps_channel.sasm
 GOLDEN=tests/st-examples/nuclear_rps_channel.golden.out
 V=veristc/extraction/veristc
 
-echo "[1/4] compile ${ST}"
+step "1/4" "compile ${ST}"
 mkdir -p "$(dirname "$OUT")"
 "$V" -a "$ST"
-"$V" -c "$ST" -o "$OUT"
+assert_ok "compile nuclear RPS channel" "$V" -c "$ST" -o "$OUT"
 
-echo "[2/4] run 38 cycles, diff against golden"
+step "2/4" "run 38 cycles, diff against golden"
 vm/svm -n 38 -p 0 "$OUT" > /tmp/chan.raw 2>&1
 grep "^CHAN " /tmp/chan.raw > /tmp/chan.actual
-if ! diff -u "$GOLDEN" /tmp/chan.actual > /tmp/chan.diff; then
-  echo "channel e2e 输出与黄金时间线不符：" >&2
-  sed -n '1,30p' /tmp/chan.diff >&2
-  exit 1
+if diff -u "$GOLDEN" /tmp/chan.actual > /tmp/chan.diff 2>&1; then
+    echo "  golden diff ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+else
+    echo "  golden diff ... FAIL"
+    sed -n '1,30p' /tmp/chan.diff
+    _TF_FAIL=$((_TF_FAIL + 1))
 fi
-test "$(wc -l < /tmp/chan.actual)" -eq 38
+assert_line_count "/tmp/chan.actual" 38 "38 cycles output"
 echo "  38/38 周期逐行一致（跳闸 t17/19、母线 t19、SI t24、HPI t28、RESET t30、D 再跳闸 t33、母线保持释放）"
 
-echo "[3/4] determinism: compile twice, byte-compare"
+step "3/4" "determinism: compile twice, byte-compare"
 "$V" -c "$ST" -o /tmp/chan-a.sasm
 "$V" -c "$ST" -o /tmp/chan-b.sasm
-cmp /tmp/chan-a.sasm /tmp/chan-b.sasm
-cmp /tmp/chan-a.sasm "$OUT"
+assert_ok "first pair byte-identical" cmp /tmp/chan-a.sasm /tmp/chan-b.sasm
+assert_ok "matches production output" cmp /tmp/chan-a.sasm "$OUT"
 
-echo "[4/4] svm dump (SIL3 / 结构校验)"
+step "4/4" "svm dump (SIL3 / 结构校验)"
 vm/svm -d "$OUT" > /tmp/chan-dump.out
-grep -q '安全等级: SIL3' /tmp/chan-dump.out
+assert_contains "/tmp/chan-dump.out" "安全等级: SIL3" "SIL3 level in dump"
 
-echo "nuclear RPS channel e2e passed"
+check_failures "Nuclear RPS Channel E2E"

@@ -24,20 +24,20 @@
 static void parse_var_name(const uint8_t *dbg_buf, uint32_t dbg_len,
                            uint32_t offset, char *name, uint32_t name_len)
 {
-    if (!dbg_buf || !name || name_len == 0) return;
+    if ((!dbg_buf) || (!name) || (name_len == 0u)) { return; }
 
     name[0] = '\0';
 
-    if (offset >= dbg_len) return;
+    if (offset >= dbg_len) { return; }
 
     uint32_t max_copy = dbg_len - offset;
-    if (max_copy > name_len - 1) max_copy = name_len - 1;
+    if (max_copy > (name_len - 1u)) { max_copy = name_len - 1u; }
 
     for (uint32_t i = 0; i < max_copy; i++) {
         char c = (char)dbg_buf[offset + i];
-        if (c == '\0') break;
+        if (c == '\0') { break; }
         name[i] = c;
-        if (i + 1 < name_len) name[i + 1] = '\0';
+        if ((i + 1u) < name_len) { name[i + 1] = '\0'; }
     }
 }
 
@@ -47,23 +47,23 @@ static void parse_var_name(const uint8_t *dbg_buf, uint32_t dbg_len,
 
 int32_t io_mapping_raw_to_eng(const IOMapEntryRuntime *entry, int32_t raw_val)
 {
-    if (!entry) return raw_val;
+    if (!entry) { return raw_val; }
     /* eng = raw * scale + bias */
-    double result = (double)raw_val * entry->scale_factor + entry->bias;
+    double result = ((double)raw_val * entry->scale_factor) + entry->bias;
     /* 饱和到 int32_t 范围 */
-    if (result > (double)INT32_MAX) return INT32_MAX;
-    if (result < (double)INT32_MIN) return INT32_MIN;
+    if (result > (double)INT32_MAX) { return INT32_MAX; }
+    if (result < (double)INT32_MIN) { return INT32_MIN; }
     return (int32_t)result;
 }
 
 int32_t io_mapping_eng_to_raw(const IOMapEntryRuntime *entry, int32_t eng_val)
 {
-    if (!entry) return eng_val;
+    if (!entry) { return eng_val; }
     /* raw = (eng - bias) / scale, 防止除零 */
-    if (entry->scale_factor == 0.0) return eng_val;
+    if (entry->scale_factor == 0.0) { return eng_val; }
     double result = ((double)eng_val - entry->bias) / entry->scale_factor;
-    if (result > (double)INT32_MAX) return INT32_MAX;
-    if (result < (double)INT32_MIN) return INT32_MIN;
+    if (result > (double)INT32_MAX) { return INT32_MAX; }
+    if (result < (double)INT32_MIN) { return INT32_MIN; }
     return (int32_t)result;
 }
 
@@ -73,10 +73,10 @@ int32_t io_mapping_eng_to_raw(const IOMapEntryRuntime *entry, int32_t eng_val)
 
 bool io_mapping_safety_check(const IOMapEntryRuntime *entry, int32_t value)
 {
-    if (!entry) return false;
+    if (!entry) { return false; }
     /* safety_limit_low > safety_limit_high 表示不限值 */
-    if (entry->safety_limit_low > entry->safety_limit_high) return true;
-    return (value >= entry->safety_limit_low && value <= entry->safety_limit_high);
+    if (entry->safety_limit_low > entry->safety_limit_high) { return true; }
+    return ((value >= entry->safety_limit_low) && (value <= entry->safety_limit_high));
 }
 
 /* ================================================================
@@ -88,9 +88,9 @@ int io_mapping_init(IOMappingTable *table,
                     const uint8_t *dbg_buf,
                     uint32_t dbg_len)
 {
-    if (!table || !module) return -1;
+    if (!table || !module) { return -1; }
 
-    memset(table, 0, sizeof(IOMappingTable));
+    (void)memset(table, 0, sizeof(IOMappingTable));
 
     if (module->iomap_count == 0) {
         table->state = IOMAP_STATE_READY;
@@ -98,7 +98,7 @@ int io_mapping_init(IOMappingTable *table,
     }
 
     uint32_t count = module->iomap_count;
-    if (count > IO_MAX_CHANNELS) count = IO_MAX_CHANNELS;
+    if (count > IO_MAX_CHANNELS) { count = IO_MAX_CHANNELS; }
 
     for (uint32_t i = 0; i < count; i++) {
         IOMapEntryRuntime *rt = &table->entries[i];
@@ -140,16 +140,16 @@ int io_mapping_init(IOMappingTable *table,
 
 int io_mapping_read_all(IOMappingTable *table, VM *vm)
 {
-    if (!table || !vm) return -1;
-    if (table->state != IOMAP_STATE_READY) return -1;
+    if (!table || !vm) { return -1; }
+    if (table->state != IOMAP_STATE_READY) { return -1; }
 
     int ret = 0;
 
     for (uint32_t i = 0; i < table->count; i++) {
         IOMapEntryRuntime *entry = &table->entries[i];
 
-        if (entry->direction != IO_DIR_INPUT) continue;
-        if (entry->fault) continue;
+        if (entry->direction != IO_DIR_INPUT) { continue; }
+        if (entry->fault) { continue; }
 
         /* 通过 RTOS 抽象层读取物理通道 */
         int32_t raw_val;
@@ -181,7 +181,7 @@ int io_mapping_read_all(IOMappingTable *table, VM *vm)
 
         /* 写入 VM 线性内存 (固定 4 字节小端序) */
         uint32_t addr = entry->mem_offset;
-        if (addr + 4 <= vm->memory_size) {
+        if ((addr + 4u) <= vm->memory_size) {
             vm->memory[addr]     = (uint8_t)(eng_val & 0xFF);
             vm->memory[addr + 1] = (uint8_t)((eng_val >> 8) & 0xFF);
             vm->memory[addr + 2] = (uint8_t)((eng_val >> 16) & 0xFF);
@@ -198,21 +198,21 @@ int io_mapping_read_all(IOMappingTable *table, VM *vm)
 
 int io_mapping_write_all(IOMappingTable *table, const VM *vm)
 {
-    if (!table || !vm) return -1;
-    if (table->state != IOMAP_STATE_READY) return -1;
+    if (!table || !vm) { return -1; }
+    if (table->state != IOMAP_STATE_READY) { return -1; }
 
     int ret = 0;
 
     for (uint32_t i = 0; i < table->count; i++) {
         IOMapEntryRuntime *entry = &table->entries[i];
 
-        if (entry->direction != IO_DIR_OUTPUT) continue;
-        if (entry->fault) continue;
+        if (entry->direction != IO_DIR_OUTPUT) { continue; }
+        if (entry->fault) { continue; }
 
         /* 从 VM 线性内存读取值 */
         uint32_t addr = entry->mem_offset;
         int32_t eng_val = 0;
-        if (addr + 4 <= vm->memory_size) {
+        if ((addr + 4u) <= vm->memory_size) {
             eng_val = (int32_t)vm->memory[addr] |
                      ((int32_t)vm->memory[addr + 1] << 8) |
                      ((int32_t)vm->memory[addr + 2] << 16) |
@@ -253,7 +253,7 @@ int io_mapping_write_all(IOMappingTable *table, const VM *vm)
 
 int io_mapping_cycle(IOMappingTable *table, VM *vm)
 {
-    if (!table || !vm) return -1;
+    if (!table || !vm) { return -1; }
 
     /* 1. 读取所有输入 */
     int ret = io_mapping_read_all(table, vm);
@@ -267,7 +267,7 @@ int io_mapping_cycle(IOMappingTable *table, VM *vm)
 
     /* 3. 写入所有输出 */
     int io_ret = io_mapping_write_all(table, vm);
-    if (io_ret != 0) ret = io_ret;
+    if (io_ret != 0) { ret = io_ret; }
 
     return ret;
 }
@@ -279,7 +279,7 @@ int io_mapping_cycle(IOMappingTable *table, VM *vm)
 IOMapEntryRuntime *io_mapping_get_channel(IOMappingTable *table,
                                            uint32_t channel_id)
 {
-    if (!table) return NULL;
+    if (!table) { return NULL; }
 
     for (uint32_t i = 0; i < table->count; i++) {
         if (table->entries[i].channel_id == channel_id) {
@@ -292,7 +292,7 @@ IOMapEntryRuntime *io_mapping_get_channel(IOMappingTable *table,
 IOMapEntryRuntime *io_mapping_get_by_name(IOMappingTable *table,
                                            const char *var_name)
 {
-    if (!table || !var_name) return NULL;
+    if (!table || !var_name) { return NULL; }
 
     for (uint32_t i = 0; i < table->count; i++) {
         if (strncmp(table->entries[i].var_name, var_name, IO_NAME_MAX) == 0) {
@@ -308,7 +308,7 @@ IOMapEntryRuntime *io_mapping_get_by_name(IOMappingTable *table,
 
 void io_mapping_reset(IOMappingTable *table)
 {
-    if (!table) return;
+    if (!table) { return; }
 
     for (uint32_t i = 0; i < table->count; i++) {
         table->entries[i].raw_value  = 0;

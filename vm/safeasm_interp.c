@@ -50,7 +50,7 @@ static inline sasm_value pop_value(VM *vm) {
 }
 
 static inline sasm_value peek_value(const VM *vm, uint32_t depth) {
-    if (depth >= vm->val_stack_ptr) return 0;
+    if (depth >= vm->val_stack_ptr) { return 0; }
     return vm->val_stack[vm->val_stack_ptr - 1 - depth];
 }
 
@@ -59,7 +59,7 @@ static inline sasm_value peek_value(const VM *vm, uint32_t depth) {
    ================================================================ */
 
 static inline Frame *current_frame(VM *vm) {
-    if (vm->frame_stack_ptr == 0) return NULL;
+    if (vm->frame_stack_ptr == 0) { return NULL; }
     return &vm->frame_stack[vm->frame_stack_ptr - 1];
 }
 
@@ -67,7 +67,7 @@ static bool push_frame(VM *vm, uint32_t func_idx) {
     const SasmModule *m = vm->module;
     uint32_t depth_limit = m->safety.global_stack_depth;
 
-    if (func_idx >= m->func_count || func_idx >= SASM_MAX_FUNCTIONS) {
+    if ((func_idx >= m->func_count) || (func_idx >= SASM_MAX_FUNCTIONS)) {
         vm->last_error = VM_ERR_INVALID_OPCODE;
         return false;
     }
@@ -76,7 +76,7 @@ static bool push_frame(VM *vm, uint32_t func_idx) {
         return false;
     }
 
-    if (depth_limit == 0 || depth_limit > FRAME_STACK_SIZE) {
+    if ((depth_limit == 0) || (depth_limit > FRAME_STACK_SIZE)) {
         depth_limit = FRAME_STACK_SIZE;
     }
     if (vm->frame_stack_ptr >= depth_limit) {
@@ -102,7 +102,7 @@ static bool push_frame(VM *vm, uint32_t func_idx) {
         if (m->codes[i].func_idx == func_idx) {
             uint32_t offset = m->codes[i].body_offset;
             uint32_t size = m->codes[i].body_size;
-            if (offset > m->code_size || size > m->code_size - offset) {
+            if ((offset > m->code_size) || (size > (m->code_size - offset))) {
                 vm->frame_stack_ptr--;
                 vm->last_error = VM_ERR_INVALID_OPCODE;
                 return false;
@@ -120,7 +120,7 @@ static bool push_frame(VM *vm, uint32_t func_idx) {
     }
     
     /* 初始化局部变量 */
-    for (uint32_t i = 0; i < frame->local_count && i < SASM_MAX_LOCALS; i++) {
+    for (uint32_t i = 0; (i < frame->local_count) && (i < SASM_MAX_LOCALS); i++) {
         frame->locals[i] = 0;
     }
     
@@ -138,12 +138,12 @@ static void pop_frame(VM *vm) {
    ================================================================ */
 
 static inline uint8_t read_u8_code(const Frame *f, uint32_t *pc) {
-    if (*pc >= f->body_size) return 0;
+    if (*pc >= f->body_size) { return 0; }
     return f->body[(*pc)++];
 }
 
 static inline uint32_t read_u32_code(const Frame *f, uint32_t *pc) {
-    if (*pc + 4 > f->body_size) return 0;
+    if ((*pc + 4) > f->body_size) { return 0; }
     uint32_t val = (uint32_t)f->body[*pc] |
                   ((uint32_t)f->body[*pc + 1] << 8) |
                   ((uint32_t)f->body[*pc + 2] << 16) |
@@ -153,7 +153,7 @@ static inline uint32_t read_u32_code(const Frame *f, uint32_t *pc) {
 }
 
 static inline uint16_t read_u16_code(const Frame *f, uint32_t *pc) {
-    if (*pc + 2 > f->body_size) return 0;
+    if ((*pc + 2) > f->body_size) { return 0; }
     uint16_t val = (uint16_t)f->body[*pc] |
                    ((uint16_t)f->body[*pc + 1] << 8);
     *pc += 2;
@@ -165,14 +165,14 @@ static inline uint16_t read_u16_code(const Frame *f, uint32_t *pc) {
    ================================================================ */
 
 static bool check_mem_bounds(const VM *vm, uint32_t addr, uint32_t size) {
-    if (addr + size > vm->memory_size) {
+    if ((addr + size) > vm->memory_size) {
         return false;
     }
     /* 检查安全注解中的合法访问范围 */
     const SafetyAnnotation *sa = &vm->module->safety;
     for (uint32_t i = 0; i < sa->mem_range_count; i++) {
-        if (addr >= sa->mem_access_ranges[i].low &&
-            addr + size <= sa->mem_access_ranges[i].high) {
+        if ((addr >= sa->mem_access_ranges[i].low) &&
+            ((addr + size) <= sa->mem_access_ranges[i].high)) {
             return true;
         }
     }
@@ -199,8 +199,8 @@ static inline int64_t pop_i64(VM *vm) {
 
 /* Push int64_t value as two i32 values (lo, hi) onto value stack */
 static inline void push_i64(VM *vm, int64_t val) {
-    push_value(vm, (int32_t)(uint32_t)(val & 0xFFFFFFFF));
-    push_value(vm, (int32_t)(uint32_t)((val >> 32) & 0xFFFFFFFF));
+    (void)push_value(vm, (int32_t)(uint32_t)(val & 0xFFFFFFFF));
+    (void)push_value(vm, (int32_t)(uint32_t)((val >> 32) & 0xFFFFFFFF));
 }
 
 /* Pop one int32_t from value stack and interpret as float32 */
@@ -214,7 +214,7 @@ static inline float pop_f32(VM *vm) {
 static inline void push_f32(VM *vm, float f) {
     F32Bits u;
     u.f = f;
-    push_value(vm, u.i);
+    (void)push_value(vm, u.i);
 }
 
 /* Pop two i32 values (lo, hi) from value stack, return combined double64 */
@@ -230,8 +230,8 @@ static inline double pop_f64(VM *vm) {
 static inline void push_f64(VM *vm, double d) {
     F64Bits bits;
     bits.d = d;
-    push_value(vm, (int32_t)(uint32_t)(bits.i & 0xFFFFFFFF));
-    push_value(vm, (int32_t)(uint32_t)((bits.i >> 32) & 0xFFFFFFFF));
+    (void)push_value(vm, (int32_t)(uint32_t)(bits.i & 0xFFFFFFFF));
+    (void)push_value(vm, (int32_t)(uint32_t)((bits.i >> 32) & 0xFFFFFFFF));
 }
 
 /* ================================================================
@@ -240,13 +240,13 @@ static inline void push_f64(VM *vm, double d) {
 
 int vm_execute_cycle(VM *vm) {
     Frame *frame = current_frame(vm);
-    if (!frame) return VM_ERR_INVALID_OPCODE;
+    if (!frame) { return VM_ERR_INVALID_OPCODE; }
     
     while (frame->pc < frame->body_size) {
         /* 周期计数检查 */
         vm->cycle_count++;
-        if (vm->cycle_count > vm->module->safety.cycle_limit &&
-            vm->module->safety.cycle_limit > 0) {
+        if ((vm->cycle_count > vm->module->safety.cycle_limit) &&
+            (vm->module->safety.cycle_limit > 0)) {
             return VM_ERR_CYCLE_LIMIT;
         }
         
@@ -263,7 +263,7 @@ int vm_execute_cycle(VM *vm) {
         case OP_RETURN: {
             pop_frame(vm);
             frame = current_frame(vm);
-            if (!frame) return VM_OK;
+            if (!frame) { return VM_OK; }
             continue;
         }
         
@@ -277,7 +277,7 @@ int vm_execute_cycle(VM *vm) {
         }
         
         case OP_LOOP: {
-            read_u32_code(frame, &pc);
+            (void)read_u32_code(frame, &pc);
             if (frame->block_depth < SASM_MAX_BLOCK_DEPTH) {
                 /* LOOP 的返回地址指向循环开始（pc 之前已指向 body 偏移） */
                 frame->block_stack[frame->block_depth++] = pc - 5;  /* 5 = opcode + u32 */
@@ -314,16 +314,16 @@ int vm_execute_cycle(VM *vm) {
             const SasmModule *m = vm->module;
             uint32_t param_count;
 
-            if (!m || func_idx >= m->func_count || func_idx >= SASM_MAX_FUNCTIONS) {
+            if ((!m) || (func_idx >= m->func_count) || (func_idx >= SASM_MAX_FUNCTIONS)) {
                 return VM_ERR_INVALID_OPCODE;
             }
             if (m->funcs[func_idx].type_idx >= m->type_count) {
                 return VM_ERR_INVALID_OPCODE;
             }
             param_count = m->types[m->funcs[func_idx].type_idx].param_count;
-            if (param_count > m->funcs[func_idx].local_count ||
-                param_count > SASM_MAX_PARAMS ||
-                vm->val_stack_ptr < param_count) {
+            if ((param_count > m->funcs[func_idx].local_count) ||
+                (param_count > SASM_MAX_PARAMS) ||
+                (vm->val_stack_ptr < param_count)) {
                 return VM_ERR_STACK_UNDERFLOW;
             }
 
@@ -343,21 +343,21 @@ int vm_execute_cycle(VM *vm) {
         }
         
         case OP_DROP:
-            pop_value(vm);
+            (void)pop_value(vm);
             break;
             
         case OP_SELECT: {
             sasm_value c = pop_value(vm);
             sasm_value v1 = pop_value(vm);
             sasm_value v2 = pop_value(vm);
-            push_value(vm, c ? v1 : v2);
+            (void)push_value(vm, c ? v1 : v2);
             break;
         }
         
         case OP_LOCAL_GET: {
             uint32_t idx = read_u32_code(frame, &pc);
             if (idx < frame->local_count) {
-                push_value(vm, frame->locals[idx]);
+                (void)push_value(vm, frame->locals[idx]);
             }
             break;
         }
@@ -381,113 +381,113 @@ int vm_execute_cycle(VM *vm) {
         
         case OP_I32_CONST: {
             int32_t val = (int32_t)read_u32_code(frame, &pc);
-            push_value(vm, val);
+            (void)push_value(vm, val);
             break;
         }
         
         case OP_I32_EQZ: {
             sasm_value v = pop_value(vm);
-            push_value(vm, v == 0 ? 1 : 0);
+            (void)push_value(vm, (v == 0) ? 1 : 0);
             break;
         }
         
         case OP_I32_EQ: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 == v2 ? 1 : 0);
+            (void)push_value(vm, (v1 == v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_NE: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 != v2 ? 1 : 0);
+            (void)push_value(vm, (v1 != v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_LT_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 < v2 ? 1 : 0);
+            (void)push_value(vm, (v1 < v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_GT_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 > v2 ? 1 : 0);
+            (void)push_value(vm, (v1 > v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_LE_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 <= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 <= v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_GE_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 >= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 >= v2) ? 1 : 0);
             break;
         }
         
         case OP_I32_ADD: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 + v2);
+            (void)push_value(vm, v1 + v2);
             break;
         }
         
         case OP_I32_SUB: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 - v2);
+            (void)push_value(vm, v1 - v2);
             break;
         }
         
         case OP_I32_MUL: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 * v2);
+            (void)push_value(vm, v1 * v2);
             break;
         }
         
         case OP_I32_DIV_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
-            push_value(vm, v1 / v2);
+            if (v2 == 0) { return VM_ERR_DIV_BY_ZERO; }
+            (void)push_value(vm, v1 / v2);
             break;
         }
         
         case OP_I32_REM_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
-            push_value(vm, v1 % v2);
+            if (v2 == 0) { return VM_ERR_DIV_BY_ZERO; }
+            (void)push_value(vm, v1 % v2);
             break;
         }
         
         case OP_I32_AND: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 & v2);
+            (void)push_value(vm, v1 & v2);
             break;
         }
         
         case OP_I32_OR: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 | v2);
+            (void)push_value(vm, v1 | v2);
             break;
         }
         
         case OP_I32_XOR: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 ^ v2);
+            (void)push_value(vm, v1 ^ v2);
             break;
         }
         
@@ -507,7 +507,7 @@ int vm_execute_cycle(VM *vm) {
                          ((int32_t)vm->memory[mem_addr + 1] << 8) |
                          ((int32_t)vm->memory[mem_addr + 2] << 16) |
                          ((int32_t)vm->memory[mem_addr + 3] << 24);
-            push_value(vm, val);
+            (void)push_value(vm, val);
             break;
         }
         
@@ -521,20 +521,20 @@ int vm_execute_cycle(VM *vm) {
             uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
 
             if (mem_addr == SASM_PRINT_PORT) {
-                printf("%d, ", val);
-                fflush(stdout);
+                (void)printf("%d, ", val);
+                (void)fflush(stdout);
                 break;
             }
 
             if (mem_addr == SASM_CHAR_PRINT_PORT) {
-                printf("%c", (int)val);
-                fflush(stdout);
+                (void)printf("%c", (int)val);
+                (void)fflush(stdout);
                 break;
             }
 
             if (mem_addr == SASM_COUNTER_PRINT_PORT) {
-                printf("[cycle_counter] %d\n", val);
-                fflush(stdout);
+                (void)printf("[cycle_counter] %d\n", val);
+                (void)fflush(stdout);
                 break;
             }
             
@@ -550,7 +550,7 @@ int vm_execute_cycle(VM *vm) {
         }
         
         case OP_SAFE_ASSERT: {
-            read_u8_code(frame, &pc);
+            (void)read_u8_code(frame, &pc);
             uint32_t limit = read_u32_code(frame, &pc);
             (void)limit;
             /* SAFE_ASSERT 在运行时仅记录，不阻断执行 */
@@ -562,10 +562,10 @@ int vm_execute_cycle(VM *vm) {
             uint32_t low  = read_u32_code(frame, &pc);
             uint32_t high = read_u32_code(frame, &pc);
             sasm_value idx = pop_value(vm);
-            if ((uint32_t)idx < low || (uint32_t)idx >= high) {
+            if (((uint32_t)idx < low) || ((uint32_t)idx >= high)) {
                 return VM_ERR_MEM_OUT_OF_BOUNDS;
             }
-            push_value(vm, idx);  /* 将索引放回栈顶供后续 LOAD 使用 */
+            (void)push_value(vm, idx);  /* 将索引放回栈顶供后续 LOAD 使用 */
             break;
         }
         
@@ -573,14 +573,14 @@ int vm_execute_cycle(VM *vm) {
         case OP_I32_SHL: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 << (v2 & 0x1F));
+            (void)push_value(vm, v1 << (v2 & 0x1F));
             break;
         }
         
         case OP_I32_SHR_S: {
             sasm_value v2 = pop_value(vm);
             sasm_value v1 = pop_value(vm);
-            push_value(vm, v1 >> (v2 & 0x1F));
+            (void)push_value(vm, v1 >> (v2 & 0x1F));
             break;
         }
         
@@ -589,7 +589,7 @@ int vm_execute_cycle(VM *vm) {
             sasm_value v1 = pop_value(vm);
             uint32_t shift = (uint32_t)v2 & 0x1F;
             uint32_t val = (uint32_t)v1;
-            push_value(vm, (int32_t)((val << shift) | (val >> (32 - shift))));
+            (void)push_value(vm, (int32_t)((val << shift) | (val >> (32 - shift))));
             break;
         }
         
@@ -598,7 +598,7 @@ int vm_execute_cycle(VM *vm) {
             sasm_value v1 = pop_value(vm);
             uint32_t shift = (uint32_t)v2 & 0x1F;
             uint32_t val = (uint32_t)v1;
-            push_value(vm, (int32_t)((val >> shift) | (val << (32 - shift))));
+            (void)push_value(vm, (int32_t)((val >> shift) | (val << (32 - shift))));
             break;
         }
         
@@ -613,49 +613,49 @@ int vm_execute_cycle(VM *vm) {
         /* ===== I64 比较 (v1.1) ===== */
         case OP_I64_EQZ: {
             int64_t v = pop_i64(vm);
-            push_value(vm, v == 0 ? 1 : 0);
+            (void)push_value(vm, (v == 0) ? 1 : 0);
             break;
         }
         
         case OP_I64_EQ: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 == v2 ? 1 : 0);
+            (void)push_value(vm, (v1 == v2) ? 1 : 0);
             break;
         }
         
         case OP_I64_NE: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 != v2 ? 1 : 0);
+            (void)push_value(vm, (v1 != v2) ? 1 : 0);
             break;
         }
         
         case OP_I64_LT_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 < v2 ? 1 : 0);
+            (void)push_value(vm, (v1 < v2) ? 1 : 0);
             break;
         }
         
         case OP_I64_LE_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 <= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 <= v2) ? 1 : 0);
             break;
         }
         
         case OP_I64_GT_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 > v2 ? 1 : 0);
+            (void)push_value(vm, (v1 > v2) ? 1 : 0);
             break;
         }
         
         case OP_I64_GE_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            push_value(vm, v1 >= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 >= v2) ? 1 : 0);
             break;
         }
         
@@ -684,7 +684,7 @@ int vm_execute_cycle(VM *vm) {
         case OP_I64_DIV_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
+            if (v2 == 0) { return VM_ERR_DIV_BY_ZERO; }
             push_i64(vm, v1 / v2);
             break;
         }
@@ -692,7 +692,7 @@ int vm_execute_cycle(VM *vm) {
         case OP_I64_REM_S: {
             int64_t v2 = pop_i64(vm);
             int64_t v1 = pop_i64(vm);
-            if (v2 == 0) return VM_ERR_DIV_BY_ZERO;
+            if (v2 == 0) { return VM_ERR_DIV_BY_ZERO; }
             push_i64(vm, v1 % v2);
             break;
         }
@@ -774,49 +774,49 @@ int vm_execute_cycle(VM *vm) {
         case OP_F32_EQ: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 == v2 ? 1 : 0);
+            (void)push_value(vm, (v1 == v2) ? 1 : 0);
             break;
         }
         
         case OP_F32_NE: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 != v2 ? 1 : 0);
+            (void)push_value(vm, (v1 != v2) ? 1 : 0);
             break;
         }
         
         case OP_F32_LT: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 < v2 ? 1 : 0);
+            (void)push_value(vm, (v1 < v2) ? 1 : 0);
             break;
         }
         
         case OP_F32_LE: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 <= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 <= v2) ? 1 : 0);
             break;
         }
         
         case OP_F32_GT: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 > v2 ? 1 : 0);
+            (void)push_value(vm, (v1 > v2) ? 1 : 0);
             break;
         }
         
         case OP_F32_GE: {
             float v2 = pop_f32(vm);
             float v1 = pop_f32(vm);
-            push_value(vm, v1 >= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 >= v2) ? 1 : 0);
             break;
         }
         
         /* ===== F32 一元运算 (v1.1) ===== */
         case OP_F32_ABS: {
             float v = pop_f32(vm);
-            push_f32(vm, v < 0.0f ? -v : v);
+            push_f32(vm, (v < 0.0f) ? -v : v);
             break;
         }
         
@@ -874,49 +874,49 @@ int vm_execute_cycle(VM *vm) {
         case OP_F64_EQ: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 == v2 ? 1 : 0);
+            (void)push_value(vm, (v1 == v2) ? 1 : 0);
             break;
         }
         
         case OP_F64_NE: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 != v2 ? 1 : 0);
+            (void)push_value(vm, (v1 != v2) ? 1 : 0);
             break;
         }
         
         case OP_F64_LT: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 < v2 ? 1 : 0);
+            (void)push_value(vm, (v1 < v2) ? 1 : 0);
             break;
         }
         
         case OP_F64_LE: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 <= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 <= v2) ? 1 : 0);
             break;
         }
         
         case OP_F64_GT: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 > v2 ? 1 : 0);
+            (void)push_value(vm, (v1 > v2) ? 1 : 0);
             break;
         }
         
         case OP_F64_GE: {
             double v2 = pop_f64(vm);
             double v1 = pop_f64(vm);
-            push_value(vm, v1 >= v2 ? 1 : 0);
+            (void)push_value(vm, (v1 >= v2) ? 1 : 0);
             break;
         }
         
         /* ===== F64 一元运算 (v1.1) ===== */
         case OP_F64_ABS: {
             double v = pop_f64(vm);
-            push_f64(vm, v < 0.0 ? -v : v);
+            push_f64(vm, (v < 0.0) ? -v : v);
             break;
         }
         
@@ -945,7 +945,7 @@ int vm_execute_cycle(VM *vm) {
                 return VM_ERR_MEM_OUT_OF_BOUNDS;
             }
             
-            push_value(vm, (uint8_t)vm->memory[mem_addr]);
+            (void)push_value(vm, (uint8_t)vm->memory[mem_addr]);
             break;
         }
         
@@ -969,7 +969,7 @@ int vm_execute_cycle(VM *vm) {
         /* ===== 类型转换 (v1.1) ===== */
         case OP_I32_WRAP_I64: {
             int64_t v = pop_i64(vm);
-            push_value(vm, (int32_t)(uint32_t)(v & 0xFFFFFFFF));
+            (void)push_value(vm, (int32_t)(uint32_t)(v & 0xFFFFFFFF));
             break;
         }
         
@@ -981,13 +981,13 @@ int vm_execute_cycle(VM *vm) {
         
         case OP_I32_TRUNC_F32_S: {
             float v = pop_f32(vm);
-            push_value(vm, (int32_t)v);
+            (void)push_value(vm, (int32_t)v);
             break;
         }
         
         case OP_I32_TRUNC_F64_S: {
             double v = pop_f64(vm);
-            push_value(vm, (int32_t)v);
+            (void)push_value(vm, (int32_t)v);
             break;
         }
         
@@ -1011,7 +1011,7 @@ int vm_execute_cycle(VM *vm) {
         
         frame->pc = pc;
         frame = current_frame(vm);
-        if (!frame) break;
+        if (!frame) { break; }
     }
     
     return VM_OK;
@@ -1028,15 +1028,15 @@ int vm_execute_cycle(VM *vm) {
  * 返回: 0 = 成功, -1 = 失败
  */
 int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
-    if (!vm || !module) return -1;
+    if ((!vm) || (!module)) { return -1; }
     
-    memset(vm, 0, sizeof(VM));
+    (void)memset(vm, 0, sizeof(VM));
     
     vm->module = module;
-    vm->memory_size = (memory_size > 0 && memory_size <= MEMORY_SIZE) 
+    vm->memory_size = ((memory_size > 0) && (memory_size <= MEMORY_SIZE))
                        ? memory_size : MEMORY_SIZE;
-    vm->memory_size = (module->total_memory_size > 0 && 
-                       module->total_memory_size <= MEMORY_SIZE)
+    vm->memory_size = ((module->total_memory_size > 0) &&
+                       (module->total_memory_size <= MEMORY_SIZE))
                        ? module->total_memory_size : vm->memory_size;
     
     vm->val_stack_ptr = 0;
@@ -1047,7 +1047,7 @@ int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
     vm->last_error = VM_OK;
     
     /* 清空内存 */
-    memset(vm->memory, 0, vm->memory_size);
+    (void)memset(vm->memory, 0, vm->memory_size);
     
     return 0;
 }
@@ -1058,7 +1058,7 @@ int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
  * 返回: 0 = 正常结束, 其他 = 错误码
  */
 int vm_run(VM *vm) {
-    if (!vm || !vm->module) return -1;
+    if (!vm || !vm->module) { return -1; }
     
     vm->cycle_count = 0;
     vm->max_frame_depth = 0;
@@ -1083,7 +1083,7 @@ int vm_run(VM *vm) {
 
 int vm_scan_cycle(VM *vm, void *iomap)
 {
-    if (!vm) return -1;
+    if (!vm) { return -1; }
     if (!iomap) {
         /* 无 I/O 映射: 仅执行 VM */
         return vm_run(vm);
@@ -1099,6 +1099,6 @@ int vm_scan_cycle(VM *vm, void *iomap)
  * vm_get_result - 获取执行结果（栈顶值）
  */
 sasm_value vm_get_result(const VM *vm) {
-    if (vm->val_stack_ptr == 0) return 0;
+    if (vm->val_stack_ptr == 0) { return 0; }
     return vm->val_stack[0];
 }

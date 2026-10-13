@@ -9,6 +9,10 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+. "$ROOT/tests/test_framework.sh"
+
+test_begin "SafeST Feature Probes"
+
 V=veristc/extraction/veristc
 SVM=vm/svm
 SRC=tests/st-examples/feature-probes
@@ -78,5 +82,8 @@ done
 
 echo "----"
 echo "probes: PASS=$np XFAIL=$nx FAIL=$nf"
-[ "$nf" = 0 ] || exit 1
-exit 0
+
+# Map to framework counters for check_failures
+_TF_PASS=$np
+_TF_FAIL=$nf
+check_failures "SafeST Feature Probes"

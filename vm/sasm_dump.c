@@ -200,19 +200,19 @@ static const char *value_type_name(uint8_t vt) {
    ================================================================ */
 
 static inline uint8_t  r8(const uint8_t **p, uint32_t *len) {
-    if (*len < 1) return 0;
+    if (*len < 1) { return 0; }
     uint8_t v = (*p)[0]; *p += 1; *len -= 1; return v;
 }
 
 static inline uint32_t r32(const uint8_t **p, uint32_t *len) {
-    if (*len < 4) return 0;
+    if (*len < 4) { return 0; }
     uint32_t v = (uint32_t)(*p)[0] | ((uint32_t)(*p)[1]<<8) |
                  ((uint32_t)(*p)[2]<<16) | ((uint32_t)(*p)[3]<<24);
     *p += 4; *len -= 4; return v;
 }
 
 static inline uint16_t r16(const uint8_t **p, uint32_t *len) {
-    if (*len < 2) return 0;
+    if (*len < 2) { return 0; }
     uint16_t v = (uint16_t)(*p)[0] | ((uint16_t)(*p)[1]<<8);
     *p += 2; *len -= 2; return v;
 }
@@ -229,46 +229,46 @@ static void disasm_code(const uint8_t *body, uint32_t body_size, int indent) {
         uint32_t offset = (uint32_t)(p - body);
         uint8_t op = r8(&p, &remaining);
         
-        printf("%*s  [%4u] ", indent, "", offset);
+        (void)printf("%*s  [%4u] ", indent, "", offset);
         
         /* 打印操作码十六进制 */
-        printf("%02X ", op);
+        (void)printf("%02X ", op);
         
-        if (op_has_u32_imm(op)) {
+        if (op_has_u32_imm(op) != 0) {
             uint32_t imm = r32(&p, &remaining);
-            printf("          %-20s %u (0x%X)\n", opcode_name(op), imm, imm);
-        } else if (op_has_i64_imm(op)) {
+            (void)printf("          %-20s %u (0x%X)\n", opcode_name(op), imm, imm);
+        } else if (op_has_i64_imm(op) != 0) {
             uint32_t lo = r32(&p, &remaining);
             uint32_t hi = r32(&p, &remaining);
             uint64_t imm = (uint64_t)lo | ((uint64_t)hi << 32);
-            printf("     %-20s %llu (0x%llX)\n", opcode_name(op),
+            (void)printf("     %-20s %llu (0x%llX)\n", opcode_name(op),
                    (unsigned long long)imm, (unsigned long long)imm);
-        } else if (op_has_f32_imm(op)) {
+        } else if (op_has_f32_imm(op) != 0) {
             uint32_t bits = r32(&p, &remaining);
             float f;
-            memcpy(&f, &bits, sizeof(f));
-            printf("     %-20s %g\n", opcode_name(op), f);
-        } else if (op_has_f64_imm(op)) {
+            (void)memcpy(&f, &bits, sizeof(f));
+            (void)printf("     %-20s %g\n", opcode_name(op), f);
+        } else if (op_has_f64_imm(op) != 0) {
             uint32_t lo = r32(&p, &remaining);
             uint32_t hi = r32(&p, &remaining);
             uint64_t bits = (uint64_t)lo | ((uint64_t)hi << 32);
             double d;
-            memcpy(&d, &bits, sizeof(d));
-            printf("     %-20s %g\n", opcode_name(op), d);
-        } else if (op_has_mem_arg(op)) {
+            (void)memcpy(&d, &bits, sizeof(d));
+            (void)printf("     %-20s %g\n", opcode_name(op), d);
+        } else if (op_has_mem_arg(op) != 0) {
             uint16_t align  = r16(&p, &remaining);
             uint16_t offset2 = r16(&p, &remaining);
-            printf("     %-20s align=%u offset=%u\n", opcode_name(op), align, offset2);
-        } else if (op_has_u32_imm2(op)) {
+            (void)printf("     %-20s align=%u offset=%u\n", opcode_name(op), align, offset2);
+        } else if (op_has_u32_imm2(op) != 0) {
             uint32_t low  = r32(&p, &remaining);
             uint32_t high = r32(&p, &remaining);
-            printf("     %-20s [%u, %u)\n", opcode_name(op), low, high);
+            (void)printf("     %-20s [%u, %u)\n", opcode_name(op), low, high);
         } else if (op == OP_SAFE_ASSERT) {
             uint8_t atype = r8(&p, &remaining);
             uint32_t alim = r32(&p, &remaining);
-            printf("     %-20s type=%u limit=%u\n", opcode_name(op), atype, alim);
+            (void)printf("     %-20s type=%u limit=%u\n", opcode_name(op), atype, alim);
         } else {
-            printf("          %-20s\n", opcode_name(op));
+            (void)printf("          %-20s\n", opcode_name(op));
         }
     }
 }
@@ -278,7 +278,7 @@ static void disasm_code(const uint8_t *body, uint32_t body_size, int indent) {
    ================================================================ */
 
 int sasm_dump_file(const char *path) {
-    if (!path) return 1;
+    if (!path) { return 1; }
 
     /* 读取文件 */
     FILE *fp = fopen(path, "rb");
@@ -287,30 +287,30 @@ int sasm_dump_file(const char *path) {
         return 1;
     }
     
-    fseek(fp, 0, SEEK_END);
+    (void)fseek(fp, 0, SEEK_END);
     long fsize = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    (void)fseek(fp, 0, SEEK_SET);
     
     if (fsize < 10) {
-        fprintf(stderr, "文件太小\n");
-        fclose(fp);
+        (void)fprintf(stderr, "文件太小\n");
+        (void)fclose(fp);
         return 1;
     }
     
     uint8_t *buf = (uint8_t *)malloc(fsize);
     if (!buf) {
-        fprintf(stderr, "内存分配失败\n");
-        fclose(fp);
+        (void)fprintf(stderr, "内存分配失败\n");
+        (void)fclose(fp);
         return 1;
     }
     
     if (fread(buf, 1, fsize, fp) != (size_t)fsize) {
         perror("读取失败");
         free(buf);
-        fclose(fp);
+        (void)fclose(fp);
         return 1;
     }
-    fclose(fp);
+    (void)fclose(fp);
     
     /* ============================================================
        解析并打印
@@ -319,34 +319,34 @@ int sasm_dump_file(const char *path) {
     const uint8_t *p = buf;
     uint32_t len = (uint32_t)fsize;
     
-    printf("╔══════════════════════════════════════════════════════╗\n");
-    printf("║  SafeASM Dump: %-40s ║\n", path);
-    printf("╚══════════════════════════════════════════════════════╝\n\n");
+    (void)printf("╔══════════════════════════════════════════════════════╗\n");
+    (void)printf("║  SafeASM Dump: %-40s ║\n", path);
+    (void)printf("╚══════════════════════════════════════════════════════╝\n\n");
     
     /* --- 文件头 --- */
     uint32_t magic = r32(&p, &len);
     uint8_t  ver   = r8(&p, &len);
     uint8_t  flags = r8(&p, &len);
     
-    printf("[Header]\n");
-    printf("  Magic:   0x%08X (%c%c%c%c)\n", magic,
+    (void)printf("[Header]\n");
+    (void)printf("  Magic:   0x%08X (%c%c%c%c)\n", magic,
            (magic>>0)&0xFF, (magic>>8)&0xFF, (magic>>16)&0xFF, (magic>>24)&0xFF);
-    printf("  Version: %u", ver);
-    if (ver != 1) printf(" ⚠ expected 1");
-    printf("\n");
-    printf("  Flags:   0x%02X\n", flags);
+    (void)printf("  Version: %u", ver);
+    if (ver != 1) { (void)printf(" ⚠ expected 1"); }
+    (void)printf("\n");
+    (void)printf("  Flags:   0x%02X\n", flags);
     
-    printf("\n[Sections]\n");
+    (void)printf("\n[Sections]\n");
     
     int section_num = 0;
     while (len > 4) {
         uint8_t  sec_type = r8(&p, &len);
         uint32_t sec_len  = r32(&p, &len);
-        r8(&p, &len);  /* reserved */
-        r16(&p, &len); /* flags */
+        (void)r8(&p, &len);  /* reserved */
+        (void)r16(&p, &len); /* flags */
         
         if (sec_len > len) {
-            printf("  ⚠ Section %d 长度 %u 超出剩余数据 %u\n",
+            (void)printf("  ⚠ Section %d 长度 %u 超出剩余数据 %u\n",
                    section_num, sec_len, len);
             break;
         }
@@ -364,7 +364,7 @@ int sasm_dump_file(const char *path) {
         default: sec_name = "UNKNOWN"; break;
         }
         
-        printf("  [%d] %-6s 长度=%-5u 偏移=%lu\n",
+        (void)printf("  [%d] %-6s 长度=%-5u 偏移=%lu\n",
                section_num, sec_name, sec_len,
                (unsigned long)(p - buf - 8));
         
@@ -375,21 +375,21 @@ int sasm_dump_file(const char *path) {
         /* --- TYPE Section --- */
         if (sec_type == 0) {
             int type_idx = 0;
-            while (sec_remaining > 0 && type_idx < SASM_MAX_FUNCTIONS) {
+            while ((sec_remaining > 0) && (type_idx < SASM_MAX_FUNCTIONS)) {
                 uint32_t pc = r32(&sec_data, &sec_remaining);
-                printf("        类型[%d]: params=%u [", type_idx, pc);
-                for (uint32_t i = 0; i < pc && sec_remaining > 0; i++) {
+                (void)printf("        类型[%d]: params=%u [", type_idx, pc);
+                for (uint32_t i = 0; (i < pc) && (sec_remaining > 0); i++) {
                     uint8_t vt = r8(&sec_data, &sec_remaining);
-                    printf("%s%s", value_type_name(vt), i+1<pc?",":"");
+                    (void)printf("%s%s", value_type_name(vt), ((i + 1) < pc) ? "," : "");
                 }
-                printf("] → ");
+                (void)printf("] → ");
                 uint32_t rc = r32(&sec_data, &sec_remaining);
-                printf("returns=%u [", rc);
-                for (uint32_t i = 0; i < rc && sec_remaining > 0; i++) {
+                (void)printf("returns=%u [", rc);
+                for (uint32_t i = 0; (i < rc) && (sec_remaining > 0); i++) {
                     uint8_t vt = r8(&sec_data, &sec_remaining);
-                    printf("%s%s", value_type_name(vt), i+1<rc?",":"");
+                    (void)printf("%s%s", value_type_name(vt), ((i + 1) < rc) ? "," : "");
                 }
-                printf("]\n");
+                (void)printf("]\n");
                 type_idx++;
             }
         }
@@ -397,15 +397,15 @@ int sasm_dump_file(const char *path) {
         /* --- FUNC Section --- */
         else if (sec_type == 1) {
             int func_idx = 0;
-            while (sec_remaining > 0 && func_idx < SASM_MAX_FUNCTIONS) {
+            while ((sec_remaining > 0) && (func_idx < SASM_MAX_FUNCTIONS)) {
                 uint32_t ti = r32(&sec_data, &sec_remaining);
                 uint32_t lc = r32(&sec_data, &sec_remaining);
-                printf("        函数[%d]: type_idx=%u, locals=%u [", func_idx, ti, lc);
-                for (uint32_t i = 0; i < lc && sec_remaining > 0; i++) {
+                (void)printf("        函数[%d]: type_idx=%u, locals=%u [", func_idx, ti, lc);
+                for (uint32_t i = 0; (i < lc) && (sec_remaining > 0); i++) {
                     uint8_t vt = r8(&sec_data, &sec_remaining);
-                    printf("%s%s", value_type_name(vt), i+1<lc?",":"");
+                    (void)printf("%s%s", value_type_name(vt), ((i + 1) < lc) ? "," : "");
                 }
-                printf("]\n");
+                (void)printf("]\n");
                 func_idx++;
             }
         }
@@ -414,9 +414,9 @@ int sasm_dump_file(const char *path) {
         else if (sec_type == 2) {
             uint32_t total = r32(&sec_data, &sec_remaining);
             uint32_t scnt  = r32(&sec_data, &sec_remaining);
-            printf("        总内存: %u bytes\n", total);
-            printf("        段数: %u\n", scnt);
-            for (uint32_t i = 0; i < scnt && sec_remaining >= 9; i++) {
+            (void)printf("        总内存: %u bytes\n", total);
+            (void)printf("        段数: %u\n", scnt);
+            for (uint32_t i = 0; (i < scnt) && (sec_remaining >= 9); i++) {
                 uint8_t  st = r8(&sec_data, &sec_remaining);
                 uint32_t so = r32(&sec_data, &sec_remaining);
                 uint32_t ss = r32(&sec_data, &sec_remaining);
@@ -430,15 +430,15 @@ int sasm_dump_file(const char *path) {
                 case 5: sn = "CONST";     break;
                 default: sn = "?";        break;
                 }
-                printf("          %-12s offset=%u size=%u\n", sn, so, ss);
+                (void)printf("          %-12s offset=%u size=%u\n", sn, so, ss);
             }
         }
         
         /* --- IOMAP Section --- */
         else if (sec_type == 3) {
             uint32_t ecnt = r32(&sec_data, &sec_remaining);
-            printf("        I/O 条目数: %u\n", ecnt);
-            for (uint32_t i = 0; i < ecnt && sec_remaining >= 40; i++) {
+            (void)printf("        I/O 条目数: %u\n", ecnt);
+            for (uint32_t i = 0; (i < ecnt) && (sec_remaining >= 40); i++) {
                 uint32_t no = r32(&sec_data, &sec_remaining); (void)no;
                 uint32_t mo = r32(&sec_data, &sec_remaining);
                 uint32_t ci = r32(&sec_data, &sec_remaining);
@@ -448,9 +448,9 @@ int sasm_dump_file(const char *path) {
                 sec_data += 16; sec_remaining -= 16; /* float64 × 2 */
                 int32_t  sl = (int32_t)r32(&sec_data, &sec_remaining);
                 int32_t  sh = (int32_t)r32(&sec_data, &sec_remaining);
-                printf("          ch=%u mem=%u dir=%s type=%s bits=%u [%d, %d]\n",
+                (void)printf("          ch=%u mem=%u dir=%s type=%s bits=%u [%d, %d]\n",
                        ci, mo, di?"OUT":"IN",
-                       it==0?"AI":it==1?"AO":it==2?"DI":"DO",
+                       (it==0)?"AI":((it==1)?"AO":((it==2)?"DI":"DO")),
                        bw, sl, sh);
             }
         }
@@ -460,8 +460,8 @@ int sasm_dump_file(const char *path) {
             while (sec_remaining > 0) {
                 uint32_t fi = r32(&sec_data, &sec_remaining);
                 uint32_t bs = r32(&sec_data, &sec_remaining);
-                printf("        函数[%u] 代码体大小=%u:\n", fi, bs);
-                disasm_code(sec_data, bs > sec_remaining ? sec_remaining : bs, 10);
+                (void)printf("        函数[%u] 代码体大小=%u:\n", fi, bs);
+                disasm_code(sec_data, (bs > sec_remaining) ? sec_remaining : bs, 10);
                 sec_data += bs;
                 sec_remaining -= (bs > sec_remaining) ? sec_remaining : bs;
             }
@@ -472,35 +472,35 @@ int sasm_dump_file(const char *path) {
             uint8_t  sl = r8(&sec_data, &sec_remaining);
             uint32_t cl = r32(&sec_data, &sec_remaining);
             uint32_t sd = r32(&sec_data, &sec_remaining);
-            printf("        安全等级: %s (SIL%d)\n", sl?"SIL3":"SIL2", sl?3:2);
-            printf("        周期指令上限: %u\n", cl);
-            printf("        栈深度上限: %u\n", sd);
+            (void)printf("        安全等级: %s (SIL%d)\n", sl?"SIL3":"SIL2", sl?3:2);
+            (void)printf("        周期指令上限: %u\n", cl);
+            (void)printf("        栈深度上限: %u\n", sd);
             
             uint32_t lcnt = r32(&sec_data, &sec_remaining);
-            printf("        循环上限条目: %u\n", lcnt);
-            for (uint32_t i = 0; i < lcnt && sec_remaining >= 12; i++) {
+            (void)printf("        循环上限条目: %u\n", lcnt);
+            for (uint32_t i = 0; (i < lcnt) && (sec_remaining >= 12); i++) {
                 uint32_t fi = r32(&sec_data, &sec_remaining);
                 uint32_t io = r32(&sec_data, &sec_remaining);
                 uint32_t mi = r32(&sec_data, &sec_remaining);
-                printf("          函数[%u] offset=%u max=%u\n", fi, io, mi);
+                (void)printf("          函数[%u] offset=%u max=%u\n", fi, io, mi);
             }
             
             uint32_t mcnt = r32(&sec_data, &sec_remaining);
-            printf("        内存访问范围: %u\n", mcnt);
-            for (uint32_t i = 0; i < mcnt && sec_remaining >= 8; i++) {
+            (void)printf("        内存访问范围: %u\n", mcnt);
+            for (uint32_t i = 0; (i < mcnt) && (sec_remaining >= 8); i++) {
                 uint32_t lo = r32(&sec_data, &sec_remaining);
                 uint32_t hi = r32(&sec_data, &sec_remaining);
-                printf("          [%u, %u)\n", lo, hi);
+                (void)printf("          [%u, %u)\n", lo, hi);
             }
 
             if (sec_remaining >= 4) {
                 uint32_t wcnt = r32(&sec_data, &sec_remaining);
-                printf("        WCET 条目: %u\n", wcnt);
-                for (uint32_t i = 0; i < wcnt && sec_remaining >= 12; i++) {
+                (void)printf("        WCET 条目: %u\n", wcnt);
+                for (uint32_t i = 0; (i < wcnt) && (sec_remaining >= 12); i++) {
                     uint32_t fi = r32(&sec_data, &sec_remaining);
                     uint32_t cy = r32(&sec_data, &sec_remaining);
                     uint32_t ns = r32(&sec_data, &sec_remaining);
-                    printf("          函数[%u]: cycles=%u ns=%u\n",
+                    (void)printf("          函数[%u]: cycles=%u ns=%u\n",
                            fi, cy, ns);
                 }
             }
@@ -509,12 +509,12 @@ int sasm_dump_file(const char *path) {
         /* --- WCET Section --- */
         else if (sec_type == 6) {
             uint32_t wcnt = r32(&sec_data, &sec_remaining);
-            printf("        WCET 条目: %u\n", wcnt);
-            for (uint32_t i = 0; i < wcnt && sec_remaining >= 12; i++) {
+            (void)printf("        WCET 条目: %u\n", wcnt);
+            for (uint32_t i = 0; (i < wcnt) && (sec_remaining >= 12); i++) {
                 uint32_t fi = r32(&sec_data, &sec_remaining);
                 uint32_t cy = r32(&sec_data, &sec_remaining);
                 uint32_t ns = r32(&sec_data, &sec_remaining);
-                printf("          函数[%u]: cycles=%u ns=%u\n",
+                (void)printf("          函数[%u]: cycles=%u ns=%u\n",
                        fi, cy, ns);
             }
         }
@@ -531,16 +531,16 @@ int sasm_dump_file(const char *path) {
     }
     
     /* --- CRC32 --- */
-    printf("\n[CRC32]\n");
+    (void)printf("\n[CRC32]\n");
     if (len >= 4) {
         uint32_t stored_crc = r32(&p, &len);
         uint32_t computed_crc = dump_crc32_compute(buf + 6,
                                                    (uint32_t)fsize - 10);
-        printf("  存储值: 0x%08X\n", stored_crc);
-        printf("  计算值: 0x%08X\n", computed_crc);
-        printf("  状态:   %s\n",
-               stored_crc == 0 ? "(未计算)" :
-               (stored_crc == computed_crc ? "OK" : "MISMATCH"));
+        (void)printf("  存储值: 0x%08X\n", stored_crc);
+        (void)printf("  计算值: 0x%08X\n", computed_crc);
+        (void)printf("  状态:   %s\n",
+               (stored_crc == 0) ? "(未计算)" :
+               ((stored_crc == computed_crc) ? "OK" : "MISMATCH"));
     }
     
     free(buf);

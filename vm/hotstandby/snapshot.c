@@ -92,19 +92,19 @@ static uint32_t hs_crc32_compute(const uint8_t *data, uint32_t len)
 
 bool hs_snapshot_verify_crc(const uint8_t *data, uint32_t size)
 {
-    if (!data || size < sizeof(SnapshotHeader) + 4) return false;
+    if ((!data) || (size < (sizeof(SnapshotHeader) + 4u))) { return false; }
 
     const SnapshotHeader *hdr = (const SnapshotHeader *)data;
     uint32_t stored_crc = hdr->crc32;
 
     /* 将 CRC 字段置零后重新计算 */
     SnapshotHeader tmp;
-    memcpy(&tmp, data, sizeof(SnapshotHeader));
+    (void)memcpy(&tmp, data, sizeof(SnapshotHeader));
     tmp.crc32 = 0;
-    memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
+    (void)memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
 
     uint32_t computed = hs_crc32_compute(data, size);
-    memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
+    (void)memcpy((void *)data, &tmp, sizeof(SnapshotHeader));
     /* 恢复原 CRC */
     ((SnapshotHeader *)data)->crc32 = stored_crc;
 
@@ -117,8 +117,8 @@ bool hs_snapshot_verify_crc(const uint8_t *data, uint32_t size)
 
 void hs_dirty_init(DirtyPageTracker *tracker, uint32_t memory_size)
 {
-    if (!tracker) return;
-    memset(tracker, 0, sizeof(DirtyPageTracker));
+    if (!tracker) { return; }
+    (void)memset(tracker, 0, sizeof(DirtyPageTracker));
     tracker->page_size = HS_PAGE_SIZE;
     tracker->page_count = (memory_size + HS_PAGE_SIZE - 1) / HS_PAGE_SIZE;
     if (tracker->page_count > HS_MAX_PAGES) {
@@ -128,7 +128,7 @@ void hs_dirty_init(DirtyPageTracker *tracker, uint32_t memory_size)
 
 void hs_dirty_mark(DirtyPageTracker *tracker, uint32_t addr, uint32_t size)
 {
-    if (!tracker) return;
+    if (!tracker) { return; }
 
     uint32_t start_page = addr / tracker->page_size;
     uint32_t end_page = (addr + size - 1) / tracker->page_size;
@@ -148,22 +148,22 @@ void hs_dirty_mark(DirtyPageTracker *tracker, uint32_t addr, uint32_t size)
 
 void hs_dirty_clear(DirtyPageTracker *tracker)
 {
-    if (!tracker) return;
-    memset(tracker->bitmap, 0, sizeof(tracker->bitmap));
+    if (!tracker) { return; }
+    (void)memset(tracker->bitmap, 0, sizeof(tracker->bitmap));
 }
 
 bool hs_dirty_is_page_dirty(const DirtyPageTracker *tracker, uint32_t page_idx)
 {
-    if (!tracker) return false;
+    if (!tracker) { return false; }
     uint32_t idx = page_idx / 64;
     uint32_t bit = page_idx % 64;
-    if (idx >= HS_DIRTY_BITMAP_SIZE) return false;
+    if (idx >= HS_DIRTY_BITMAP_SIZE) { return false; }
     return (tracker->bitmap[idx] & (1ULL << bit)) != 0;
 }
 
 uint32_t hs_dirty_get_count(const DirtyPageTracker *tracker)
 {
-    if (!tracker) return 0;
+    if (!tracker) { return 0; }
     uint32_t count = 0;
     for (uint32_t i = 0; i < HS_DIRTY_BITMAP_SIZE; i++) {
         count += __builtin_popcountll(tracker->bitmap[i]);
@@ -174,10 +174,10 @@ uint32_t hs_dirty_get_count(const DirtyPageTracker *tracker)
 uint32_t hs_dirty_get_pages(const DirtyPageTracker *tracker,
                              uint32_t *indices, uint32_t max_count)
 {
-    if (!tracker || !indices) return 0;
+    if (!tracker || !indices) { return 0; }
 
     uint32_t count = 0;
-    for (uint32_t p = 0; p < tracker->page_count && count < max_count; p++) {
+    for (uint32_t p = 0; (p < tracker->page_count) && (count < max_count); p++) {
         if (hs_dirty_is_page_dirty(tracker, p)) {
             indices[count++] = p;
         }
@@ -188,12 +188,12 @@ uint32_t hs_dirty_get_pages(const DirtyPageTracker *tracker,
 static bool snapshot_add_page(uint32_t *indices, uint32_t *count,
                               uint32_t max_count, uint32_t page)
 {
-    if (!indices || !count) return false;
+    if (!indices || !count) { return false; }
 
     for (uint32_t i = 0; i < *count; i++) {
-        if (indices[i] == page) return true;
+        if (indices[i] == page) { return true; }
     }
-    if (*count >= max_count) return false;
+    if (*count >= max_count) { return false; }
 
     indices[*count] = page;
     (*count)++;
@@ -206,7 +206,7 @@ static bool snapshot_add_page(uint32_t *indices, uint32_t *count,
 
 int hs_snapshot_create(HotStandbySystem *hs)
 {
-    if (!hs || !hs->vm) return -1;
+    if (!hs || !hs->vm) { return -1; }
 
     VM *vm = hs->vm;
     uint8_t *buf = hs->snapshot_buf;
@@ -215,7 +215,7 @@ int hs_snapshot_create(HotStandbySystem *hs)
 
     /* 1. 填充快包头 */
     SnapshotHeader hdr;
-    memset(&hdr, 0, sizeof(hdr));
+    (void)memset(&hdr, 0, sizeof(hdr));
     hdr.magic           = HS_SNAPSHOT_MAGIC;
     hdr.sequence        = hs->sync_sequence++;
     hdr.timestamp       = 0;  /* 由调用方填充 */
@@ -236,7 +236,7 @@ int hs_snapshot_create(HotStandbySystem *hs)
        page callback has been registered by the VM store path. */
     for (uint32_t i = 0; i < vm->module->segment_count; i++) {
         const MemSegment *seg = &vm->module->segments[i];
-        if (seg->segment_type != SEG_TYPE_GLOBAL || seg->size == 0) continue;
+        if ((seg->segment_type != SEG_TYPE_GLOBAL) || (seg->size == 0u)) { continue; }
 
         uint32_t first_page = seg->start_offset / HS_PAGE_SIZE;
         uint32_t end_addr = seg->start_offset + seg->size - 1;
@@ -253,23 +253,23 @@ int hs_snapshot_create(HotStandbySystem *hs)
     }
 
     hdr.dirty_page_count = dirty_count;
-    memcpy(hdr.dirty_page_indices, page_indices,
-           dirty_count * sizeof(uint32_t));
+    (void)memcpy(hdr.dirty_page_indices, page_indices,
+                 dirty_count * sizeof(uint32_t));
     hdr.dirty_data_size = dirty_count * HS_PAGE_SIZE;
 
     /* 3. 计算总快照大小 */
-    uint32_t total_size = sizeof(SnapshotHeader) +
+    uint32_t total_size = (sizeof(SnapshotHeader) +
                           hdr.dirty_data_size +
-                          vm->val_stack_ptr * sizeof(sasm_value) +
-                          vm->frame_stack_ptr * sizeof(Frame);
+                          (vm->val_stack_ptr * sizeof(sasm_value)) +
+                          (vm->frame_stack_ptr * sizeof(Frame)));
 
     if (total_size > buf_size) {
         return -1;  /* 缓冲区不足 */
     }
 
     /* 4. 写入包头 */
-    if (offset + sizeof(SnapshotHeader) > buf_size) return -1;
-    memcpy(buf + offset, &hdr, sizeof(SnapshotHeader));
+    if ((offset + sizeof(SnapshotHeader)) > buf_size) { return -1; }
+    (void)memcpy(buf + offset, &hdr, sizeof(SnapshotHeader));
     offset += sizeof(SnapshotHeader);
 
     /* 5. 写入脏页数据 */
@@ -277,29 +277,29 @@ int hs_snapshot_create(HotStandbySystem *hs)
         uint32_t page_idx = page_indices[i];
         uint32_t page_addr = page_idx * HS_PAGE_SIZE;
         uint32_t copy_size = HS_PAGE_SIZE;
-        if (page_addr + copy_size > vm->memory_size) {
+        if ((page_addr + copy_size) > vm->memory_size) {
             copy_size = vm->memory_size - page_addr;
         }
-        if (offset + copy_size > buf_size) return -1;
-        memcpy(buf + offset, vm->memory + page_addr, copy_size);
+        if ((offset + copy_size) > buf_size) { return -1; }
+        (void)memcpy(buf + offset, vm->memory + page_addr, copy_size);
         offset += copy_size;
     }
 
     /* 6. 写入值栈 */
     uint32_t stack_bytes = vm->val_stack_ptr * sizeof(sasm_value);
-    if (offset + stack_bytes > buf_size) return -1;
-    memcpy(buf + offset, vm->val_stack, stack_bytes);
+    if ((offset + stack_bytes) > buf_size) { return -1; }
+    (void)memcpy(buf + offset, vm->val_stack, stack_bytes);
     offset += stack_bytes;
 
     /* 7. 写入帧栈 */
     uint32_t frame_bytes = vm->frame_stack_ptr * sizeof(Frame);
-    if (offset + frame_bytes > buf_size) return -1;
-    memcpy(buf + offset, vm->frame_stack, frame_bytes);
+    if ((offset + frame_bytes) > buf_size) { return -1; }
+    (void)memcpy(buf + offset, vm->frame_stack, frame_bytes);
     offset += frame_bytes;
 
     /* 8. 计算并写入 CRC32 */
     hdr.crc32 = 0;
-    memcpy(buf, &hdr, sizeof(SnapshotHeader));
+    (void)memcpy(buf, &hdr, sizeof(SnapshotHeader));
     uint32_t crc = hs_crc32_compute(buf, offset);
     /* 将 CRC 写回包头 */
     SnapshotHeader *hdr_in_buf = (SnapshotHeader *)buf;
@@ -320,8 +320,8 @@ int hs_snapshot_create(HotStandbySystem *hs)
 int hs_snapshot_apply(HotStandbySystem *hs, const uint8_t *snap_data,
                        uint32_t snap_size)
 {
-    if (!hs || !hs->vm || !snap_data) return -1;
-    if (snap_size < sizeof(SnapshotHeader)) return -1;
+    if (!hs || !hs->vm || !snap_data) { return -1; }
+    if (snap_size < sizeof(SnapshotHeader)) { return -1; }
 
     /* 1. 校验 CRC */
     if (!hs_snapshot_verify_crc(snap_data, snap_size)) {
@@ -329,9 +329,9 @@ int hs_snapshot_apply(HotStandbySystem *hs, const uint8_t *snap_data,
     }
 
     const SnapshotHeader *hdr = (const SnapshotHeader *)snap_data;
-    if (hdr->magic != HS_SNAPSHOT_MAGIC) return -3;
-    if (hdr->val_stack_ptr > VALUE_STACK_SIZE ||
-        hdr->frame_stack_ptr > FRAME_STACK_SIZE) return -4;
+    if (hdr->magic != HS_SNAPSHOT_MAGIC) { return -3; }
+    if ((hdr->val_stack_ptr > VALUE_STACK_SIZE) ||
+        (hdr->frame_stack_ptr > FRAME_STACK_SIZE)) { return -4; }
 
     VM *vm = hs->vm;
     uint32_t offset = sizeof(SnapshotHeader);
@@ -341,26 +341,26 @@ int hs_snapshot_apply(HotStandbySystem *hs, const uint8_t *snap_data,
         uint32_t page_idx = hdr->dirty_page_indices[i];
         uint32_t page_addr = page_idx * HS_PAGE_SIZE;
         uint32_t copy_size = HS_PAGE_SIZE;
-        if (page_addr + copy_size > vm->memory_size) {
+        if ((page_addr + copy_size) > vm->memory_size) {
             copy_size = vm->memory_size - page_addr;
         }
-        if (offset + copy_size > snap_size) return -4;
-        memcpy(vm->memory + page_addr, snap_data + offset, copy_size);
+        if ((offset + copy_size) > snap_size) { return -4; }
+        (void)memcpy(vm->memory + page_addr, snap_data + offset, copy_size);
         offset += copy_size;
     }
 
     /* 3. 还原值栈 */
     vm->val_stack_ptr = hdr->val_stack_ptr;
     uint32_t stack_bytes = hdr->val_stack_ptr * sizeof(sasm_value);
-    if (offset + stack_bytes > snap_size) return -4;
-    memcpy(vm->val_stack, snap_data + offset, stack_bytes);
+    if ((offset + stack_bytes) > snap_size) { return -4; }
+    (void)memcpy(vm->val_stack, snap_data + offset, stack_bytes);
     offset += stack_bytes;
 
     /* 4. 还原帧栈 */
     vm->frame_stack_ptr = hdr->frame_stack_ptr;
     uint32_t frame_bytes = hdr->frame_stack_ptr * sizeof(Frame);
-    if (offset + frame_bytes > snap_size) return -4;
-    memcpy(vm->frame_stack, snap_data + offset, frame_bytes);
+    if ((offset + frame_bytes) > snap_size) { return -4; }
+    (void)memcpy(vm->frame_stack, snap_data + offset, frame_bytes);
     offset += frame_bytes;
 
     /* 5. 还原其他状态 */

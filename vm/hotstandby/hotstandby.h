@@ -41,7 +41,7 @@ extern "C" {
 #define HS_DIRTY_BITMAP_SIZE  ((HS_MAX_PAGES + 63) / 64)  /* uint64 位图 */
 
 /* 同步协议 */
-#define HS_SYNC_RETRY_MAX     3        /* 最大重传次数 */
+#define HS_SYNC_RETRY_MAX     3u       /* 最大重传次数 */
 #define HS_SYNC_TIMEOUT_MS    50       /* 同步超时 (毫秒) */
 #define HS_HEARTBEAT_INTERVAL_MS 100   /* 心跳间隔 (毫秒) */
 #define HS_HEARTBEAT_TIMEOUT_MS 500    /* 心跳超时判定 (毫秒) */

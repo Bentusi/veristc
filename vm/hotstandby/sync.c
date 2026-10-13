@@ -55,7 +55,7 @@ int hs_chan_shmem_init(SyncChannel *chan,
                        uint32_t local_buf_size,
                        uint32_t peer_buf_size)
 {
-    if (!chan) return -1;
+    if (!chan) { return -1; }
 
     ShmemChannel *shmem = (ShmemChannel *)chan->channel_handle;
     if (!shmem) {
@@ -65,7 +65,7 @@ int hs_chan_shmem_init(SyncChannel *chan,
 
     uint32_t total = SHMEM_HEADER_SIZE + local_buf_size +
                      SHMEM_HEADER_SIZE + peer_buf_size;
-    if (total > shmem->total_size) return -1;
+    if (total > shmem->total_size) { return -1; }
 
     shmem->half_size = total / 2;
     shmem->local_offset = 0;  /* 假设本机是前半部分 */
@@ -94,10 +94,10 @@ static int shmem_send(ShmemChannel *shmem,
                       uint32_t timeout_ms)
 {
     (void)timeout_ms;
-    if (!shmem || !data || len == 0) return -1;
+    if ((!shmem) || (!data) || (len == 0)) { return -1; }
 
     uint32_t max_payload = shmem->half_size - SHMEM_HEADER_SIZE;
-    if (len > max_payload) return -1;
+    if (len > max_payload) { return -1; }
 
     uint8_t *write_area = shmem->base + shmem->local_offset;
 
@@ -107,7 +107,7 @@ static int shmem_send(ShmemChannel *shmem,
     hdr->data_size = len;
 
     /* 写入数据 */
-    memcpy(write_area + SHMEM_HEADER_SIZE, data, len);
+    (void)memcpy(write_area + SHMEM_HEADER_SIZE, data, len);
 
     /* 写屏障 (嵌入式需使用 DSB 指令) */
     __sync_synchronize();
@@ -121,7 +121,7 @@ static int shmem_recv(ShmemChannel *shmem,
                       uint32_t timeout_ms)
 {
     (void)timeout_ms;
-    if (!shmem || !buf || !len) return -1;
+    if ((!shmem) || (!buf) || (!len)) { return -1; }
 
     uint8_t *read_area = shmem->base + shmem->peer_offset;
 
@@ -130,15 +130,15 @@ static int shmem_recv(ShmemChannel *shmem,
 
     ShmemHeader *hdr = (ShmemHeader *)read_area;
 
-    if (hdr->magic != HS_SNAPSHOT_MAGIC || hdr->data_size == 0) {
+    if ((hdr->magic != HS_SNAPSHOT_MAGIC) || (hdr->data_size == 0)) {
         *len = 0;
         return -1;  /* 无数据 */
     }
 
     uint32_t copy_size = hdr->data_size;
-    if (copy_size > *len) copy_size = *len;
+    if (copy_size > *len) { copy_size = *len; }
 
-    memcpy(buf, read_area + SHMEM_HEADER_SIZE, copy_size);
+    (void)memcpy(buf, read_area + SHMEM_HEADER_SIZE, copy_size);
     *len = copy_size;
 
     /* 读取后清除头部 (标记已消费) */
@@ -157,11 +157,11 @@ static int shmem_recv(ShmemChannel *shmem,
 
 int hs_heartbeat_send(HotStandbySystem *hs)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
 
     /* 通过同步通道发送心跳标记 (空数据 + 特定 magic) */
     ShmemChannel *shmem = (ShmemChannel *)hs->sync_chan.channel_handle;
-    if (!shmem) return -1;
+    if (!shmem) { return -1; }
 
     uint8_t *write_area = shmem->base + shmem->local_offset;
     ShmemHeader *hdr = (ShmemHeader *)write_area;
@@ -177,10 +177,10 @@ int hs_heartbeat_send(HotStandbySystem *hs)
 
 int hs_heartbeat_check(HotStandbySystem *hs)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
 
     ShmemChannel *shmem = (ShmemChannel *)hs->sync_chan.channel_handle;
-    if (!shmem) return -1;
+    if (!shmem) { return -1; }
 
     uint8_t *read_area = shmem->base + shmem->peer_offset;
     __sync_synchronize();
@@ -204,15 +204,15 @@ int hs_heartbeat_check(HotStandbySystem *hs)
 
 int hs_sync_send(HotStandbySystem *hs)
 {
-    if (!hs) return -1;
-
+    if (!hs) { return -1; }
+    
     /* 1. 创建快照 */
     int ret = hs_snapshot_create(hs);
-    if (ret != 0) return ret;
-
+    if (ret != 0) { return ret; }
+    
     /* 2. 通过共享内存发送 */
     ShmemChannel *shmem = (ShmemChannel *)hs->sync_chan.channel_handle;
-    if (shmem) {
+    if (shmem != NULL) {
         ret = shmem_send(shmem, hs->snapshot_buf, hs->snapshot_size, 50);
     }
 
@@ -229,21 +229,21 @@ int hs_sync_send(HotStandbySystem *hs)
 
 int hs_sync_receive(HotStandbySystem *hs, uint32_t timeout_ms)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
 
     ShmemChannel *shmem = (ShmemChannel *)hs->sync_chan.channel_handle;
-    if (!shmem) return -1;
-
+    if (!shmem) { return -1; }
+    
     uint32_t len = sizeof(hs->snapshot_buf);
     int ret = shmem_recv(shmem, hs->snapshot_buf, &len, timeout_ms);
-
-    if (ret == 0 && len > 0) {
+    
+    if ((ret == 0) && (len > 0)) {
         /* 应用快照到本机 VM */
         ret = hs_snapshot_apply(hs, hs->snapshot_buf, len);
         if (ret == 0) {
-            hs_handle_event(hs, HS_EVENT_SYNC_SUCCESS);
+            (void)hs_handle_event(hs, HS_EVENT_SYNC_SUCCESS);
         } else {
-            hs_handle_event(hs, HS_EVENT_SYNC_FAILED);
+            (void)hs_handle_event(hs, HS_EVENT_SYNC_FAILED);
         }
     }
 
@@ -252,13 +252,13 @@ int hs_sync_receive(HotStandbySystem *hs, uint32_t timeout_ms)
 
 int hs_sync_cycle(HotStandbySystem *hs)
 {
-    if (!hs) return -1;
+    if (!hs) { return -1; }
 
     if (hs->is_master) {
         /* 主站: 执行 → 发快照 */
         int ret = vm_run(hs->vm);
         if (ret != VM_OK) {
-            hs_handle_event(hs, HS_EVENT_FAULT_DETECTED);
+            (void)hs_handle_event(hs, HS_EVENT_FAULT_DETECTED);
             return ret;
         }
         return hs_sync_send(hs);

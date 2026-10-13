@@ -6,11 +6,23 @@
 # ================================================================
 # 可执行文件
 vm/svm
+vm/svm-asan
 output.sasm
 output.txt
 tests/veristc-tests/out/
+
+# VM 测试可执行文件（tests/vm-tests/ 下的编译产物，源码 .c 保留跟踪）
 tests/vm-tests/test_vm
+tests/vm-tests/test_io_mapping
+tests/vm-tests/test_hotstandby
 tests/vm-tests/test_nuclear_protection_full_e2e
+
+# ASan/UBSan 与模糊测试构建产物
+tests/vm-tests/test_vm-asan
+tests/fuzz/sasm_fuzzer
+
+# RT-Thread 移植构建产物
+*.elf
 
 # 目标文件
 *.o
@@ -117,6 +129,9 @@ __pycache__/
 # ================================================================
 /tests/*.log
 /tests/*.out
+
+# MISRA-C 检查产物 (run_misra_check.sh)
+.misra_report.txt
+.misra_reports/
 docs/veristc-paper.html
 .vorg.db
-vm/svm-asan

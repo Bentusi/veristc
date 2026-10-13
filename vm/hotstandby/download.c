@@ -101,7 +101,7 @@ static int compute_diff(const SasmModule *old_mod,
                          const SasmModule *new_mod,
                          uint8_t *patch_buf, uint32_t *patch_size)
 {
-    if (!old_mod || !new_mod || !patch_buf || !patch_size) return -1;
+    if (!old_mod || !new_mod || !patch_buf || !patch_size) { return -1; }
 
     uint32_t offset = sizeof(DlPatchHeader);
     uint32_t section_count = 0;
@@ -110,8 +110,8 @@ static int compute_diff(const SasmModule *old_mod,
     /* 注意: 这里简化实现, 仅对比关键段 */
 
     /* 对比 Type Section (通过 func_count 间接判断) */
-    if (old_mod->type_count != new_mod->type_count ||
-        old_mod->func_count != new_mod->func_count) {
+    if ((old_mod->type_count != new_mod->type_count) ||
+        (old_mod->func_count != new_mod->func_count)) {
         /* 记录整个模块需要替换 */
         DlSectionDiff *diff = (DlSectionDiff *)(patch_buf + offset);
         diff->section_type = 0xFF;  /* 全量替换标记 */
@@ -136,15 +136,15 @@ static int compute_diff(const SasmModule *old_mod,
                 section_count++;
                 offset += sizeof(DlSectionDiff);
                 /* 复制新的 body 数据 */
-                if (offset + new_size > DL_MAX_PATCH_SIZE) return -1;
-                memcpy(patch_buf + offset,
-                       new_mod->code_pool + new_mod->codes[i].body_offset,
-                       new_size);
+                if ((offset + new_size) > DL_MAX_PATCH_SIZE) { return -1; }
+                (void)memcpy(patch_buf + offset,
+                             new_mod->code_pool + new_mod->codes[i].body_offset,
+                             new_size);
                 offset += new_size;
-            } else if (old_size > 0 &&
-                       memcmp(old_mod->code_pool + old_mod->codes[i].body_offset,
-                              new_mod->code_pool + new_mod->codes[i].body_offset,
-                              old_size) != 0) {
+            } else if ((old_size > 0) &&
+                       (memcmp(old_mod->code_pool + old_mod->codes[i].body_offset,
+                               new_mod->code_pool + new_mod->codes[i].body_offset,
+                               old_size) != 0)) {
                 DlSectionDiff *diff = (DlSectionDiff *)(patch_buf + offset);
                 diff->section_type = SEC_CODE;
                 diff->old_offset = i;
@@ -152,11 +152,13 @@ static int compute_diff(const SasmModule *old_mod,
                 diff->length = new_size;
                 section_count++;
                 offset += sizeof(DlSectionDiff);
-                if (offset + new_size > DL_MAX_PATCH_SIZE) return -1;
-                memcpy(patch_buf + offset,
-                       new_mod->code_pool + new_mod->codes[i].body_offset,
-                       new_size);
+                if ((offset + new_size) > DL_MAX_PATCH_SIZE) { return -1; }
+                (void)memcpy(patch_buf + offset,
+                             new_mod->code_pool + new_mod->codes[i].body_offset,
+                             new_size);
                 offset += new_size;
+            } else {
+                /* 该函数无差异, 跳过 */
             }
         }
 
@@ -170,15 +172,16 @@ static int compute_diff(const SasmModule *old_mod,
             diff->length = sizeof(SafetyAnnotation);
             section_count++;
             offset += sizeof(DlSectionDiff);
-            if (offset + sizeof(SafetyAnnotation) > DL_MAX_PATCH_SIZE)
+            if ((offset + sizeof(SafetyAnnotation)) > DL_MAX_PATCH_SIZE) {
                 return -1;
-            memcpy(patch_buf + offset, &new_mod->safety,
-                   sizeof(SafetyAnnotation));
+            }
+            (void)memcpy(patch_buf + offset, &new_mod->safety,
+                         sizeof(SafetyAnnotation));
             offset += sizeof(SafetyAnnotation);
         }
     }
 
-    if (section_count == 0) {
+    if (section_count == 0u) {
         /* 无差异 */
         *patch_size = 0;
         return 0;
@@ -194,7 +197,7 @@ static int compute_diff(const SasmModule *old_mod,
     hdr.section_count = section_count;
     hdr.crc32 = 0;
 
-    memcpy(patch_buf, &hdr, sizeof(DlPatchHeader));
+    (void)memcpy(patch_buf, &hdr, sizeof(DlPatchHeader));
     *patch_size = offset;
 
     return 0;
@@ -209,45 +212,47 @@ static int apply_patch(const SasmModule *old_mod,
                         const uint8_t *patch, uint32_t patch_size)
 {
     (void)old_mod;  /* 保留供未来扩展 */
-    if (!old_mod || !new_mod || !patch) return -1;
-    if (patch_size < sizeof(DlPatchHeader)) return -1;
+    if (!old_mod || !new_mod || !patch) { return -1; }
+    if (patch_size < sizeof(DlPatchHeader)) { return -1; }
 
     const DlPatchHeader *hdr = (const DlPatchHeader *)patch;
-    if (hdr->magic != DL_PATCH_MAGIC) return -1;
+    if (hdr->magic != DL_PATCH_MAGIC) { return -1; }
 
     /* 先复制旧模块作为基础 */
-    memcpy(new_mod, old_mod, sizeof(SasmModule));
+    (void)memcpy(new_mod, old_mod, sizeof(SasmModule));
 
     uint32_t offset = sizeof(DlPatchHeader);
 
     for (uint32_t i = 0; i < hdr->section_count; i++) {
-        if (offset + sizeof(DlSectionDiff) > patch_size) return -1;
+        if ((offset + sizeof(DlSectionDiff)) > patch_size) { return -1; }
         const DlSectionDiff *diff =
             (const DlSectionDiff *)(patch + offset);
         offset += sizeof(DlSectionDiff);
 
-        if (diff->section_type == 0xFF) {
+        if (diff->section_type == 0xFFu) {
             /* 全量替换标记 — 上层需提供完整新模块 */
             return -2;
         }
 
         if (diff->section_type == SEC_CODE) {
             uint32_t func_idx = diff->new_offset;
-            if (func_idx >= SASM_MAX_FUNCTIONS) return -1;
-            if (offset + diff->length > patch_size) return -1;
-            if (diff->length > SASM_MAX_FUNCTION_CODE_SIZE) return -1;
+            if (func_idx >= SASM_MAX_FUNCTIONS) { return -1; }
+            if ((offset + diff->length) > patch_size) { return -1; }
+            if (diff->length > SASM_MAX_FUNCTION_CODE_SIZE) { return -1; }
 
             new_mod->codes[func_idx].body_size = diff->length;
             uint32_t body_offset = new_mod->codes[func_idx].body_offset;
-            if (body_offset + diff->length > SASM_MAX_CODE_POOL_SIZE) return -1;
-            memcpy(new_mod->code_pool + body_offset,
-                   patch + offset, diff->length);
+            if ((body_offset + diff->length) > SASM_MAX_CODE_POOL_SIZE) { return -1; }
+            (void)memcpy(new_mod->code_pool + body_offset,
+                         patch + offset, diff->length);
             offset += diff->length;
         } else if (diff->section_type == SEC_SAFE) {
-            if (offset + diff->length > patch_size) return -1;
-            if (diff->length > sizeof(SafetyAnnotation)) return -1;
-            memcpy(&new_mod->safety, patch + offset, diff->length);
+            if ((offset + diff->length) > patch_size) { return -1; }
+            if (diff->length > sizeof(SafetyAnnotation)) { return -1; }
+            (void)memcpy(&new_mod->safety, patch + offset, diff->length);
             offset += diff->length;
+        } else {
+            /* 未知段类型: 忽略 */
         }
     }
 
@@ -270,10 +275,10 @@ static DownloadManager s_dl_mgr;
  */
 void dl_manager_init(const SasmModule *initial_module)
 {
-    memset(&s_dl_mgr, 0, sizeof(s_dl_mgr));
+    (void)memset(&s_dl_mgr, 0, sizeof(s_dl_mgr));
 
     /* 将初始模块存入槽 0 */
-    memcpy(&s_dl_mgr.slots[0].module, initial_module, sizeof(SasmModule));
+    (void)memcpy(&s_dl_mgr.slots[0].module, initial_module, sizeof(SasmModule));
     s_dl_mgr.slots[0].version_id = 0;
     s_dl_mgr.slots[0].valid = true;
     s_dl_mgr.active_slot = 0;
@@ -292,25 +297,26 @@ void dl_manager_init(const SasmModule *initial_module)
 int dl_prepare_download(const SasmModule *new_module)
 {
     VersionSlot *active = &s_dl_mgr.slots[s_dl_mgr.active_slot];
-    if (!active->valid) return -1;
+    if (!active->valid) { return -1; }
 
     uint32_t patch_size;
     int ret = compute_diff(&active->module, new_module,
                             s_dl_mgr.patch_buf, &patch_size);
-    if (ret != 0) return ret;
+    if (ret != 0) { return ret; }
 
     s_dl_mgr.patch_size = patch_size;
 
     /* 将新模块存入待切换槽 */
     VersionSlot *pending = &s_dl_mgr.slots[s_dl_mgr.pending_slot];
-    memcpy(&pending->module, new_module, sizeof(SasmModule));
-    pending->version_id = s_dl_mgr.next_version_id++;
+    (void)memcpy(&pending->module, new_module, sizeof(SasmModule));
+    pending->version_id = s_dl_mgr.next_version_id;
+    s_dl_mgr.next_version_id = s_dl_mgr.next_version_id + 1u;
     pending->valid = false;  /* 尚未验证 */
 
     s_dl_mgr.download_in_progress = true;
-    s_dl_mgr.download_progress = 50;
+    s_dl_mgr.download_progress = 50u;
 
-    if (s_dl_mgr.on_download_start) {
+    if (s_dl_mgr.on_download_start != NULL) {
         s_dl_mgr.on_download_start(pending->version_id);
     }
 
@@ -325,14 +331,14 @@ int dl_prepare_download(const SasmModule *new_module)
  */
 int dl_commit_switch(void)
 {
-    if (!s_dl_mgr.download_in_progress) return -1;
+    if (!s_dl_mgr.download_in_progress) { return -1; }
 
     VersionSlot *pending = &s_dl_mgr.slots[s_dl_mgr.pending_slot];
 
     /* 验证新模块 */
     if (!sasm_validate(&pending->module)) {
         s_dl_mgr.last_error = -1;
-        if (s_dl_mgr.on_download_complete) {
+        if (s_dl_mgr.on_download_complete != NULL) {
             s_dl_mgr.on_download_complete(pending->version_id, false);
         }
         s_dl_mgr.download_in_progress = false;
@@ -346,10 +352,10 @@ int dl_commit_switch(void)
     pending->valid = true;
     s_dl_mgr.active_slot = new_active;
     s_dl_mgr.pending_slot = new_pending;
-    s_dl_mgr.download_progress = 100;
+    s_dl_mgr.download_progress = 100u;
     s_dl_mgr.download_in_progress = false;
 
-    if (s_dl_mgr.on_download_complete) {
+    if (s_dl_mgr.on_download_complete != NULL) {
         s_dl_mgr.on_download_complete(pending->version_id, true);
     }
 
@@ -361,7 +367,7 @@ int dl_commit_switch(void)
  */
 const SasmModule *dl_get_active_module(void)
 {
-    if (!s_dl_mgr.slots[s_dl_mgr.active_slot].valid) return NULL;
+    if (!s_dl_mgr.slots[s_dl_mgr.active_slot].valid) { return NULL; }
     return &s_dl_mgr.slots[s_dl_mgr.active_slot].module;
 }
 
@@ -370,7 +376,7 @@ const SasmModule *dl_get_active_module(void)
  */
 const SasmModule *dl_get_pending_module(void)
 {
-    if (!s_dl_mgr.download_in_progress) return NULL;
+    if (!s_dl_mgr.download_in_progress) { return NULL; }
     return &s_dl_mgr.slots[s_dl_mgr.pending_slot].module;
 }
 

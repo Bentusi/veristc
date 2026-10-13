@@ -44,7 +44,7 @@ static void on_signal(int signum)
 
 static void usage(const char *prog)
 {
-    fprintf(stderr,
+    (void)fprintf(stderr,
             "usage: %s [options] <file.sasm> [expected] [local_index]\n"
             "options:\n"
             "  -d           dump module and exit\n"
@@ -59,8 +59,8 @@ static int parse_u32(const char *text, uint32_t *value)
     char *end = NULL;
     errno = 0;
     unsigned long parsed = strtoul(text, &end, 10);
-    if (errno != 0 || end == text || *end != '\0' ||
-        parsed > UINT32_MAX) {
+    if ((errno != 0) || (end == text) || (*end != '\0') ||
+        (parsed > UINT32_MAX)) {
         return -1;
     }
     *value = (uint32_t)parsed;
@@ -76,23 +76,23 @@ static int load_module(const char *path)
     }
 
     size_t len = fread(file_data, 1, sizeof(file_data), fp);
-    fclose(fp);
-    if (len == 0 || len >= sizeof(file_data)) {
-        fprintf(stderr, "invalid module size\n");
+    (void)fclose(fp);
+    if ((len == 0) || (len >= sizeof(file_data))) {
+        (void)fprintf(stderr, "invalid module size\n");
         return -1;
     }
 
     int ret = sasm_load(file_data, (uint32_t)len, &module);
     if (ret != 0) {
-        fprintf(stderr, "sasm_load failed: %d\n", ret);
+        (void)fprintf(stderr, "sasm_load failed: %d\n", ret);
         return -1;
     }
     if (!sasm_validate(&module)) {
-        fprintf(stderr, "sasm_validate failed\n");
+        (void)fprintf(stderr, "sasm_validate failed\n");
         return -1;
     }
     if (vm_init(&vm, &module, 0) != 0) {
-        fprintf(stderr, "vm_init failed\n");
+        (void)fprintf(stderr, "vm_init failed\n");
         return -1;
     }
     return 0;
@@ -100,8 +100,8 @@ static int load_module(const char *path)
 
 static sasm_value vm_result(void)
 {
-    if (vm.frame_stack_ptr > 0 &&
-        vm.frame_stack[0].local_count > 0) {
+    if ((vm.frame_stack_ptr > 0) &&
+        (vm.frame_stack[0].local_count > 0)) {
         return vm.frame_stack[0].locals[0];
     }
     return vm_get_result(&vm);
@@ -109,8 +109,8 @@ static sasm_value vm_result(void)
 
 static sasm_value vm_local(unsigned index)
 {
-    if (vm.frame_stack_ptr == 0 ||
-        index >= vm.frame_stack[0].local_count) {
+    if ((vm.frame_stack_ptr == 0) ||
+        (index >= vm.frame_stack[0].local_count)) {
         return 0;
     }
     return vm.frame_stack[0].locals[index];
@@ -120,8 +120,8 @@ static void sleep_until(const struct timespec *deadline)
 {
     while (!stop_requested) {
         int ret = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, deadline, NULL);
-        if (ret == 0) return;
-        if (ret != EINTR) return;
+        if (ret == 0) { return; }
+        if (ret != EINTR) { return; }
     }
 }
 
@@ -148,19 +148,19 @@ int main(int argc, char **argv)
         if (strcmp(argv[i], "-d") == 0) {
             dump_mode = 1;
         } else if (strcmp(argv[i], "-n") == 0) {
-            if (++i >= argc || parse_u32(argv[i], &cycles) != 0) {
+            if ((++i >= argc) || (parse_u32(argv[i], &cycles) != 0)) {
                 usage(argv[0]);
                 return 2;
             }
         } else if (strcmp(argv[i], "-p") == 0) {
-            if (++i >= argc || parse_u32(argv[i], &period_ms) != 0) {
+            if ((++i >= argc) || (parse_u32(argv[i], &period_ms) != 0)) {
                 usage(argv[0]);
                 return 2;
             }
         } else if (strcmp(argv[i], "-h") == 0) {
             usage(argv[0]);
             return 0;
-        } else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+        } else if ((argv[i][0] == '-') && (argv[i][1] != '\0')) {
             usage(argv[0]);
             return 2;
         } else if (path == NULL) {
@@ -180,12 +180,12 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (dump_mode) {
+    if (dump_mode != 0) {
         return sasm_dump_file(path);
     }
 
     uint32_t local_index = 0;
-    if (local_text != NULL && parse_u32(local_text, &local_index) != 0) {
+    if ((local_text != NULL) && (parse_u32(local_text, &local_index) != 0)) {
         usage(argv[0]);
         return 2;
     }
@@ -201,24 +201,24 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &deadline);
 
     uint32_t executed = 0;
-    while (!stop_requested && (cycles == 0 || executed < cycles)) {
+    while ((!stop_requested) && ((cycles == 0) || (executed < cycles))) {
         int rc = vm_run(&vm);
         if (rc != VM_OK) {
-            fprintf(stderr, "vm_run failed: %d\n", rc);
+            (void)fprintf(stderr, "vm_run failed: %d\n", rc);
             return 3;
         }
 
-        sasm_value result = local_text != NULL ? vm_local(local_index) : vm_result();
-        printf("%d\n", result);
-        fflush(stdout);
+        sasm_value result = (local_text != NULL) ? vm_local(local_index) : vm_result();
+        (void)printf("%d\n", result);
+        (void)fflush(stdout);
 
-        if (expected_text != NULL && atoi(expected_text) != result) {
-            fprintf(stderr, "expected %s, got %d\n", expected_text, result);
+        if ((expected_text != NULL) && (atoi(expected_text) != result)) {
+            (void)fprintf(stderr, "expected %s, got %d\n", expected_text, result);
             return 1;
         }
 
         executed++;
-        if (cycles != 0 && executed >= cycles) break;
+        if ((cycles != 0) && (executed >= cycles)) { break; }
 
         advance_deadline(&deadline, period_ms);
         sleep_until(&deadline);
