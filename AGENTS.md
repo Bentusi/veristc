@@ -169,6 +169,36 @@ veristc/
 - `run_tests.sh`：构建并执行全部测试（调用 run_vm_checks.sh + run_nuclear_e2e.sh）
 - `run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、dump/SIL3/CRC、1000ms 周期+损坏 CRC 拒绝
 - `run_nuclear_e2e.sh`：核电 ST（>10000 行）→ VeriSTC → SASM → VM 端到端验证
+- `run_feature_probes.sh`：SafeST 特性面探针矩阵（12 探针，PASS/XFAIL 覆盖表）
+- `run_channel_e2e.sh`：单组 RPS 4 通道保护 + ESFAS 顺序器黄金时间线验证
+- `run_misra_check.sh`：MISRA-C 静态合规检查（cppcheck，逐文件用例输出）
+- `run_sanitizer.sh`：ASan/UBSan 内存安全检测
+- `run_fuzzer.sh`：.sasm 加载器模糊测试
+
+### 变更后验证路由（Skill: verify-route）
+
+编辑文件后，按以下决策表选择**最小且充分**的验证动作（匹配第一条命中规则）：
+
+| 变更文件模式 | 验证命令 | 理由 |
+|-------------|---------|------|
+| `veristc/spec/*.v` | `make coq` | 定理编译通过 = 证明完整 |
+| `veristc/src/*.v` | `make coq && make veristc && ./run_tests.sh` | 编译器实现变更 → 全管线 |
+| `veristc/extraction/extraction.v` | `make coq && make veristc && ./run_tests.sh` | 提取配置 → 重提取+全测试 |
+| `veristc/extraction/veristc_main.ml` | `make veristc && ./run_tests.sh` | OCaml 入口变更 |
+| `vm/*.c` 或 `vm/*.h`（非 io/hotstandby） | `make svm && ./run_vm_checks.sh` | VM 核心 → 构建+单元/周期检查 |
+| `vm/io/*.c` 或 `vm/io/*.h` | `make vm-io && ./run_vm_checks.sh` | I/O 映射层 → 构建+VM 检查 |
+| `vm/hotstandby/*.c` 或 `vm/hotstandby/*.h` | `make all && ./run_tests.sh` | 热备模块 → 全量测试 |
+| `rtos/**/*.c` 或 `rtos/**/*.h` | `make all` | RTOS 适配 → 编译通过即可 |
+| `tests/vm-tests/*.c` | `make build-tests && ./run_vm_checks.sh` | VM 测试代码 → 重建+运行 |
+| `tests/st-examples/feature-probes/*.st` | `./run_feature_probes.sh` | 特性探针变更 |
+| `tests/st-examples/nuclear*.st` | `./run_nuclear_e2e.sh` | 核电用例变更 |
+| `tests/st-examples/*channel*.st` | `./run_channel_e2e.sh` | 通道黄金时间线变更 |
+| `run_*.sh` 或 `Makefile` | `./run_tests.sh` | 基础设施变更 → 全量回归 |
+| `*.md`、`*.json`、`*.yml` | 无需验证 | 文档/配置 |
+
+**补充规则**（C 源文件变更时可叠加）：
+- 任何 `vm/**/*.c` 变更 → 建议追加 `./run_misra_check.sh`
+- `vm/loader.c` 或 `vm/safeasm_interp.c` 错误处理路径变更 → 建议追加 `./run_fuzzer.sh`
 
 ## 常用构建命令
 
