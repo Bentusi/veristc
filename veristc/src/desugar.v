@@ -337,6 +337,13 @@ Definition desugar_pou (p : st_pou) : corest_function :=
      cfunc_params :=
        match p with
        | P_PROGRAM _ _ _ => nil
+       | P_FUNCTION_BLOCK _ _ _ =>
+           (* 原生 FB：合成 __self 首参（实例 FB_DATA 基址），其 locals 为
+              self 相对可写字段。__self 供 codegen 计算 [self+off] 存取。 *)
+           (ID "__self", T_DINT) ::
+           List.map (fun vd => (vd.(var_name), vd.(var_type)))
+             (List.filter (fun vd =>
+                match vd.(var_dir) with D_INPUT => true | _ => false end) decls)
        | _ =>
            List.map (fun vd => (vd.(var_name), vd.(var_type)))
              (List.filter (fun vd =>

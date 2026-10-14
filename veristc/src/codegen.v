@@ -121,6 +121,7 @@ Definition st_type_to_sasm (t : st_type) : sasm_value_type :=
   | T_QLREAL                   => F64
   | T_QTIME                    => I64
   | T_ARRAY _ _ _             => I32  (* 数组基址视为 i32 指针 *)
+  | T_FB _                    => I32  (* FB 实例基址视为 i32 指针 *)
   end.
 
 (* 从 CoreST 函数构建编译环境 *)

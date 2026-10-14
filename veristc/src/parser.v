@@ -1225,6 +1225,7 @@ with parse_type (fuel : nat) (st : parser_state) {struct fuel}
               end
           | _ => (T_BOOL, st2)
           end
+      | Some (TK_IDENT nm) => (T_FB nm, snd (consume st))
       | _ => (T_BOOL, st)
       end
   end

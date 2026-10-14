@@ -86,7 +86,7 @@ veristc/
 - **上位机（IDE 侧）**：VeriSTC 编译器（Coq 实现，Extraction 为 OCaml）
   - 输入：`.st`（IEC 61131-3 Structured Text）
   - 输出：`.sasm`（SafeASM 二进制）+ `.iomap`（I/O 配置表）
-  - 命令行：`veristc -c input.st -o output.sasm`（编译）/ `veristc -a input.st`（分析）
+  - 命令行：`veristc -c input.st -o output.sasm`（编译）/ `veristc -a input.st`（分析）/ `veristc -g input.st -o output.svobj`（可重定位对象）/ `veristc -x output.svobj`（校验 .svobj 结构+CRC）
 - **下位机（运行站）**：C 语言 SafeASM 虚拟机
   - 加载 `.sasm` → CRC32 校验 → 周期解释执行
   - I/O 映射层驱动 AI/AO/DI/DO（缩放/偏置/安全限值）
@@ -161,6 +161,16 @@ veristc/
   - i64 立即数：固定 8 字节小端序
   - 指令操作码：1 字节
 - 尾部 CRC32 校验，SVM 加载时拒绝损坏文件
+
+### `.svobj` 格式（P2 可重定位对象）
+
+库编译链接重构计划（见 plan 文件）引入的**可重定位目标文件**，供后续链接器 `veristc-ld`（P3）跨模块链接；详细字节布局见 `spec/safeasm-spec.md` 附录 D。
+
+- 扩展名 `.svobj`，Magic: `"SOBJ"`（`0x53 0x4F 0x42 0x4A`），Version `1`，尾部 CRC32
+- 布局：`Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)`（小端/定宽/非 LEB128）
+- **实现分层**：编译器侧（Coq `global_codegen.v` 的 `compile_program_reloc_info`/`compile_program_inst_info`）仅导出扁平重定位元数据（纯新增，不触碰已证明结构）；主机侧 OCaml（`veristc_main.ml` 的 `emit_svobj`/`verify_svobj`）负责确定性字节编码。链接器为“信任+测试”层，不进安全核。
+- 重定位种类：`0=CALL_IDX`（FB `__exec` 调用）/ `1=INST_BASE_IMM`（实例 self 基址）/ `2=GLOBAL_OFF`（预留：VAR_IN_OUT 别名）
+- **已知偏差**：当前编译器尚无 `VAR_IN_OUT` 逐引用代码生成（`D_IN_OUT` 仅解析，仍按普通端口处理），故本阶段不产出 `GLOBAL_OFF` 行；其派生依赖一个独立的编译器特性，与 .svobj 格式解耦。
 
 ### 测试
 

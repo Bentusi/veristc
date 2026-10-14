@@ -341,7 +341,18 @@ Fixpoint type_check_stmt_f
                | Some ty => is_print_type ty
                | None => false
                end) params
-      | _ => false
+      | _ =>
+          (* 真实 FB 实例调用：inst 必须解析为 T_FB 实例，且实参表达式良型 *)
+          match lookup env inst with
+          | Some (T_FB _) =>
+              List.forallb
+                (fun p =>
+                   match type_check_expr_f allow_cycle fenv env (snd p) with
+                   | Some _ => true
+                   | None => false
+                   end) params
+          | _ => false
+          end
       end
   | S_RETURN => true
   | S_EXIT => true
@@ -526,6 +537,67 @@ Fixpoint local_init_stmts (decls : list st_var_decl) : list st_stmt :=
       end
   end.
 
+(* ------------------------------------------------------------
+   FB 实例展开 (P1 原生功能块: 逻辑一份 + 每实例数据分离)
+
+   将实例声明 `inst : T_FB fbname` 展开为其可写字段的扁平全局
+   `inst_<field>`（声明序），供下游类型检查/desugar/codegen 作为
+   真实 VAR_GLOBAL 处理。标记声明 inst (T_FB) 保留，供 codegen
+   读取 inst→fbname 链接并计算 self 基址。
+   ------------------------------------------------------------ *)
+
+Definition fb_writable_pair (d : st_var_decl) : option (ident * st_type) :=
+  match d.(var_dir) with
+  | D_OUTPUT | D_LOCAL => Some (d.(var_name), d.(var_type))
+  | _ => None
+  end.
+
+Fixpoint collect_writable (ds : list st_var_decl) : list (ident * st_type) :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      match d.(var_dir) with
+      | D_INPUT => collect_writable rest
+      | _ => (d.(var_name), d.(var_type)) :: collect_writable rest
+      end
+  end.
+
+Fixpoint fb_writable_fields (fbname : string) (pous : list st_pou)
+         : list (ident * st_type) :=
+  match pous with
+  | nil => nil
+  | P_FUNCTION_BLOCK (ID nm) decls _ :: rest =>
+      if String.eqb nm fbname
+      then collect_writable decls
+      else fb_writable_fields fbname rest
+  | _ :: rest => fb_writable_fields fbname rest
+  end.
+
+Definition ident_string (x : ident) : string :=
+  match x with ID s => s end.
+
+Definition inst_field_global (inst_name : string) (p : ident * st_type)
+         : st_var_decl :=
+  match p with
+  | (ID fname, fty) =>
+      Build_st_var_decl (ID (inst_name ++ "_" ++ fname)) fty D_GLOBAL Q_NONE None
+  end.
+
+Fixpoint expand_instances (pous : list st_pou) (ds : list st_var_decl)
+         : list st_var_decl :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      match d.(var_type) with
+      | T_FB fbname =>
+          d ::
+          List.map (inst_field_global (ident_string d.(var_name)))
+                   (fb_writable_fields fbname pous)
+          ++ expand_instances pous rest
+      | _ => d :: expand_instances pous rest
+      end
+  end.
+
 Definition prepare_function_pou (pou : st_pou) : option st_pou :=
   match pou with
   | P_FUNCTION name ty decls body =>
@@ -575,7 +647,7 @@ Definition prepare_program (p : st_program) : option st_program :=
   | Some pous =>
       match find_program_entry pous with
       | Some entry =>
-          Some {| global_vars := p.(global_vars);
+          Some {| global_vars := expand_instances pous p.(global_vars);
                   pou_list := pous;
                   io_mapping := p.(io_mapping);
                   entry_point := entry |}

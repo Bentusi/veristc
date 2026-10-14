@@ -1594,6 +1594,31 @@ Inductive pc_step : sasm_module -> runtime_state -> runtime_state -> Prop :=
            (make_call_frame idx
               (call_frame_locals arg_vals local_count))
            rest vs)
+  (* ─── 内存操作: 加载 (基址相对寻址，用于 FB self 字段读取) ─── *)
+  | Pc_i32_load : forall (m : sasm_module) (s : runtime_state)
+                        (f : sasm_frame) (rest : frame_stack)
+                        (arg : memory_arg) (addr : Z) (vs : value_stack)
+                        (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_LOAD arg, next) ->
+      s.(rt_values) = V_I32 addr :: vs ->
+      pc_step m s
+        (set_top_values_cycle s (set_frame_pc f next)
+           (V_I32 (read_i32 s.(rt_memory) addr arg.(mem_offset)) :: vs))
+  (* ─── 内存操作: 存储 (基址相对寻址，用于 FB self 字段写入) ─── *)
+  (* 操作数顺序与 C VM 一致：栈顶为待存值 val，其下为基址 addr *)
+  | Pc_i32_store : forall (m : sasm_module) (s : runtime_state)
+                         (f : sasm_frame) (rest : frame_stack)
+                         (arg : memory_arg) (addr val : Z) (vs : value_stack)
+                         (next : Z),
+      s.(rt_frames) = f :: rest ->
+      fetch_frame_instr m f = Some (I32_STORE arg, next) ->
+      s.(rt_values) = V_I32 val :: V_I32 addr :: vs ->
+      pc_step m s
+        {| rt_values := vs;
+           rt_frames := set_frame_pc f next :: rest;
+           rt_memory := write_i32 s.(rt_memory) addr arg.(mem_offset) val;
+           rt_cycle_cnt := s.(rt_cycle_cnt) + 1 |}
 .
 
 (* ================================================================
@@ -1749,17 +1774,28 @@ Lemma push_call_frame_cycle_preserves_memory :
     = s.(rt_memory).
 Proof. reflexivity. Qed.
 
-Lemma pc_step_preserves_memory :
+(* 单步对线性内存的影响：除存储 (I32_STORE) 外的每条指令都保持
+   rt_memory 不变；只有存储会把内存改写为恰好一次 write_i32。
+   这取代了早期“所有步进保持内存”的断言——那只在 pc_step 尚无
+   内存指令时成立。 *)
+Lemma pc_step_memory_effect :
   forall (m : sasm_module) (s s' : runtime_state),
-    pc_step m s s' -> s'.(rt_memory) = s.(rt_memory).
+    pc_step m s s' ->
+    s'.(rt_memory) = s.(rt_memory)
+    \/ exists addr off val : Z,
+         s'.(rt_memory) = write_i32 s.(rt_memory) addr off val.
 Proof.
   intros m s s' H; induction H;
-    try (apply push_value_preserves_memory);
-    try (apply replace_top_frame_noinc_preserves_memory);
-    try (apply set_top_values_cycle_preserves_memory);
-    try (apply pop_top_frame_cycle_preserves_memory);
-    try (apply push_call_frame_cycle_preserves_memory);
-    reflexivity.
+    first
+      [ (left;
+         try apply push_value_preserves_memory;
+         try apply replace_top_frame_noinc_preserves_memory;
+         try apply set_top_values_cycle_preserves_memory;
+         try apply pop_top_frame_cycle_preserves_memory;
+         try apply push_call_frame_cycle_preserves_memory;
+         reflexivity)
+      | (right; exists addr, arg.(mem_offset), val; reflexivity)
+      ].
 Qed.
 
 (* Determinism of the instruction decoder: a frame's pc decodes to at
@@ -2973,6 +3009,91 @@ Definition rule_V9 (m : sasm_module) : Prop :=
     seg1 <> seg2 ->
     seg1.(seg_start) + seg1.(seg_size) <= seg2.(seg_start) \/
     seg2.(seg_start) + seg2.(seg_size) <= seg1.(seg_start).
+
+(* ================================================================
+   FB 实例数据块 (FB_DATA) 良构 + self 相对寻址语义 (t7)
+
+   编译器把每个 FUNCTION_BLOCK 实例的可写字段布局成从基址 base 起、
+   每字段 4 字节的连续区间；字段 i (0 基) 位于 base + 4*i。FB 体降级
+   为单份 __exec 函数，首参 __self 保存 base；字段访问编译为
+     LOCAL_GET self_slot ; I32_LOAD/STORE {mem_offset := 4*i}
+   即“基址相对”寻址。本小节在权威执行关系 pc_step 上形式化该机制，
+   并证明 FB_DATA 数据块落在段内 (fb_block_within) 蕴含每次字段访问
+   的地址合法 (valid_address)。数据块可位于 SEG_GLOBAL 或 SEG_FB_DATA。
+   ================================================================ *)
+
+(* self 相对寻址使用的 memory_arg：对齐 4 字节(mem_align=2)，偏移即字段偏移 *)
+Definition fb_mem_arg (off : Z) : memory_arg :=
+  {| mem_align := 2; mem_offset := off |}.
+
+(* 单步读 (self 基址 -> 字段值)：栈顶为基址 base 时，
+   I32_LOAD (fb_mem_arg off) 读到线性地址 base + off 处的值 *)
+Lemma self_relative_load_step :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (base off : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_LOAD (fb_mem_arg off), next) ->
+    s.(rt_values) = V_I32 base :: vs ->
+    pc_step m s
+      (set_top_values_cycle s (set_frame_pc f next)
+         (V_I32 (read_i32 s.(rt_memory) base off) :: vs)).
+Proof.
+  intros m s f rest base off vs next Hfr Hfetch Hvals.
+  refine (Pc_i32_load m s f rest (fb_mem_arg off) base vs next Hfr Hfetch Hvals).
+Qed.
+
+(* 单步写 (字段值 -> self 基址)：栈为 [val; base] 时，
+   I32_STORE (fb_mem_arg off) 把 val 写入线性地址 base + off *)
+Lemma self_relative_store_step :
+  forall (m : sasm_module) (s : runtime_state) (f : sasm_frame)
+         (rest : frame_stack) (base val off : Z) (vs : value_stack) (next : Z),
+    s.(rt_frames) = f :: rest ->
+    fetch_frame_instr m f = Some (I32_STORE (fb_mem_arg off), next) ->
+    s.(rt_values) = V_I32 val :: V_I32 base :: vs ->
+    pc_step m s
+      {| rt_values := vs;
+         rt_frames := set_frame_pc f next :: rest;
+         rt_memory := write_i32 s.(rt_memory) base off val;
+         rt_cycle_cnt := s.(rt_cycle_cnt) + 1 |}.
+Proof.
+  intros m s f rest base val off vs next Hfr Hfetch Hvals.
+  exact (Pc_i32_store m s f rest (fb_mem_arg off) base val vs next Hfr Hfetch Hvals).
+Qed.
+
+(* FB 实例数据块良构：nfields 个 4 字节字段整体落在段 seg 内 *)
+Definition fb_block_within (base nfields : Z) (seg : memory_segment) : Prop :=
+  0 <= seg.(seg_start) /\
+  seg.(seg_start) <= base /\
+  0 <= nfields /\
+  base + 4 * nfields <= seg.(seg_start) + seg.(seg_size).
+
+(* 安全引理：数据块良构 + 段在总内存内 (V8) 蕴含任意字段 i 的
+   基址相对访问 base + 4*i 为合法地址 *)
+Lemma fb_field_access_valid_address :
+  forall (m : sasm_module) (seg : memory_segment) (base nfields i : Z),
+    List.In seg m.(sasm_memory_segments) ->
+    rule_V8 m ->
+    fb_block_within base nfields seg ->
+    (0 <= i < nfields)%Z ->
+    valid_address m base (4 * i).
+Proof.
+  intros m seg base nfields i Hin HV8 Hw Hij.
+  destruct Hw as [Hss0 [Hsb [Hn Htop]]].
+  unfold valid_address.
+  specialize (HV8 seg Hin).
+  lia.
+Qed.
+
+(* 良构数据块的字段地址两两不同 (每字段 4 字节, 无重叠) *)
+Lemma fb_field_addrs_distinct :
+  forall (base : Z) (i j : Z),
+    i <> j ->
+    (0 <= i)%Z -> (0 <= j)%Z ->
+    base + 4 * i <> base + 4 * j.
+Proof.
+  intros base i j Hij Hi Hj Heq.
+  apply Hij; lia.
+Qed.
 
 (* V10: IOMap 条目的 mem_offset + bit_width/8 不超出 total_size *)
 Definition rule_V10 (m : sasm_module) : Prop :=

@@ -1131,3 +1131,70 @@ ST:  qDINT := QINT_var;     -- QINT → QDINT (提升)
 
 **结论**：所有质量操作的 WCET 均可静态计算，无隐藏分支或循环 ✅
 ```
+
+---
+
+## 附录 D：`.svobj` 可重定位对象格式（P2）
+
+VeriSTC 编译器除产出可直接装载的 `.sasm`（`-c`）外，还可产出**可重定位目标文件** `.svobj`（`-g`），供后续链接器 `veristc-ld`（P3）跨模块链接。目标：把 `tools/stpreproc.py` 的源到源文本展开替换为真正的「逻辑一份 + 数据分离 + 类 C 连接」编译—链接工具链。
+
+### D.1 分层与信任边界
+
+- **编译器侧（Coq）**：`veristc/src/global_codegen.v` 中的 `compile_program_reloc_info` / `compile_program_inst_info` 从**已链接**的 `.sasm` 镜像中，把属于跨模块链接点的指令位置提取为**扁平可提取元数据表**（纯新增定义，不触碰任何已证明结构）。这些定义经 Extraction 暴露给 OCaml。
+- **编码侧（主机 OCaml）**：`veristc/extraction/veristc_main.ml` 的 `emit_svobj` 把元数据确定性编码为 `.svobj` 字节；`verify_svobj`（`-x`）做结构 + CRC round-trip。
+- 链接器正确性属**「信任 + 测试」**层，不进安全核，故 `.svobj` 仅记录相对量、不烘焙绝对地址。
+
+### D.2 文件布局（小端 / 定宽，无 LEB128，与 `.sasm` 风格一致）
+
+```
+Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)
+```
+
+**Header（36 字节）**
+
+| 偏移 | 宽度 | 字段 | 说明 |
+|------|------|------|------|
+| 0 | 4 | magic | `"SOBJ"` = `0x53 0x4F 0x42 0x4A` |
+| 4 | 2 | version | `1` |
+| 6 | 2 | flags | 0（保留） |
+| 8 | 4 | n_syms | 符号表条目数 |
+| 12 | 4 | n_relocs | 重定位条目数 |
+| 16 | 4 | n_blocks | FB 实例数据块数 |
+| 20 | 4 | symtab_len | SYMTAB 段字节数 |
+| 24 | 4 | reloc_len | RELOC 段字节数（= n_relocs×17） |
+| 28 | 4 | blocks_len | BLOCKS 段字节数 |
+| 32 | 4 | image_len | IMAGE 段字节数 |
+
+尾部 4 字节为 CRC32，覆盖 `[0, total-4)`；装载/校验时对不上即拒绝。
+
+**SYMTAB**（变长条目，按名字升序，保证确定性）
+```
+u16 name_len | byte name[name_len] | u8 kind | u32 aux
+```
+- `kind`：`0=FB_EXEC`（`FUNCTION_BLOCK` 的 `__exec` 函数，`aux`=函数索引）/ `1=INST_DATA`（FB 实例数据块，`aux`=块基址）/ `2=GLOBAL_EXT`（未定义外部符号，`aux`=0）。
+
+**RELOC**（定长 17 字节条目，按派生序）
+```
+u8 kind | u32 sym_idx | u32 func_idx | u32 offset | i32 addend
+```
+- `kind`：`0=CALL_IDX`（对某 FB `__exec` 的 `CALL`，需重编号）/ `1=INST_BASE_IMM`（`CS_FB_CALL` 降级时压入实例 `self` 基址的 `I32_CONST`）/ `2=GLOBAL_OFF`（预留：`VAR_IN_OUT` 端口对调用方全局的别名，见 D.4）。
+- `sym_idx`=目标在 SYMTAB 的下标；`func_idx`×`offset`=被修补指令在其函数体内的**字节偏移**（相对量，链接时由各函数绝对基址换算）。
+
+**BLOCKS**（变长条目，按实例名升序）
+```
+u16 name_len | byte name | u16 fb_len | byte fb_name | u32 base | u32 size
+```
+- 每个 FB 实例的可写字段数据块：`size = 4 × 字段数`（声明序，每字段 4 字节的 self 相对布局）。
+
+**IMAGE**：链接后的 `.sasm` 模块原始字节（`encode_module` 输出，含占位 CRC 尾），供链接器切分/重定位，装载器亦可直接消费。
+
+### D.3 派生正确性依据
+
+`scan_instrs` 采用「基址候选 + 遇 FB `CALL` 配对」的前向扫描：`CS_FB_CALL` 降级恰以 `I32_CONST base` 开始、以 `CALL exec` 结束，故 `base` 立即数与其对应 `CALL` 精确配对，中间输入表达式常量不误配。函数索引序 = `entry_first_functions` 序。`offset` 由 `instr_size` 累加得到，与编码字节布局一致。
+
+### D.4 `VAR_IN_OUT` 现状与偏差（诚实声明）
+
+`.svobj` 格式在**对象层面已纳入 `VAR_IN_OUT`**：保留 `reloc.kind=2 GLOBAL_OFF` 与 `sym.kind=2 GLOBAL_EXT`，用于日后把 FB 的 `VAR_IN_OUT` 端口记录为对调用方全局变量的**逐引用别名**重定位。
+
+但**当前编译器尚无 `VAR_IN_OUT` 逐引用的代码生成**——`D_IN_OUT` 仅在 `safest.v` 词法/语法层解析，`desugar`/`codegen`/`global_codegen` 仍按普通输入端口处理（拷贝进/出），不产生引用别名。因此本 P2 切片的 `compile_program_reloc_info` **不产出 `GLOBAL_OFF` 行**（实测单模块 `native_fb_multi_instance.st`：2×CALL_IDX + 2×INST_BASE_IMM，0×GLOBAL_OFF）。`GLOBAL_OFF` 的实际派生依赖一个**独立的编译器侧逐引用特性**，与 P2 可重定位对象格式解耦，留待后续实现。
+

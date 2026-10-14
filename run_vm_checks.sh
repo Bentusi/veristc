@@ -83,6 +83,45 @@ else
     assert_contains "/tmp/veristc-function-while.out" "unsupported control flow" "WHILE in FUNCTION error message"
 fi
 
+# 原生 FUNCTION_BLOCK 多实体：库逻辑一份 + 每实例 self 相对独立上下文
+# （不经前端文本预处理器展开，直接由 veristc 编译）
+"$V" -c tests/st-examples/native_fb_multi_instance.st \
+    -o /tmp/native_fb.sasm > /tmp/native_fb_compile.out 2>&1
+assert_contains "/tmp/native_fb_compile.out" "compiled:" "native FB compile OK"
+./vm/svm -n 8 -p 0 /tmp/native_fb.sasm > /tmp/native_fb_run.out
+# rs1: S@2 R@6 -> 周期2 置位; rs2: S@4 R@8 -> 周期4 置位
+grep -q "tick2, 1, 0," /tmp/native_fb_run.out \
+    && { echo "  native FB rs1 set / rs2 idle @cycle2 ... OK"; _TF_PASS=$((_TF_PASS + 1)); } \
+    || { echo "  native FB rs1 set / rs2 idle @cycle2 ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1)); }
+grep -q "tick4, 1, 1," /tmp/native_fb_run.out \
+    && { echo "  native FB both instances set @cycle4 ... OK"; _TF_PASS=$((_TF_PASS + 1)); } \
+    || { echo "  native FB both instances set @cycle4 ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1)); }
+grep -q "tick6, 0, 1," /tmp/native_fb_run.out \
+    && { echo "  native FB rs1 reset / rs2 held @cycle6 ... OK"; _TF_PASS=$((_TF_PASS + 1)); } \
+    || { echo "  native FB rs1 reset / rs2 held @cycle6 ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1)); }
+grep -q "tick8, 0, 0," /tmp/native_fb_run.out \
+    && { echo "  native FB rs2 reset @cycle8 ... OK"; _TF_PASS=$((_TF_PASS + 1)); } \
+    || { echo "  native FB rs2 reset @cycle8 ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1)); }
+
+# P2 可重定位对象 .svobj：编译器导出跨模块链接元数据 + 主机侧结构/CRC round-trip
+"$V" -g tests/st-examples/native_fb_multi_instance.st \
+    -o /tmp/native_fb.svobj > /tmp/native_fb_svobj.out 2>&1
+assert_contains "/tmp/native_fb_svobj.out" "emitted:" "svobj emit OK"
+"$V" -x /tmp/native_fb.svobj > /tmp/native_fb_svobj_verify.out 2>&1
+assert_contains "/tmp/native_fb_svobj_verify.out" "svobj OK:" "svobj verify OK"
+# 预期链接元数据：符号=RS_V1+rs1+rs2(3)；重定位=2 CALL_IDX+2 INST_BASE_IMM(4)；数据块=rs1,rs2(2)
+assert_contains "/tmp/native_fb_svobj_verify.out" "syms=3" "svobj symtab count"
+assert_contains "/tmp/native_fb_svobj_verify.out" "relocs=4" "svobj reloc count"
+assert_contains "/tmp/native_fb_svobj_verify.out" "blocks=2" "svobj data block count"
+# 篡改 section 长度字段 → 结构/CRC 校验必须拒绝
+cp /tmp/native_fb.svobj /tmp/native_fb_bad.svobj
+printf '\xAA' | dd of=/tmp/native_fb_bad.svobj bs=1 seek=20 count=1 conv=notrunc 2>/dev/null
+if "$V" -x /tmp/native_fb_bad.svobj >/dev/null 2>&1; then
+    echo "  svobj corrupt rejection ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1))
+else
+    echo "  svobj corrupt rejection ... OK"; _TF_PASS=$((_TF_PASS + 1))
+fi
+
 step "6/6" "SVM dump, SIL3, CRC, period and corrupt CRC rejection"
 ./vm/svm -d tests/veristc-tests/out/core_assign.sasm \
     > /tmp/veristc-svm-dump.out

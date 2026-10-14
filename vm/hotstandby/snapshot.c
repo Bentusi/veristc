@@ -231,12 +231,16 @@ int hs_snapshot_create(HotStandbySystem *hs)
     uint32_t dirty_count = hs_dirty_get_pages(&hs->dirty_tracker, page_indices,
                                                HS_MAX_PAGES);
 
-    /* Global variables are always synchronized. This preserves RS state,
-       counters, accumulators, filters and state machines even when no dirty
-       page callback has been registered by the VM store path. */
+    /* Global variables and FB instance data are always synchronized. This
+       preserves RS state, counters, accumulators, filters and state machines
+       even when no dirty page callback has been registered by the VM store
+       path. FB_DATA carries per-instance state that must survive a switchover
+       exactly like SEG_GLOBAL (see spec/safeasm-spec.md 4.3). */
     for (uint32_t i = 0; i < vm->module->segment_count; i++) {
         const MemSegment *seg = &vm->module->segments[i];
-        if ((seg->segment_type != SEG_TYPE_GLOBAL) || (seg->size == 0u)) { continue; }
+        if (((seg->segment_type != SEG_TYPE_GLOBAL) &&
+             (seg->segment_type != SEG_TYPE_FB_DATA)) ||
+            (seg->size == 0u)) { continue; }
 
         uint32_t first_page = seg->start_offset / HS_PAGE_SIZE;
         uint32_t end_addr = seg->start_offset + seg->size - 1;

@@ -48,6 +48,7 @@ Fixpoint st_type_to_sasm (t : st_type) : sasm_value_type :=
   | T_QLREAL                   => F64           (* v1.1 *)
   | T_QTIME                    => I64           (* v1.1 *)
   | T_ARRAY elem _ _           => st_type_to_sasm elem
+  | T_FB _                     => I32
   end.
 
 (* ST 值 → SafeASM 值的转换 *)
@@ -2247,11 +2248,12 @@ Qed.
 (* 被调帧局部槽位数 = 类型环境长度 + 1（返回值槽）。 *)
 Lemma compile_function_gc_locals_length :
   forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (csites : call_site)
          (idx : Z) (f : corest_function),
-    List.length (compile_function_gc globals fidx idx f).(sasm_locals)
+    List.length (compile_function_gc globals fidx csites idx f).(sasm_locals)
     = (List.length (build_compile_type_env f) + 1)%nat.
 Proof.
-  intros globals fidx idx f.
+  intros globals fidx csites idx f.
   unfold compile_function_gc; simpl.
   rewrite List.length_app, List.length_map.
   reflexivity.
@@ -2260,11 +2262,12 @@ Qed.
 (* 被调帧的局部槽位数 = 形参 ++ 局部 ++ 返回值槽，恒 >= 形参数。 *)
 Lemma compile_function_gc_locals_adequate :
   forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (csites : call_site)
          (idx : Z) (f : corest_function),
     (List.length (build_sasm_func_type f).(sasm_param_types) <=
-     List.length (compile_function_gc globals fidx idx f).(sasm_locals))%nat.
+     List.length (compile_function_gc globals fidx csites idx f).(sasm_locals))%nat.
 Proof.
-  intros globals fidx idx f.
+  intros globals fidx csites idx f.
   rewrite build_sasm_func_type_param_count.
   rewrite compile_function_gc_locals_length.
   unfold build_compile_type_env.
@@ -2275,11 +2278,12 @@ Qed.
 (* compile_functions_gc 保持函数数量。 *)
 Lemma compile_functions_gc_length :
   forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (csites : call_site)
          (fs : list corest_function) (idx : Z),
-    List.length (compile_functions_gc globals fidx idx fs)
+    List.length (compile_functions_gc globals fidx csites idx fs)
     = List.length fs.
 Proof.
-  intros globals fidx.
+  intros globals fidx csites.
   induction fs as [|f rest IH]; intros idx; simpl;
     [reflexivity | rewrite IH; reflexivity].
 Qed.
@@ -2288,14 +2292,15 @@ Qed.
    其类型槽索引为 idx + j。 *)
 Lemma nth_error_compile_functions_gc :
   forall (globals : list (ident * Z)) (fidx : func_index_env)
+         (csites : call_site)
          (fs : list corest_function) (idx : Z) (j : nat),
-    List.nth_error (compile_functions_gc globals fidx idx fs) j =
+    List.nth_error (compile_functions_gc globals fidx csites idx fs) j =
       match List.nth_error fs j with
-      | Some f => Some (compile_function_gc globals fidx (idx + Z.of_nat j) f)
+      | Some f => Some (compile_function_gc globals fidx csites (idx + Z.of_nat j) f)
       | None => None
       end.
 Proof.
-  intros globals fidx.
+  intros globals fidx csites.
   induction fs as [|f rest IH]; intros idx j.
   - destruct j; reflexivity.
   - destruct j as [|j'];
@@ -2351,7 +2356,9 @@ Lemma compile_program_gc_functions_eq :
   forall (p : corest_program),
     (compile_program_gc p).(sasm_functions)
     = compile_functions_gc (build_global_env p)
-        (assign_func_indices (entry_first_functions p) 0) 0
+        (assign_func_indices (entry_first_functions p) 0)
+        (build_call_sites (build_global_env p)
+           (entry_first_functions p) (cprog_global_vars p)) 0
         (entry_first_functions p).
 Proof.
   intros p. unfold compile_program_gc. cbn [sasm_functions]. reflexivity.
@@ -2390,6 +2397,8 @@ Proof.
              = Some (compile_function_gc
                        (build_global_env p)
                        (assign_func_indices (entry_first_functions p) 0)
+                       (build_call_sites (build_global_env p)
+                          (entry_first_functions p) (cprog_global_vars p))
                        (Z.of_nat j) g)).
   {
     rewrite compile_program_gc_functions_eq.
@@ -2399,7 +2408,10 @@ Proof.
   }
   exists (build_sasm_func_type g),
     (compile_function_gc (build_global_env p)
-       (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g).
+       (assign_func_indices (entry_first_functions p) 0)
+       (build_call_sites (build_global_env p)
+          (entry_first_functions p) (cprog_global_vars p))
+       (Z.of_nat j) g).
   split; [| split].
   - unfold lookup_func_type. exact HT.
   - unfold lookup_function. exact HF.
@@ -2473,7 +2485,10 @@ Proof.
   destruct (List.nth_error (entry_first_functions p) (Z.to_nat idx))
     as [g|] eqn:Hg; [ | contradiction ].
   exists (compile_function_gc (build_global_env p)
-            (assign_func_indices (entry_first_functions p) 0) idx g).
+            (assign_func_indices (entry_first_functions p) 0)
+            (build_call_sites (build_global_env p)
+               (entry_first_functions p) (cprog_global_vars p))
+            idx g).
   unfold lookup_function.
   rewrite compile_program_gc_functions_eq.
   rewrite nth_error_compile_functions_gc.

@@ -71,6 +71,7 @@ Fixpoint type_eqb (t1 t2 : st_type) : bool :=
   | T_QTIME, T_QTIME => true
   | T_ARRAY e1 l1 h1, T_ARRAY e2 l2 h2 =>
       type_eqb e1 e2 && (l1 =? l2) && (h1 =? h2)
+  | T_FB s1, T_FB s2 => String.eqb s1 s2
   | _, _ => false
   end.
 
@@ -539,6 +540,7 @@ Proof.
     apply andb_true_iff in H1. destruct H1 as [H1 H3].
     apply IHt1 in H1. apply Z.eqb_eq in H3. apply Z.eqb_eq in H2.
     subst. auto.
+  - (* T_FB *) intro H. apply String.eqb_eq in H. subst. auto.
 Qed.
 
 (* 引理: promote_type_dec 与 promote_type 的关系 *)
@@ -557,7 +559,8 @@ Qed.
 Lemma type_eqb_refl : forall t, type_eqb t t = true.
 Proof.
   intro t; induction t; simpl; auto.
-  all: try (rewrite IHt; rewrite Z.eqb_refl; rewrite Z.eqb_refl; auto).
+  all: first [ rewrite IHt; rewrite Z.eqb_refl; rewrite Z.eqb_refl; auto
+             | rewrite String.eqb_refl; auto ].
 Qed.
 
 Lemma promote_type_dec_complete : forall t1 t2 t3,

@@ -109,6 +109,7 @@ Inductive st_type : Type :=
  | T_QLREAL                     (* QLREAL — 64 位带质量浮点, v1.1 *)
  | T_QTIME                      (* QTIME *)
  | T_ARRAY : st_type -> Z -> Z -> st_type   (* 静态数组: 元素类型 × 下界 × 上界 *)
+ | T_FB : string -> st_type                 (* FB 实例类型: 借用 FUNCTION_BLOCK 名, 链接期落入 FB_DATA *)
 .
 
 (* 类型的位宽（用于内存布局计算） *)
@@ -139,6 +140,7 @@ Fixpoint type_width (t : st_type) : Z :=
   | T_QLREAL => 64               (* v1.1 *)
   | T_QTIME  => 64
   | T_ARRAY elem low high => (high - low + 1) * type_width elem
+  | T_FB _ => 0                  (* 实例占位由 FB_DATA 布局决定，不进入标量宽度计算 *)
   end.
 
 (* 类型兼容性（隐式转换规则） *)
