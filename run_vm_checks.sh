@@ -103,6 +103,37 @@ grep -q "tick8, 0, 0," /tmp/native_fb_run.out \
     && { echo "  native FB rs2 reset @cycle8 ... OK"; _TF_PASS=$((_TF_PASS + 1)); } \
     || { echo "  native FB rs2 reset @cycle8 ... FAIL"; _TF_FAIL=$((_TF_FAIL + 1)); }
 
+# v1.5 VAR_IN_OUT 逐引用别名：端口编译为"调用方存储的地址"形参，
+# 体内读写走 I32_LOAD_PTR / I32_STORE_PTR ⇒ 两实例共享同一 shared，
+# 且同周期双向可见（调用方写→被调读得到；被调写→调用方立即读到）
+"$V" -c tests/st-examples/native_fb_in_out.st \
+    -o /tmp/native_fb_inout.sasm > /tmp/native_fb_inout_compile.out 2>&1
+assert_contains "/tmp/native_fb_inout_compile.out" "compiled:" "native FB VAR_IN_OUT compile OK"
+./vm/svm -d /tmp/native_fb_inout.sasm > /tmp/native_fb_inout_dump.out
+assert_contains "/tmp/native_fb_inout_dump.out" "I32_LOAD_PTR" "VAR_IN_OUT alias load emitted"
+assert_contains "/tmp/native_fb_inout_dump.out" "I32_STORE_PTR" "VAR_IN_OUT alias store emitted"
+./vm/svm -n 4 -p 0 /tmp/native_fb_inout.sasm > /tmp/native_fb_inout_run.out
+# t: shared=t; a1(ACC=&shared,K=10)  -> LAST=t,   shared=t+10
+#    a2(ACC=&shared,K=100)           -> LAST=t+10, shared=t+110
+# ⇒ 单点累加(111) 证明别名；LAST 不同(1/11) 证明实例数据仍分离
+assert_contains "/tmp/native_fb_inout_run.out" "tick1, 111, 1, 11," "VAR_IN_OUT alias shared @cycle1"
+assert_contains "/tmp/native_fb_inout_run.out" "tick2, 112, 2, 12," "VAR_IN_OUT alias shared @cycle2"
+assert_contains "/tmp/native_fb_inout_run.out" "tick4, 114, 4, 14," "VAR_IN_OUT alias shared @cycle4"
+
+# VAR_IN_OUT 非法绑定必须拒绝（局部无地址 / 表达式无地址 / 未绑定 /
+# 类型或宽度不符 / 端口名不在声明中）
+for neg in in_out_local in_out_expr in_out_unbound in_out_type in_out_unknown_port; do
+    if "$V" -c "tests/compiler-tests/negative/${neg}.st" \
+        -o "/tmp/veristc-inout-${neg}.sasm" \
+        > "/tmp/veristc-inout-${neg}.out" 2>&1; then
+        echo "  VAR_IN_OUT ${neg} rejection ... FAIL (compiler accepted it)"
+        _TF_FAIL=$((_TF_FAIL + 1))
+    else
+        echo "  VAR_IN_OUT ${neg} rejection ... OK"
+        _TF_PASS=$((_TF_PASS + 1))
+    fi
+done
+
 # P2 可重定位对象 .svobj：编译器导出跨模块链接元数据 + 主机侧结构/CRC round-trip
 "$V" -g tests/st-examples/native_fb_multi_instance.st \
     -o /tmp/native_fb.svobj > /tmp/native_fb_svobj.out 2>&1
@@ -113,6 +144,26 @@ assert_contains "/tmp/native_fb_svobj_verify.out" "svobj OK:" "svobj verify OK"
 assert_contains "/tmp/native_fb_svobj_verify.out" "syms=3" "svobj symtab count"
 assert_contains "/tmp/native_fb_svobj_verify.out" "relocs=4" "svobj reloc count"
 assert_contains "/tmp/native_fb_svobj_verify.out" "blocks=2" "svobj data block count"
+# 无 VAR_IN_OUT ⇒ 不得产出 GLOBAL_OFF 行
+assert_contains "/tmp/native_fb_svobj_verify.out" "global=0)" "svobj no GLOBAL_OFF without IN_OUT"
+# v1.5 VAR_IN_OUT ⇒ 每个别名实参地址立即数产出一条 GLOBAL_OFF（指向 GLOBAL_EXT 符号）
+# 预期：a1/a2 两次调用 ⇒ 2 CALL_IDX + 2 INST_BASE_IMM + 2 GLOBAL_OFF(shared)=6；
+#       符号 = ACCUM(FB_EXEC) + a1 + a2(INST_DATA) + shared(GLOBAL_EXT) = 4
+"$V" -g tests/st-examples/native_fb_in_out.st \
+    -o /tmp/native_fb_inout.svobj > /tmp/native_fb_inout_svobj.out 2>&1
+assert_contains "/tmp/native_fb_inout_svobj.out" "emitted:" "svobj (IN_OUT) emit OK"
+"$V" -x /tmp/native_fb_inout.svobj > /tmp/native_fb_inout_svobj_verify.out 2>&1
+assert_contains "/tmp/native_fb_inout_svobj_verify.out" "svobj OK:" "svobj (IN_OUT) verify OK"
+assert_contains "/tmp/native_fb_inout_svobj_verify.out" "relocs=6" "svobj (IN_OUT) reloc count"
+assert_contains "/tmp/native_fb_inout_svobj_verify.out" "syms=4" "svobj (IN_OUT) symtab count"
+assert_contains "/tmp/native_fb_inout_svobj_verify.out" "global=2)" "svobj (IN_OUT) GLOBAL_OFF rows"
+# 跨实例字段别名：实参地址等于实例基址，必须按别名而非基址处理
+"$V" -g tests/compiler-tests/positive/in_out_alias_field.st \
+    -o /tmp/in_out_alias_field.svobj > /tmp/in_out_alias_field_svobj.out 2>&1
+assert_contains "/tmp/in_out_alias_field_svobj.out" "emitted:" "svobj (alias field) emit OK"
+"$V" -x /tmp/in_out_alias_field.svobj > /tmp/in_out_alias_field_verify.out 2>&1
+assert_contains "/tmp/in_out_alias_field_verify.out" "relocs=6 (call=2 inst=2 global=2)" \
+    "svobj (alias field) base/alias not confused"
 # 篡改 section 长度字段 → 结构/CRC 校验必须拒绝
 cp /tmp/native_fb.svobj /tmp/native_fb_bad.svobj
 printf '\xAA' | dd of=/tmp/native_fb_bad.svobj bs=1 seek=20 count=1 conv=notrunc 2>/dev/null

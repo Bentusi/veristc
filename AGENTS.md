@@ -168,9 +168,9 @@ veristc/
 
 - 扩展名 `.svobj`，Magic: `"SOBJ"`（`0x53 0x4F 0x42 0x4A`），Version `1`，尾部 CRC32
 - 布局：`Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)`（小端/定宽/非 LEB128）
-- **实现分层**：编译器侧（Coq `global_codegen.v` 的 `compile_program_reloc_info`/`compile_program_inst_info`）仅导出扁平重定位元数据（纯新增，不触碰已证明结构）；主机侧 OCaml（`veristc_main.ml` 的 `emit_svobj`/`verify_svobj`）负责确定性字节编码。链接器为“信任+测试”层，不进安全核。
-- 重定位种类：`0=CALL_IDX`（FB `__exec` 调用）/ `1=INST_BASE_IMM`（实例 self 基址）/ `2=GLOBAL_OFF`（预留：VAR_IN_OUT 别名）
-- **已知偏差**：当前编译器尚无 `VAR_IN_OUT` 逐引用代码生成（`D_IN_OUT` 仅解析，仍按普通端口处理），故本阶段不产出 `GLOBAL_OFF` 行；其派生依赖一个独立的编译器特性，与 .svobj 格式解耦。
+- **实现分层**：编译器侧（Coq `global_codegen.v` 的 `compile_program_reloc_info`/`compile_program_inst_info`/`compile_program_sym_info`）仅导出扁平重定位元数据（纯新增，不触碰已证明结构）；主机侧 OCaml（`veristc_main.ml` 的 `emit_svobj`/`verify_svobj`）负责确定性字节编码。链接器为“信任+测试”层，不进安全核。
+- 重定位种类：`0=CALL_IDX`（FB `__exec` 调用）/ `1=INST_BASE_IMM`（实例 self 基址）/ `2=GLOBAL_OFF`（VAR_IN_OUT 别名实参的全局地址立即数，`addend = 地址 − GLOBAL_BASE`，符号 kind=`2 GLOBAL_EXT`）
+- **v1.5 VAR_IN_OUT 逐引用别名**：端口降级为“持有调用方存储地址的形参槽”，读写走 `I32_LOAD_PTR`/`I32_STORE_PTR`（0x30/0x31，地址来自值栈而非静态 `mem_offset`）。`GLOBAL_OFF` 由 `build_alias_table` 从调用点结构派生；扫描器里**别名判定优先于基址判定**（实例字段全局 `a1_LAST` 的地址恰等于该实例 self 基址，否则两类行会互相错记）。已知精度取舍与派生规则见 `spec/safeasm-spec.md` 附录 D.3/D.4。
 
 ### 测试
 

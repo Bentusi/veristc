@@ -520,6 +520,98 @@ static void test_safe_bounds_fail(void)
     assert(rc == VM_ERR_MEM_OUT_OF_BOUNDS);
 }
 
+/* v1.5: 指针解引用指令 —— VAR_IN_OUT 逐引用别名的执行基础
+ * 与普通 STORE/LOAD 的唯一区别是地址本身作为数据在栈上传递；操作数顺序
+ * 与既有 I32_STORE 一致（先压值、再压地址，栈顶为地址）。 */
+static void test_ptr_deref_load_store(void)
+{
+    /* 1) 解引用写：[16] = 42 */
+    const uint8_t code_w[] = {
+        0x41, 0x10, 0x00, 0x00, 0x00,  /* I32_CONST 16   (别名地址) */
+        0x41, 0x2A, 0x00, 0x00, 0x00,  /* I32_CONST 42   (待存值, 栈顶) */
+        0x31, 0x02, 0x00, 0x00, 0x00,  /* I32_STORE_PTR align=2 offset=0 */
+        0x06                            /* RETURN */
+    };
+    install_code(code_w, sizeof(code_w));
+    {
+        static VM vm_w;
+        assert(vm_init(&vm_w, &module, 256) == 0);
+        assert(vm_run(&vm_w) == VM_OK);
+        assert(vm_w.memory[16] == 42U);
+    }
+
+    /* 2) 解引用读回：同一地址上读得刚写入的值 */
+    const uint8_t code_r[] = {
+        0x41, 0x10, 0x00, 0x00, 0x00,  /* I32_CONST 16 (地址) */
+        0x41, 0x2A, 0x00, 0x00, 0x00,  /* I32_CONST 42 (值) */
+        0x31, 0x02, 0x00, 0x00, 0x00,  /* I32_STORE_PTR → [16]=42 */
+        0x41, 0x10, 0x00, 0x00, 0x00,  /* I32_CONST 16 */
+        0x30, 0x02, 0x00, 0x00, 0x00,  /* I32_LOAD_PTR  → 读 [16] */
+        0x06                            /* RETURN */
+    };
+    install_code(code_r, sizeof(code_r));
+    {
+        static VM vm_r;
+        assert(vm_init(&vm_r, &module, 256) == 0);
+        assert(vm_run(&vm_r) == VM_OK);
+        assert(vm_r.val_stack[vm_r.val_stack_ptr - 1U] == 42);
+    }
+
+    /* 3) 跨指令类别别名：静态 I32_STORE 写、I32_LOAD_PTR 读同一地址 */
+    const uint8_t code_x[] = {
+        0x41, 0x20, 0x00, 0x00, 0x00,  /* I32_CONST 32 (地址) */
+        0x41, 0x63, 0x00, 0x00, 0x00,  /* I32_CONST 99 (值) */
+        0x36, 0x02, 0x00, 0x00, 0x00,  /* I32_STORE → [32]=99 */
+        0x41, 0x20, 0x00, 0x00, 0x00,  /* I32_CONST 32 (地址) */
+        0x30, 0x02, 0x00, 0x00, 0x00,  /* I32_LOAD_PTR → 读 [32] */
+        0x06                            /* RETURN */
+    };
+    install_code(code_x, sizeof(code_x));
+    {
+        static VM vm_x;
+        assert(vm_init(&vm_x, &module, 256) == 0);
+        assert(vm_run(&vm_x) == VM_OK);
+        assert(vm_x.memory[32] == 99U);
+        assert(vm_x.val_stack[vm_x.val_stack_ptr - 1U] == 99);
+    }
+
+    /* 4) 编译产物的真实形态：别名地址存于局部槽位（指针形参），
+     *    每次端口访问都是 LOCAL_GET ptr_slot ; *_PTR 的组合。 */
+    const uint8_t code_slot[] = {
+        0x41, 0x24, 0x00, 0x00, 0x00,  /* I32_CONST 36 (别名地址) */
+        0x21, 0x02, 0x00, 0x00, 0x00,  /* LOCAL_SET 2  (指针形参槽位) */
+        0x20, 0x02, 0x00, 0x00, 0x00,  /* LOCAL_GET 2  (地址) */
+        0x41, 0x07, 0x00, 0x00, 0x00,  /* I32_CONST 7  (待存值, 栈顶) */
+        0x31, 0x02, 0x00, 0x00, 0x00,  /* I32_STORE_PTR → [36]=7 */
+        0x20, 0x02, 0x00, 0x00, 0x00,  /* LOCAL_GET 2  (地址) */
+        0x30, 0x02, 0x00, 0x00, 0x00,  /* I32_LOAD_PTR  → 读 [36] */
+        0x06                            /* RETURN */
+    };
+    install_code(code_slot, sizeof(code_slot));
+    module.funcs[0].local_count = 3U;
+    {
+        static VM vm_slot;
+        assert(vm_init(&vm_slot, &module, 256) == 0);
+        assert(vm_run(&vm_slot) == VM_OK);
+        assert(vm_slot.frame_stack[0].locals[2] == 36);
+        assert(vm_slot.memory[36] == 7U);
+        assert(vm_slot.val_stack[vm_slot.val_stack_ptr - 1U] == 7);
+    }
+
+    /* 5) 越界解引用必须被拒绝 */
+    const uint8_t code_oob[] = {
+        0x41, 0x00, 0x01, 0x00, 0x00,  /* I32_CONST 256 (超出 256 字节内存) */
+        0x30, 0x02, 0x00, 0x00, 0x00,  /* I32_LOAD_PTR */
+        0x06
+    };
+    install_code(code_oob, sizeof(code_oob));
+    {
+        static VM vm_oob;
+        assert(vm_init(&vm_oob, &module, 256) == 0);
+        assert(vm_run(&vm_oob) == VM_ERR_MEM_OUT_OF_BOUNDS);
+    }
+}
+
 int main(void)
 {
     /* Original tests */
@@ -547,7 +639,8 @@ int main(void)
     test_safe_assert_pass();
     test_safe_bounds_pass();
     test_safe_bounds_fail();
+    test_ptr_deref_load_store();
 
-    puts("VM tests passed (21 tests)");
+    puts("VM tests passed (22 tests)");
     return 0;
 }

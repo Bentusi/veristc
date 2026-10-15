@@ -371,21 +371,38 @@ Fixpoint find_bound (params : list (ident * corest_expr)) (nm : ident)
   | (k, e) :: rest => if ident_eq k nm then e else find_bound rest nm
   end.
 
-(* 调用点表：实例名 → (self 基址, FB 名, 声明序输入端口) *)
-Definition call_site : Type := list (ident * (Z * ident * list ident)).
+(* 调用点表：实例名 → (self 基址, FB 名, 形参端口表[(名, 是否别名)]) *)
+Definition call_site : Type :=
+  list (ident * (Z * ident * list (ident * bool))).
 
 Fixpoint lookup_call (cs : call_site) (x : ident)
-         : option (Z * ident * list ident) :=
+         : option (Z * ident * list (ident * bool)) :=
   match cs with
   | nil => None
   | (y, v) :: rest => if ident_eq x y then Some v else lookup_call rest x
   end.
 
-(* FB 输入端口 = __self 之后的参数（desugar_pou 保序） *)
-Definition fb_inputs (f : corest_function) : list ident :=
+(* FB 形参端口表 = __self 之后的参数，逐项标注是否 VAR_IN_OUT 别名端口
+   （desugar_pou 保持声明序，故调用点压栈顺序与 callee 形参槽位一一对应）。 *)
+Definition fb_ports (f : corest_function) : list (ident * bool) :=
   match f.(cfunc_params) with
-  | _ :: rest => List.map (fun pv => fst pv) rest
+  | _ :: rest =>
+      List.map
+        (fun pv => (fst pv, List.existsb (ident_eq (fst pv)) f.(cfunc_ptr_params)))
+        rest
   | nil => nil
+  end.
+
+(* VAR_IN_OUT 形参名 → 其本地槽位（槽内保存调用方存储的地址） *)
+Fixpoint collect_ptr_slots
+         (env : compile_env) (names : list ident) : list (ident * Z) :=
+  match names with
+  | nil => nil
+  | n :: rest =>
+      match lookup_var_idx env n with
+      | Some idx => (n, idx) :: collect_ptr_slots env rest
+      | None => collect_ptr_slots env rest
+      end
   end.
 
 Definition first_writable (f : corest_function) : option ident :=
@@ -421,7 +438,7 @@ Fixpoint build_call_sites
               | Some fld0 =>
                   match lookup_global_offset genv (cat_ident d.(var_name) fld0) with
                   | Some base =>
-                      (d.(var_name), (base, ID fbname, fb_inputs f))
+                      (d.(var_name), (base, ID fbname, fb_ports f))
                       :: build_call_sites genv funcs rest
                   | None => build_call_sites genv funcs rest
                   end
@@ -434,7 +451,7 @@ Fixpoint build_call_sites
   end.
 
 Fixpoint compile_expr_gc
-         (fbctx : option (Z * list (ident * Z)))
+         (fbctx : option (Z * list (ident * Z) * list (ident * Z)))
          (locals : compile_env) (globals : list (ident * Z))
          (fidx : func_index_env) (result_idx : option Z)
          (e : corest_expr) {struct e} : list sasm_instr :=
@@ -450,15 +467,22 @@ Fixpoint compile_expr_gc
       end
   | CE_VAR x =>
       match fbctx with
-      | Some (slot, fields) =>
+      | Some (slot, fields, ptrs) =>
           match lookup_global_offset fields x with
           | Some off =>
               [LOCAL_GET slot;
                I32_LOAD {| mem_align := 2; mem_offset := off |}]
           | None =>
-              match lookup_var_idx locals x with
-              | Some idx => [LOCAL_GET idx]
-              | None => global_load globals x
+              match lookup_global_offset ptrs x with
+              (* VAR_IN_OUT 端口：槽位里是调用方存储的地址，解引用取值 *)
+              | Some pslot =>
+                  [LOCAL_GET pslot;
+                   I32_LOAD_PTR {| mem_align := 2; mem_offset := 0 |}]
+              | None =>
+                  match lookup_var_idx locals x with
+                  | Some idx => [LOCAL_GET idx]
+                  | None => global_load globals x
+                  end
               end
           end
       | None =>
@@ -539,8 +563,41 @@ Fixpoint compile_expr_gc
         (List.map (compile_expr_gc fbctx locals globals fidx result_idx) args)
   end.
 
+(* VAR_IN_OUT 实参 → 地址实参代码。
+   function_check 已保证实参形状只有两种合法来源：
+     - 调用方自身的 IN_OUT 端口（透传）：其形参槽已持有地址，
+       直接 LOCAL_GET 转发；
+     - 全局变量（VAR_GLOBAL 或实例展开的 inst_<field>）：压入其
+       线性地址常量，链接期由 GLOBAL_OFF 重定位（见 P2）。
+   其余形状（字面量/表达式/局部变量）在检查层已被拒绝，这里以
+   UNREACHABLE 保守落地，保证不会静默生成错误别名。 *)
+Definition alias_actual_code
+           (fbctx : option (Z * list (ident * Z) * list (ident * Z)))
+           (globals : list (ident * Z)) (actual : corest_expr)
+           : list sasm_instr :=
+  match actual with
+  | CE_VAR g =>
+      match fbctx with
+      | Some (_, _, ptrs) =>
+          match lookup_global_offset ptrs g with
+          | Some pslot => [LOCAL_GET pslot]
+          | None =>
+              match lookup_global_offset globals g with
+              | Some addr => [I32_CONST addr]
+              | None => [UNREACHABLE]
+              end
+          end
+      | None =>
+          match lookup_global_offset globals g with
+          | Some addr => [I32_CONST addr]
+          | None => [UNREACHABLE]
+          end
+      end
+  | _ => [UNREACHABLE]
+  end.
+
 Fixpoint compile_stmt_gc
-         (fbctx : option (Z * list (ident * Z))) (csites : call_site)
+         (fbctx : option (Z * list (ident * Z) * list (ident * Z))) (csites : call_site)
          (locals : compile_env) (globals : list (ident * Z))
          (fidx : func_index_env) (result_idx : option Z)
          (s : corest_stmt) : list sasm_instr :=
@@ -552,15 +609,23 @@ Fixpoint compile_stmt_gc
       | _ =>
           let rhs := compile_expr_gc fbctx locals globals fidx result_idx e in
           match fbctx with
-          | Some (slot, fields) =>
+          | Some (slot, fields, ptrs) =>
               match lookup_global_offset fields x with
               | Some off =>
                   LOCAL_GET slot :: rhs ++
                   [I32_STORE {| mem_align := 2; mem_offset := off |}]
               | None =>
-                  match lookup_var_idx locals x with
-                  | Some idx => rhs ++ [LOCAL_SET idx]
-                  | None => global_store globals x rhs
+                  match lookup_global_offset ptrs x with
+                  (* VAR_IN_OUT 端口写：先压地址（槽内值），再压值，
+                     与 Pc_i32_store_ptr / C VM 的操作数约定一致 *)
+                  | Some pslot =>
+                      LOCAL_GET pslot :: rhs ++
+                      [I32_STORE_PTR {| mem_align := 2; mem_offset := 0 |}]
+                  | None =>
+                      match lookup_var_idx locals x with
+                      | Some idx => rhs ++ [LOCAL_SET idx]
+                      | None => global_store globals x rhs
+                      end
                   end
               end
           | None =>
@@ -619,16 +684,22 @@ Fixpoint compile_stmt_gc
              params)
       | _ =>
           match lookup_call csites inst with
-          | Some (base, fbname, inputs) =>
+          | Some (base, fbname, ports) =>
               match lookup_func_index fidx fbname with
               | Some idx =>
                   I32_CONST base ::
                   List.concat
                     (List.map
-                       (fun nm =>
-                          compile_expr_gc fbctx locals globals fidx result_idx
-                            (find_bound params nm))
-                       inputs) ++
+                       (fun port =>
+                          match port with
+                          | (nm, true) =>
+                              alias_actual_code fbctx globals
+                                (find_bound params nm)
+                          | (nm, false) =>
+                              compile_expr_gc fbctx locals globals fidx result_idx
+                                (find_bound params nm)
+                          end)
+                       ports) ++
                   [CALL idx]
               | None => [UNREACHABLE]
               end
@@ -658,7 +729,9 @@ Definition compile_function_gc
   let fbctx :=
       if is_self_param f then
         match self_slot env with
-        | Some slot => Some (slot, assign_field_offsets f.(cfunc_locals) 0)
+        | Some slot =>
+            Some (slot, assign_field_offsets f.(cfunc_locals) 0,
+                  collect_ptr_slots env f.(cfunc_ptr_params))
         | None => None
         end
       else None in
@@ -751,7 +824,7 @@ Proof. reflexivity. Qed.
    .sasm 镜像中属于跨模块链接点的指令位置提取为扁平表：
      - CALL_IDX      : 对某 FB __exec 函数目标的 CALL（可重编号）
      - INST_BASE_IMM : CS_FB_CALL 降级压入的实例 self 基址立即数
-     - GLOBAL_OFF    : (预留) VAR_IN_OUT 端口对调用方全局的别名
+     - GLOBAL_OFF    : VAR_IN_OUT 端口实参对调用方全局的别名地址立即数
    返回类型均为可提取的扁平类型，不触碰任何已证明结构。
    ================================================================ *)
 
@@ -768,7 +841,7 @@ Definition fname_str (f : corest_function) : String.string :=
 (* 实例名 → 基址（自 csites 抽取） *)
 Definition cs_base_list (cs : call_site) : list (ident * Z) :=
   List.map
-    (fun (p : ident * (Z * ident * list ident)) =>
+    (fun (p : ident * (Z * ident * list (ident * bool))) =>
        match p with (i, (b, _, _)) => (i, b) end)
     cs.
 
@@ -782,26 +855,119 @@ Fixpoint inst_by_base (bl : list (ident * Z)) (v : Z) : option ident :=
 Definition ftab (funcs : list corest_function) : list (String.string * bool) :=
   List.map (fun f => (fname_str f, is_self_param f)) funcs.
 
+(* ---------------- GLOBAL_OFF 所需的别名实参表 ----------------
+   从调用点**结构**推导"哪些全局被绑到了某个 VAR_IN_OUT 端口"，
+   再解析其线性地址。这样扫描器只需判断 I32_CONST 的立即数是否
+   落在这张表里，无需猜测代码形状。
+   透传实参（绑定到调用方自身的端口）压的是 LOCAL_GET 槽位、不产生
+   立即数，且 lookup_global_offset 对端口名返回 None，故自然不入表。 *)
+
+Definition alias_var_of_expr (e : corest_expr) : option ident :=
+  match e with CE_VAR g => Some g | _ => None end.
+
+Fixpoint alias_actuals_of_ports
+         (params : list (ident * corest_expr))
+         (ports : list (ident * bool)) : list ident :=
+  match ports with
+  | nil => nil
+  | (nm, is_alias) :: rest =>
+      if is_alias
+      then match alias_var_of_expr (find_bound params nm) with
+           | Some g => g :: alias_actuals_of_ports params rest
+           | None => alias_actuals_of_ports params rest
+           end
+      else alias_actuals_of_ports params rest
+  end.
+
+Fixpoint alias_names_of_stmt (csites : call_site) (s : corest_stmt) : list ident :=
+  match s with
+  | CS_FB_CALL inst params =>
+      (* csites 只登记实例调用，PRINT 等内建名自然查不到 → 不入表 *)
+      match lookup_call csites inst with
+      | Some (_, _, ports) => alias_actuals_of_ports params ports
+      | None => nil
+      end
+  | CS_IF _ t e =>
+      List.concat
+        (List.map (alias_names_of_stmt csites) t ++
+         List.map (alias_names_of_stmt csites) e)
+  | CS_WHILE _ b => List.concat (List.map (alias_names_of_stmt csites) b)
+  | CS_BLOCK b => List.concat (List.map (alias_names_of_stmt csites) b)
+  | _ => nil
+  end.
+
+(* 别名表：(全局名, 线性地址)，按名字去重（同一地址/名字只留一条） *)
+Fixpoint add_alias_pairs
+         (globals : list (ident * Z)) (gs : list ident)
+         (acc : list (ident * Z)) : list (ident * Z) :=
+  match gs with
+  | nil => acc
+  | g :: rest =>
+      match lookup_global_offset globals g with
+      | Some addr =>
+          if existsb (fun gp => ident_eq (fst gp) g) acc
+          then add_alias_pairs globals rest acc
+          else add_alias_pairs globals rest ((g, addr) :: acc)
+      | None => add_alias_pairs globals rest acc
+      end
+  end.
+
+Definition build_alias_table
+           (globals : list (ident * Z))
+           (funcs : list corest_function)
+           (csites : call_site) : list (ident * Z) :=
+  add_alias_pairs
+    globals
+    (List.concat
+       (List.map
+          (fun f =>
+             List.concat (List.map (alias_names_of_stmt csites) f.(cfunc_body)))
+          funcs))
+    [].
+
 (* 逐指令扫描一个函数体，产生该函数内的重定位行。
    采用"基址候选 + 遇 FB CALL 配对"的前向扫描：CS_FB_CALL 降级恰以
    I32_CONST base 开始、以 CALL exec 结束，故自 base 到 CALL 之间的
-   输入表达式常量不会误配。 *)
+   输入表达式常量不会误配。
+   pl 为别名表：同一窗口内落在 pl 上的 I32_CONST 记为 GLOBAL_OFF 候选，
+   随该 CALL 一起落地（addend = 地址 - GLOBAL_BASE），窗口外（无基址
+   候选）的全局地址常量不入行——它们不属于跨模块链接点。
+   别名判定**优先于**基址判定：实例字段全局（如 inst_a1_LAST）的地址
+   恰是该实例的 self 基址，窗口内出现时必须按别名处理，否则会把别名
+   实参误认成下一次调用的基址、同时丢掉了真正的基址行。
+   精度：窗口内若有"值端口读某个被别名过的全局"（codegen 也压该全局
+   地址），会多出一条 GLOBAL_OFF 行——该行声明"此立即数是该符号的地
+   址"，对被多记的站点同样成立，链接期回写结果一致，故不影响正确性。 *)
 Fixpoint scan_instrs
          (ft : list (String.string * bool))
-         (bl : list (ident * Z))
+         (bl pl : list (ident * Z))
          (fidx : Z)
          (body : list sasm_instr)
          (off : Z)
-         (cand : option (ident * Z)) : list reloc_row :=
+         (cand : option (ident * Z))
+         (pend : list (ident * Z * Z)) : list reloc_row :=
   match body with
   | nil => nil
   | i :: rest =>
       let next_off := off + instr_size i in
       match i with
       | I32_CONST v =>
-          match inst_by_base bl v with
-          | Some iname => scan_instrs ft bl fidx rest next_off (Some (iname, off))
-          | None => scan_instrs ft bl fidx rest next_off cand
+          match inst_by_base pl v with
+          | Some g =>
+              match cand with
+              | Some _ =>
+                  scan_instrs ft bl pl fidx rest next_off cand ((g, off, v) :: pend)
+              | None =>
+                  match inst_by_base bl v with
+                  | Some iname => scan_instrs ft bl pl fidx rest next_off (Some (iname, off)) nil
+                  | None => scan_instrs ft bl pl fidx rest next_off cand pend
+                  end
+              end
+          | None =>
+              match inst_by_base bl v with
+              | Some iname => scan_instrs ft bl pl fidx rest next_off (Some (iname, off)) nil
+              | None => scan_instrs ft bl pl fidx rest next_off cand pend
+              end
           end
       | CALL idx =>
           match List.nth_error ft (Z.to_nat idx) with
@@ -811,11 +977,19 @@ Fixpoint scan_instrs
                 | Some (iname, ioff) => (1%nat, ident_str iname, fidx, ioff, 0%Z) :: nil
                 | None => nil
                 end in
-              base_row ++
-                ((0%nat, nm, fidx, off, 0%Z) :: scan_instrs ft bl fidx rest next_off None)
-          | _ => scan_instrs ft bl fidx rest next_off cand
+              let alias_rows :=
+                List.map
+                  (fun (t : ident * Z * Z) =>
+                     match t with
+                     | (g, goff, addr) => (2%nat, ident_str g, fidx, goff, addr - GLOBAL_BASE)
+                     end)
+                  (rev pend) in
+              base_row ++ alias_rows ++
+                ((0%nat, nm, fidx, off, 0%Z) ::
+                   scan_instrs ft bl pl fidx rest next_off None nil)
+          | _ => scan_instrs ft bl pl fidx rest next_off cand pend
           end
-      | _ => scan_instrs ft bl fidx rest next_off cand
+      | _ => scan_instrs ft bl pl fidx rest next_off cand pend
       end
   end.
 
@@ -831,12 +1005,13 @@ Definition compile_program_reloc_info
   let globals := build_global_env p in
   let csites := build_call_sites globals funcs p.(cprog_global_vars) in
   let bl := cs_base_list csites in
+  let pl := build_alias_table globals funcs csites in
   let ft := ftab funcs in
   let bodies := enumerate_funcs 0 (compile_program_gc p).(sasm_functions) in
   List.concat
     (List.map
        (fun pf =>
-          scan_instrs ft bl (fst pf) (snd pf).(sasm_body) 0 None)
+          scan_instrs ft bl pl (fst pf) (snd pf).(sasm_body) 0 None nil)
        bodies).
 
 (* 实例数据块信息：(inst, fb_name, base, size)，size = 4 * 可写字段数 *)
@@ -846,7 +1021,7 @@ Definition compile_program_inst_info
   let globals := build_global_env p in
   let csites := build_call_sites globals funcs p.(cprog_global_vars) in
   List.map
-    (fun (c : ident * (Z * ident * list ident)) =>
+    (fun (c : ident * (Z * ident * list (ident * bool))) =>
        match c with
        | (iname, (base, fbname, _)) =>
            let sz :=
@@ -857,3 +1032,44 @@ Definition compile_program_inst_info
            (ident_str iname, ident_str fbname, base, sz)
        end)
     csites.
+
+(* ---------------- 符号表导出（.svobj SYMTAB，见 spec 附录 D.2）----------------
+   row = (名字, kind, aux)
+     kind 0 = FB_EXEC     aux = 该 __exec 在本模块中的函数索引
+     kind 1 = INST_DATA   aux = 实例数据块基址
+     kind 2 = GLOBAL_EXT  aux = 0（被 VAR_IN_OUT 别名、定义在他处的全局）
+   与 reloc 行**分开**导出：主机侧不再从"调用点所在函数索引"反推
+   FB_EXEC 的 aux（那是调用方而非目标，会得到错误值）。
+   排序/去重仍归 OCaml 编码器负责，以保字节级确定性。 *)
+Definition sym_row : Type := (String.string * nat * Z).
+
+Fixpoint enumerate_cfuncs (idx : Z) (fs : list corest_function)
+         : list (Z * corest_function) :=
+  match fs with
+  | nil => nil
+  | f :: rest => (idx, f) :: enumerate_cfuncs (idx + 1) rest
+  end.
+
+Definition compile_program_sym_info
+           (p : corest_program) : list sym_row :=
+  let funcs := entry_first_functions p in
+  let globals := build_global_env p in
+  let csites := build_call_sites globals funcs p.(cprog_global_vars) in
+  let exec_rows :=
+    List.map
+      (fun (pf : Z * corest_function) => (fname_str (snd pf), 0%nat, fst pf))
+      (List.filter (fun pf => is_self_param (snd pf))
+                   (enumerate_cfuncs 0 funcs)) in
+  let inst_rows :=
+    List.map
+      (fun (c : ident * (Z * ident * list (ident * bool))) =>
+         match c with
+         | (iname, (base, _, _)) => (ident_str iname, 1%nat, base)
+         end)
+      csites in
+  let alias_rows :=
+    List.map
+      (fun (gp : ident * Z) =>
+         match gp with (g, _) => (ident_str g, 2%nat, 0%Z) end)
+      (build_alias_table globals funcs csites) in
+  exec_rows ++ inst_rows ++ alias_rows.

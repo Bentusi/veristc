@@ -20,6 +20,7 @@
 | p10_quality_ops | Q 类型/质量算子 | **XFAIL-语法+后端** | parser 无 Q_* 算子产生式；CE_QUALITY_OP 仅透传数值 |
 | p11_nested_fn | FUNCTION 多层内联 | PASS | Quad(Twice(x)) ≡ 4x |
 | p12_divzero_trap | 除零 VM 陷阱 | PASS | t3 触发，VM_ERR_DIV_BY_ZERO(rc=3) |
+| p13_in_out_alias | VAR_IN_OUT 逐引用别名 | PASS | v1.5：端口=调用方存储的别名，两实例共享 `shared`，`LAST` 仍各自独立 |
 
 ## 已知后端差值（探针暴露，待工程决策修复）
 

@@ -52,6 +52,12 @@ Record corest_function : Type := {
   cfunc_name : ident; cfunc_return_type : option st_type;
   cfunc_params : list (ident * st_type); cfunc_locals : list (ident * st_type);
   cfunc_body : list corest_stmt;
+  (* v1.5 VAR_IN_OUT 逐引用别名：端口名清单。端口本身占一个普通形参槽
+     （cfunc_params 中的一项，携带调用方全局变量的**地址**），此处仅记录
+     "哪些形参是别名"，供 codegen 决定读写走解引用而非槽位存取。
+     放在记录末尾：既有构造点（compiler_correctness 经 desugar_pou 取得）
+     不受影响。 *)
+  cfunc_ptr_params : list ident;
 }.
 Record corest_program : Type := {
   cprog_functions : list corest_function;
@@ -328,6 +334,40 @@ Proof.
 Qed.
 
 
+(* v1.5 VAR_IN_OUT 端口分组：
+   - 值端口（D_INPUT ∪ D_IN_OUT）进入 cfunc_params，保持声明序，
+     调用点按同一顺序压栈 ⇒ 槽位号与形参表逐项对应；
+   - D_IN_OUT 的名字另记入 cfunc_ptr_params，codegen 据此把该槽位
+     当作"调用方全局变量的地址"解引用读写；
+   - 其余（D_OUTPUT/D_LOCAL）仍是本 POU 的可写局部；D_IN_OUT **不再**
+     产生局部副本（与 function_check.collect_writable 保持一致，
+     FB_DATA 因此不为端口分配空间）。 *)
+Definition is_value_port_decl (d : st_var_decl) : bool :=
+  match d.(var_dir) with
+  | D_INPUT | D_IN_OUT => true
+  | _ => false
+  end.
+
+Definition is_alias_port_decl (d : st_var_decl) : bool :=
+  match d.(var_dir) with
+  | D_IN_OUT => true
+  | _ => false
+  end.
+
+Definition is_local_decl (d : st_var_decl) : bool :=
+  negb (is_value_port_decl d).
+
+Definition param_decls (ds : list st_var_decl) : list (ident * st_type) :=
+  List.map (fun vd => (vd.(var_name), vd.(var_type)))
+           (List.filter is_value_port_decl ds).
+
+Definition alias_port_names (ds : list st_var_decl) : list ident :=
+  List.map (fun vd => vd.(var_name)) (List.filter is_alias_port_decl ds).
+
+Definition local_decls (ds : list st_var_decl) : list (ident * st_type) :=
+  List.map (fun vd => (vd.(var_name), vd.(var_type)))
+           (List.filter is_local_decl ds).
+
 Definition desugar_pou (p : st_pou) : corest_function :=
   let body := match p with P_PROGRAM _ _ b => b | P_FUNCTION _ _ _ b => b | P_FUNCTION_BLOCK _ _ b => b end in
   let name := match p with P_PROGRAM n _ _ => n | P_FUNCTION n _ _ _ => n | P_FUNCTION_BLOCK n _ _ => n end in
@@ -339,26 +379,24 @@ Definition desugar_pou (p : st_pou) : corest_function :=
        | P_PROGRAM _ _ _ => nil
        | P_FUNCTION_BLOCK _ _ _ =>
            (* 原生 FB：合成 __self 首参（实例 FB_DATA 基址），其 locals 为
-              self 相对可写字段。__self 供 codegen 计算 [self+off] 存取。 *)
-           (ID "__self", T_DINT) ::
-           List.map (fun vd => (vd.(var_name), vd.(var_type)))
-             (List.filter (fun vd =>
-                match vd.(var_dir) with D_INPUT => true | _ => false end) decls)
-       | _ =>
-           List.map (fun vd => (vd.(var_name), vd.(var_type)))
-             (List.filter (fun vd =>
-                match vd.(var_dir) with D_INPUT => true | _ => false end) decls)
+              self 相对可写字段。__self 供 codegen 计算 [self+off] 存取。
+              形参表 = __self ++ 值端口（含 IN_OUT 别名槽位），__self 恒为
+              槽位 0。 *)
+           (ID "__self", T_DINT) :: param_decls decls
+       | _ => param_decls decls
        end;
      cfunc_locals :=
        match p with
        | P_PROGRAM _ _ _ =>
            List.map (fun vd => (vd.(var_name), vd.(var_type))) decls
-       | _ =>
-           List.map (fun vd => (vd.(var_name), vd.(var_type)))
-             (List.filter (fun vd =>
-                match vd.(var_dir) with D_INPUT => false | _ => true end) decls)
+       | _ => local_decls decls
        end;
-     cfunc_body := desugar_stmts body; |}.
+     cfunc_body := desugar_stmts body;
+     cfunc_ptr_params :=
+       match p with
+       | P_FUNCTION_BLOCK _ _ _ => alias_port_names decls
+       | _ => nil
+       end |}.
 
 Definition desugar_program (p : st_program) : corest_program :=
   {| cprog_functions := List.map desugar_pou p.(pou_list);

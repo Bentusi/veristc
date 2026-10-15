@@ -54,7 +54,8 @@ Inductive diag_kind : Type :=
   | DK_CONTROL
   | DK_FOR_BOUND
   | DK_RESERVED
-  | DK_MISSING_ENTRY.
+  | DK_MISSING_ENTRY
+  | DK_ALIAS.
 
 Record diagnostic : Type := {
   dg_pou  : ident;
@@ -72,6 +73,7 @@ Definition diag_kind_to_string (k : diag_kind) : string :=
   | DK_FOR_BOUND => "for-bound"
   | DK_RESERVED => "reserved-name"
   | DK_MISSING_ENTRY => "missing-entry"
+  | DK_ALIAS => "alias"
   end.
 
 Definition diag_var_string (o : option ident) : string :=
@@ -557,7 +559,10 @@ Fixpoint collect_writable (ds : list st_var_decl) : list (ident * st_type) :=
   | nil => nil
   | d :: rest =>
       match d.(var_dir) with
-      | D_INPUT => collect_writable rest
+      (* v1.5：VAR_IN_OUT 是调用方存储的别名，不分配实例副本，
+         故既非"可写字段"也非 FB_DATA 成员（与 desugar 的
+         cfunc_locals 分组保持一致，二者共同决定 self 相对偏移）。 *)
+      | D_INPUT | D_IN_OUT => collect_writable rest
       | _ => (d.(var_name), d.(var_type)) :: collect_writable rest
       end
   end.
@@ -597,6 +602,237 @@ Fixpoint expand_instances (pous : list st_pou) (ds : list st_var_decl)
       | _ => d :: expand_instances pous rest
       end
   end.
+
+(* ------------------------------------------------------------
+   v1.5 VAR_IN_OUT 逐引用别名：调用点检查
+
+   IN_OUT 端口编译为"指向调用方存储的地址"实参（codegen 用
+   I32_LOAD_PTR / I32_STORE_PTR 解引用），别名要求被引用对象有
+   稳定、可取地址的存储位置，因此其绑定形状比 INPUT/OUTPUT 更强。
+   本层把这些要求显式成文，违规给出可定位的诊断（codegen 由此
+   只需处理已验证的形状）：
+     1) 实参名必须是该 FB 声明中的端口（INPUT/OUTPUT/IN_OUT），
+        不允许拼错或绕过声明传参；
+     2) 每个已声明的 IN_OUT 端口都必须被绑定（无初值可拷贝，
+        不绑定即没有别名目标）；
+     3) IN_OUT 实参必须是简单变量名，且解析到一个全局
+        （VAR_GLOBAL 或实例展开出的 inst_<field>）；不能是调用方
+        的局部变量、常量或表达式。例外：调用方自身的 IN_OUT 端口
+        可以透传（其形参槽已持有地址）。
+     4) 实参类型与端口类型完全相同（别名不做隐式转换），且宽度
+        为 32 位 —— 解引用指令按 4 字节定宽读写。
+   ------------------------------------------------------------ *)
+
+Definition alias_port_width_ok (ty : st_type) : bool :=
+  Z.eqb (type_width ty) 32.
+
+Definition alias_type_match (port_ty actual_ty : st_type) : bool :=
+  andb (type_eqb actual_ty port_ty) (alias_port_width_ok port_ty).
+
+Fixpoint find_fb_decls (fbname : string) (pous : list st_pou)
+         : option (list st_var_decl) :=
+  match pous with
+  | nil => None
+  | P_FUNCTION_BLOCK (ID nm) decls _ :: rest =>
+      if String.eqb nm fbname then Some decls else find_fb_decls fbname rest
+  | _ :: rest => find_fb_decls fbname rest
+  end.
+
+Fixpoint in_out_port_decls (ds : list st_var_decl) : list st_var_decl :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      if match d.(var_dir) with D_IN_OUT => true | _ => false end
+      then d :: in_out_port_decls rest
+      else in_out_port_decls rest
+  end.
+
+Fixpoint port_names (ds : list st_var_decl) : list ident :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      if match d.(var_dir) with
+         | D_INPUT | D_OUTPUT | D_IN_OUT => true
+         | _ => false
+         end
+      then d.(var_name) :: port_names rest
+      else port_names rest
+  end.
+
+Fixpoint lookup_bound_expr (params : list (ident * st_expr)) (nm : ident)
+         : option st_expr :=
+  match params with
+  | nil => None
+  | (k, e) :: rest => if ident_eq k nm then Some e else lookup_bound_expr rest nm
+  end.
+
+Definition make_alias_diag (pou_name : ident) (v : ident) (msg : string)
+           : diagnostic :=
+  {| dg_pou := pou_name; dg_var := Some v; dg_kind := DK_ALIAS;
+     dg_msg := msg |}.
+
+Fixpoint first_alias_diag (ds : list (option diagnostic))
+         : option diagnostic :=
+  match ds with
+  | nil => None
+  | Some d :: _ => Some d
+  | None :: rest => first_alias_diag rest
+  end.
+
+(* 单个 IN_OUT 端口绑定的检查；None = 合法 *)
+Definition check_one_alias_port
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (globals : type_env) (ports : list ident)
+           (d : st_var_decl)
+           (params : list (ident * st_expr)) : option diagnostic :=
+  let nm := d.(var_name) in
+  if negb (List.existsb (ident_eq nm) ports) then
+    Some (make_alias_diag pou_name nm
+            "VAR_IN_OUT port is not declared by the callee")
+  else
+    match lookup_bound_expr params nm with
+    | None =>
+        Some (make_alias_diag pou_name nm
+                "VAR_IN_OUT port must be bound to a global variable")
+    | Some (E_VAR g) =>
+        (* 别名透传：调用方自身的 IN_OUT 端口也是合法目标（其形参槽
+           本就持有地址，codegen 直接 LOCAL_GET 转发，无需静态地址）。 *)
+        match lookup (build_env_from_decls (in_out_port_decls caller_decls)) g with
+        | Some chain_ty =>
+            if alias_type_match d.(var_type) chain_ty then
+              None
+            else
+              Some (make_alias_diag pou_name g
+                      "VAR_IN_OUT forwarding needs identical 32-bit type")
+        | None =>
+            if List.existsb (fun dd => ident_eq dd.(var_name) g) caller_decls then
+              Some (make_alias_diag pou_name g
+                      "VAR_IN_OUT alias target must be global, not a local of the caller")
+            else
+              match lookup globals g with
+              | None =>
+                  Some (make_alias_diag pou_name g
+                          "VAR_IN_OUT alias target is not a global variable")
+              | Some actual_ty =>
+                  if alias_type_match d.(var_type) actual_ty then
+                    None
+                  else
+                    Some (make_alias_diag pou_name g
+                            "VAR_IN_OUT alias target needs identical 32-bit type")
+              end
+        end
+    | Some _ =>
+        Some (make_alias_diag pou_name nm
+                "VAR_IN_OUT actual must be a simple global variable name")
+    end.
+
+Fixpoint check_alias_ports
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (globals : type_env) (ports : list ident)
+           (iodecls : list st_var_decl)
+           (params : list (ident * st_expr)) : option diagnostic :=
+  match iodecls with
+  | nil => None
+  | d :: rest =>
+      match check_one_alias_port pou_name caller_decls globals ports d params with
+      | Some dg => Some dg
+      | None => check_alias_ports pou_name caller_decls globals ports rest params
+      end
+  end.
+
+Definition check_fb_call_aliases
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (pous : list st_pou) (globals : type_env)
+           (inst : ident) (params : list (ident * st_expr))
+           : option diagnostic :=
+  match lookup (List.app (build_env_from_decls caller_decls) globals) inst with
+  | Some (T_FB fbname) =>
+      match find_fb_decls fbname pous with
+      | None => None (* FB 定义缺失由既有类型检查报错，不在此重复 *)
+      | Some fdecls =>
+          let ports := port_names fdecls in
+          let unknown :=
+            first_alias_diag
+              (List.map
+                 (fun pe =>
+                    if List.existsb (ident_eq (fst pe)) ports then
+                      None
+                    else
+                      Some (make_alias_diag pou_name (fst pe)
+                              "call binds a name that is not a declared port"))
+                 params) in
+          match unknown with
+          | Some dg => Some dg
+          | None =>
+              check_alias_ports pou_name caller_decls globals ports
+                (in_out_port_decls fdecls) params
+          end
+      end
+  | _ => None
+  end.
+
+Fixpoint check_alias_in_stmt
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (pous : list st_pou) (globals : type_env)
+           (s : st_stmt) : option diagnostic :=
+  match s with
+  | S_FB_CALL inst params =>
+      if ident_eq inst (ID "PRINT") then None
+      else check_fb_call_aliases pou_name caller_decls pous globals inst params
+  | S_IF _ then_body else_body =>
+      first_alias_diag
+        (List.map (check_alias_in_stmt pou_name caller_decls pous globals)
+                  then_body ++
+         match else_body with
+         | Some b => List.map (check_alias_in_stmt pou_name caller_decls pous globals) b
+         | None => nil
+         end)
+  | S_CASE _ branches default =>
+      first_alias_diag
+        (List.concat
+           (List.map
+              (fun ce =>
+                 match ce with
+                 | CASE_ELEM _ body =>
+                     List.map (check_alias_in_stmt pou_name caller_decls pous globals) body
+                 end) branches) ++
+         match default with
+         | Some b => List.map (check_alias_in_stmt pou_name caller_decls pous globals) b
+         | None => nil
+         end)
+  | S_FOR _ _ _ _ body =>
+      first_alias_diag
+        (List.map (check_alias_in_stmt pou_name caller_decls pous globals) body)
+  | S_WHILE _ body =>
+      first_alias_diag
+        (List.map (check_alias_in_stmt pou_name caller_decls pous globals) body)
+  | S_REPEAT body _ =>
+      first_alias_diag
+        (List.map (check_alias_in_stmt pou_name caller_decls pous globals) body)
+  | _ => None
+  end.
+
+Definition check_pou_aliases
+           (pous : list st_pou) (globals : type_env)
+           (pou : st_pou) : option diagnostic :=
+  let name := match pou with
+              | P_PROGRAM n _ _ => n
+              | P_FUNCTION n _ _ _ => n
+              | P_FUNCTION_BLOCK n _ _ => n
+              end in
+  let decls := pou_var_decls pou in
+  let body := match pou with
+              | P_PROGRAM _ _ b => b
+              | P_FUNCTION _ _ _ b => b
+              | P_FUNCTION_BLOCK _ _ b => b
+              end in
+  first_alias_diag
+    (List.map (check_alias_in_stmt name decls pous globals) body).
+
+Definition check_program_aliases
+           (pous : list st_pou) (globals : type_env)
+           : option diagnostic :=
+  first_alias_diag (List.map (check_pou_aliases pous globals) pous).
 
 Definition prepare_function_pou (pou : st_pou) : option st_pou :=
   match pou with
@@ -729,7 +965,10 @@ Definition check_program_full_diag_struct (p : st_program) : option diagnostic :
     | Some _ =>
         let globals := build_env_from_decls p.(global_vars) in
         let fenv := build_fenv_from_pous p.(pou_list) in
-        check_pous_full_struct globals fenv p.(pou_list)
+        match check_pous_full_struct globals fenv p.(pou_list) with
+        | Some d => Some d
+        | None => check_program_aliases p.(pou_list) globals
+        end
     end.
 
 Definition check_pou_full_diag

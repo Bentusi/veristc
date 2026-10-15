@@ -180,6 +180,24 @@ static bool check_mem_bounds(const VM *vm, uint32_t addr, uint32_t size) {
     return sa->mem_range_count == 0;
 }
 
+/* 32 位小端读写（调用方必须已通过 check_mem_bounds） */
+static uint32_t load_u32_le(const VM *vm, uint32_t addr) {
+    uint32_t val = 0U;
+
+    val |= ((uint32_t)vm->memory[addr]) << 0;
+    val |= ((uint32_t)vm->memory[addr + 1U]) << 8;
+    val |= ((uint32_t)vm->memory[addr + 2U]) << 16;
+    val |= ((uint32_t)vm->memory[addr + 3U]) << 24;
+    return val;
+}
+
+static void store_u32_le(VM *vm, uint32_t addr, uint32_t val) {
+    vm->memory[addr]       = (uint8_t)(val & 0xFFU);
+    vm->memory[addr + 1U]  = (uint8_t)((val >> 8) & 0xFFU);
+    vm->memory[addr + 2U]  = (uint8_t)((val >> 16) & 0xFFU);
+    vm->memory[addr + 3U]  = (uint8_t)((val >> 24) & 0xFFU);
+}
+
 /* ================================================================
    64 位值与浮点操作辅助
    ================================================================ */
@@ -546,6 +564,66 @@ int vm_execute_cycle(VM *vm) {
             vm->memory[mem_addr + 1]   = (uint8_t)((val >> 8) & 0xFF);
             vm->memory[mem_addr + 2]   = (uint8_t)((val >> 16) & 0xFF);
             vm->memory[mem_addr + 3]   = (uint8_t)((val >> 24) & 0xFF);
+            break;
+        }
+
+        /* ===== 指针解引用内存操作 (v1.5, VAR_IN_OUT 逐引用别名) =====
+           与普通 I32_LOAD/I32_STORE 的唯一区别：地址本身就作为数据在栈上传递
+           (有效地址 = addr + offset)，因此调用方可以把某个变量的地址作为
+           实参传入被调 FB，FB 体内对 VAR_IN_OUT 端口的读写直接落在调用方
+           的存储上。
+           操作数顺序与既有 I32_STORE 逐字节一致（先压地址、再压值，
+           栈顶=值、其下=地址），打印端口魔法地址同样生效。 */
+        case OP_I32_LOAD_PTR:
+        case OP_F32_LOAD_PTR: {
+            uint16_t align  = read_u16_code(frame, &pc);
+            uint16_t offset = read_u16_code(frame, &pc);
+            (void)align;
+
+            sasm_value addr = pop_value(vm);
+            uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
+
+            if (!check_mem_bounds(vm, mem_addr, 4)) {
+                return VM_ERR_MEM_OUT_OF_BOUNDS;
+            }
+
+            (void)push_value(vm, (sasm_value)load_u32_le(vm, mem_addr));
+            break;
+        }
+
+        case OP_I32_STORE_PTR:
+        case OP_F32_STORE_PTR: {
+            uint16_t align  = read_u16_code(frame, &pc);
+            uint16_t offset = read_u16_code(frame, &pc);
+            (void)align;
+
+            sasm_value val  = pop_value(vm);
+            sasm_value addr = pop_value(vm);
+            uint32_t mem_addr = (uint32_t)(addr + (int32_t)offset);
+
+            if (mem_addr == SASM_PRINT_PORT) {
+                (void)printf("%d, ", val);
+                (void)fflush(stdout);
+                break;
+            }
+
+            if (mem_addr == SASM_CHAR_PRINT_PORT) {
+                (void)printf("%c", (int)val);
+                (void)fflush(stdout);
+                break;
+            }
+
+            if (mem_addr == SASM_COUNTER_PRINT_PORT) {
+                (void)printf("[cycle_counter] %d\n", val);
+                (void)fflush(stdout);
+                break;
+            }
+
+            if (!check_mem_bounds(vm, mem_addr, 4)) {
+                return VM_ERR_MEM_OUT_OF_BOUNDS;
+            }
+
+            store_u32_le(vm, mem_addr, (uint32_t)val);
             break;
         }
         

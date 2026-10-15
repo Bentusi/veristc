@@ -1,0 +1,155 @@
+// flow-compile-pipeline.dot
+// VeriSTC 编译管线数据流 (当前状态 / AS-IS) —— flow-visualizer + graphviz
+// 问题: 一个 .st 源文件从触发到产出可执行镜像，数据形态如何逐步变化，门禁在哪拒绝，四种模式如何分叉。
+// 证据: veristc/extraction/veristc_main.ml (生产入口) + veristc/src/*.v (被提取的计算函数)
+// 读法: 命令行分派在最上方; -c/-g 共用 frontend(), -a 走 analyze_st() 这条**重复实现且门禁更少**的管线, -x 完全不读 .st。
+//       八边形 = 终止编译的门禁; 虚线簇 = 存在但不在生产运行路径上的部分。
+// 重新渲染: dot -Tsvg flow-compile-pipeline.dot -o flow-compile-pipeline.svg
+digraph "veristc_compile_pipeline" {
+    graph [
+        rankdir=TB,
+        label="VeriSTC 编译管线数据流 (AS-IS)\n触发: ST 工程师执行 veristc -c|-a|-g|-x input.st\n证据日期 2026-10-14",
+        labelloc=t, fontsize=18, fontname="Helvetica",
+        nodesep=0.3, ranksep=0.6, newrank=true, bgcolor="white"
+    ];
+    node [shape=box, style="rounded,filled", fontsize=11, fontname="Helvetica", fillcolor="#eaf3ff", color="#57606a"];
+    edge [fontsize=10, fontname="Helvetica", color="#57606a"];
+
+    st_file [shape=note, fillcolor="#f2cc60", color="#9a6b00", label="ST 源程序 (.st)\nIEC 61131-3 文本"];
+
+    mode [shape=diamond, fillcolor="#fff0f6", color="#bf3989",
+          label="命令行模式分派\nveristc_main.ml:488-500\n(无模式参数时默认 -a)"];
+    st_file -> mode [label="argv", color="#bf3989", penwidth=1.4];
+
+    // ================= 共享前端: -c / -g 使用 =================
+    subgraph cluster_frontend {
+        label="前端 frontend()  veristc_main.ml:183-217   —— -c / -g 共用";
+        style="rounded,dashed"; color="#0969da"; fontsize=12;
+
+        abort [shape=octagon, fillcolor="#ffe2e2", color="#cf222e",
+               label="failwith → 编译终止\n(OCaml 异常, 非零退出)"];
+
+        read_file [label="read_file\nstring -> Coq String\n:184-185"];
+        lex       [label="Lexer.lex\nstring -> list token\nlexer.v:377 | 调用 :132"];
+        parse     [label="Parser.parse\nlist token -> st_program\nparser.v:1295 | 调用 :136"];
+        dupchk    [label="check_no_duplicate_declarations\nst_program -> bool\ntypechecker.v:184 | 调用 :189"];
+        funcprep  [label="Function_check.prepare_program\nst_program -> option st_program\nfunction_check.v:881 | 调用 :191"];
+        funcdiag  [label="check_program_full_diag\nst_program -> option 诊断串\nfunction_check.v:984 | 调用 :195"];
+        normalize [label="Inline.normalize_program\n保留函数结构的规范化\ninline.v:647 | 调用 :199"];
+        inlineopt [label="Inline.optimize_inline_program\n叶子内联 + 死函数消除\ninline.v:942 | 调用 :203"];
+        desugar   [label="Desugar.desugar_program\nst_program -> corest_program\ndesugar.v:401,62 | 调用 :206"];
+        analyze   [label="Analysis.analyze\ncorest -> 调用图/栈深/WCET\nanalysis.v:242 | 调用 :209"];
+        gates     [shape=diamond, fillcolor="#ffe9d5", color="#fb8500",
+                   label="安全门禁\n递归调用 → 拒绝 :210-211\n静态栈深 > 上限 → 拒绝 :212-216"];
+
+        read_file -> lex -> parse -> dupchk -> funcprep -> funcdiag -> normalize -> inlineopt -> desugar -> analyze -> gates;
+
+        lex       -> abort [label="None → \"lexer failed\" :134", style=dashed, color="#cf222e", constraint=false];
+        parse     -> abort [label="None → parse_fail_pos + lex_offsets\n回推行列 :140-145", style=dashed, color="#cf222e", constraint=false];
+        dupchk    -> abort [label="false → 扁平命名空间重名 :190", style=dashed, color="#cf222e", constraint=false];
+        funcprep  -> abort [label="None → FUNCTION 非法/缺 PROGRAM :193", style=dashed, color="#cf222e", constraint=false];
+        funcdiag  -> abort [label="Some msg → 作用域/纯性/调用类型 :197", style=dashed, color="#cf222e", constraint=false];
+        normalize -> abort [label="None → 规范化失败 :201", style=dashed, color="#cf222e", constraint=false];
+        inlineopt -> abort [label="pou_list = 0 :204", style=dashed, color="#cf222e", constraint=false];
+        desugar   -> abort [label="函数列表为空 :207", style=dashed, color="#cf222e", constraint=false];
+        gates     -> abort [label="超限/递归 → 终止", style=dashed, color="#cf222e"];
+    }
+    mode -> read_file [label="-c / -g", color="#0969da", penwidth=1.6];
+
+    // ================= -a: 重复实现的独立管线 =================
+    subgraph cluster_analyze {
+        label="模式 -a: analyze_st()  veristc_main.ml:443-472   —— 与 frontend 重复实现";
+        style="rounded,dashed"; color="#bf3989"; fontsize=12;
+
+        a_chain [label="read_file → parse_or_fail → 重名门禁 → prepare_program\n→ check_program_full_diag → normalize_program\n→ optimize_inline_program → desugar_program → analyze\n:444-464  九步与 frontend:184-209 逐行同构\n前 8 步门禁与 frontend 相同, 失败即 failwith 终止",
+                 fillcolor="#fff0f6"];
+        a_print [label="printf 四项指标到 stdout, 无文件产物\nstack depth :465 / recursive calls :466-469\nestimated wcet :470 / loops bounded :471-472",
+                 fillcolor="#f6f8fa"];
+        a_gap   [label="★ 门禁差异: -a 只打印 recursive calls 与 stack depth\n不做 frontend:210-216 的递归拒绝与栈深拒绝\n→ 同一程序 -a 报告通过、-c 编译失败 是可能的",
+                 fillcolor="#ffe9d5", color="#cf222e"];
+    }
+    mode -> a_chain [label="-a (默认)", color="#bf3989", penwidth=1.4];
+    a_chain -> a_print;
+    a_chain -> a_gap [style=dotted, color="#cf222e", fontcolor="#cf222e"];
+
+    // ================= -c: 生成 .sasm =================
+    subgraph cluster_compile {
+        label="模式 -c: 生成 .sasm"; style="rounded"; color="#1a7f37"; fontsize=12;
+
+        gc_codegen [label="Global_codegen.compile_program_gc\ncorest_program -> sasm_module\n(全局偏移 + FB 实例 + IOMap 段\nglobal_codegen.v:780 | 调用 :221)",
+                    fillcolor="#dcf5e3"];
+        encode     [label="Encoder.encode_module\nsasm_module -> list Z 字节\n(定宽小端, 非 LEB128)\nencoder.v:327 | 调用 :221",
+                    fillcolor="#dcf5e3"];
+        crc        [label="attach_crc32 (手写 OCaml)\n对 [6, len-10) 求 CRC32\n回填尾部 4 字节\nveristc_main.ml:163-181",
+                    fillcolor="#dcf5e3"];
+        write_sasm [label="write_file", shape=note, fillcolor="#f2cc60", color="#9a6b00"];
+        sasm_file  [label=".sasm 镜像\nHeader|段表|IOMap(type=3)|Code|CRC32", shape=note, fillcolor="#f2cc60", color="#9a6b00"];
+
+        gc_codegen -> encode [label="sasm_module"];
+        encode     -> crc    [label="byte string"];
+        crc        -> write_sasm [label="len<10 → failwith :173"];
+        write_sasm -> sasm_file [label="文件写"];
+    }
+    gates -> gc_codegen [label="-c: corest", color="#1a7f37", penwidth=1.6];
+
+    // ================= -g: 生成 .svobj =================
+    subgraph cluster_svobj {
+        label="模式 -g: 生成 .svobj —— Coq 出扁平元数据 / OCaml 出字节布局"; style="rounded"; color="#8250df"; fontsize=12;
+
+        reloc_info [label="compile_program_reloc_info\nreloc_row = (kind, 符号, func, off, addend)\nglobal_codegen.v:991,833 | :308",
+                    fillcolor="#ece6fb"];
+        inst_info  [label="compile_program_inst_info\n(iname, fbname, base, size)\nglobal_codegen.v:1007 | :313",
+                    fillcolor="#ece6fb"];
+        sym_info   [label="compile_program_sym_info\nsym_row = (name, kind, aux)\nglobal_codegen.v:1042 | :319",
+                    fillcolor="#ece6fb"];
+        alias      [label="build_alias_table\n从调用点派生 VAR_IN_OUT 别名\n→ GLOBAL_OFF(kind=2) 行\n别名判定优先于基址判定\nglobal_codegen.v:915,1008",
+                    fillcolor="#ece6fb"];
+        svobj_emit [label="emit_svobj (手写 OCaml)\n插入排序/去重 + put_u8/16/32\nHeader36B|SYMTAB|RELOC|BLOCKS|IMAGE|CRC32\n符号缺行 → failwith :325,331\nveristc_main.ml:285-296,304-369",
+                    fillcolor="#ece6fb"];
+        svobj_file [label=".svobj 对象", shape=note, fillcolor="#f2cc60", color="#9a6b00"];
+
+        alias      -> reloc_info [label="别名窗口内的\nI32_CONST 候选", style=dashed];
+        reloc_info -> svobj_emit [label="RELOC 表"];
+        inst_info  -> svobj_emit [label="BLOCKS 表"];
+        sym_info   -> svobj_emit [label="SYMTAB 表"];
+    }
+    gates -> reloc_info [label="-g: corest", color="#8250df", penwidth=1.4];
+    gc_codegen -> svobj_emit [label="IMAGE: 复用同一条\ngc+encode 结果 :347", color="#8250df", style=dashed];
+    svobj_emit -> svobj_file [label="文件写 :520-522", color="#8250df"];
+
+    // ================= -x: 对象自检 =================
+    subgraph cluster_verify {
+        label="模式 -x: 对象自检 (不读 .st)"; style="rounded,dashed"; color="#bf3989"; fontsize=12;
+        svobj_verify [label="verify_svobj\n纯 OCaml 反向走查 magic/长度/段计数/CRC\n不经任何 Coq 计算函数\nveristc_main.ml:371-441",
+                      fillcolor="#fff0f6"];
+    }
+    mode -> svobj_verify [label="-x: 输入是 .svobj", color="#bf3989", style=dashed];
+    svobj_file -> svobj_verify [label="读回", style=dashed, color="#bf3989"];
+
+    // ================= 证明层旁注 =================
+    subgraph cluster_proof {
+        label="构建期证明层 —— 不产出运行期代码"; style="rounded,dotted"; color="#57606a"; fontsize=11;
+        specs [label="spec/safest.v, spec/safeasm.v\nst_program / sasm_module 类型定义\n→ 作为提取模块进入可执行文件\nsafest.v:343 | safeasm.v:282,293",
+               fillcolor="#f6f8fa"];
+        thms  [label="端到端语义保持链\ncompile_st_to_sasm = compile_core_program (:85-99)\n= type_check_program + codegen.compile_program\n定理 :1688 :1739 :2007 :2204 :2216",
+               fillcolor="#e6f4ea"];
+        thms_gc [label="生产路径的定理(仅结构性质, WS-C 段)\ncompile_program_gc 段长度/CALL 目标存在\n/形参数<=局部槽位数  :2228-2493\n※ 不含端到端 semantics preservation",
+                 fillcolor="#fff8c5"];
+        dead  [label="证明路径专用 / 已提取但入口未调用:\ncodegen.compile_program(:1077)\ntypechecker.type_check_program(:511)\nglobal_codegen.compile_program_g(:269)\ninline.inline_program(:367)",
+               fillcolor="#ffe9d5"];
+        specs -> thms [label="Require", style=dotted];
+        specs -> thms_gc [label="Require", style=dotted];
+    }
+    desugar -> specs [label="类型定义", style=dotted, color="#8b949e", constraint=false];
+    gc_codegen -> dead [label="生产函数不在端到端定理组合内\n(有意的解耦边界)", style=dotted, color="#fb8500", constraint=false];
+
+    // ================= 下游 =================
+    sasm_file -> svm_load [label="fread 载入", color="#1a7f37"];
+    svm_load [shape=box, label="C VM (svm)\n见 flow-vm-runtime.dot", fillcolor="#d0e8ff"];
+    svobj_file -> linker [label="预期消费者", style=dotted, color="#8b949e"];
+    linker [shape=box, label="veristc-ld (P3 计划)\n仓库内尚无实现 → 目标态", fillcolor="#f6f8fa", color="#8b949e", style="rounded,dashed"];
+
+    note1 [shape=note, fillcolor="#fff8c5", color="#9a6b00", fontsize=10,
+           label="关键事实\n1) 分派在最前: -c 与 -g 各自完整跑一遍 frontend, 无法在一次调用内同时产出两种文件。\n2) -a 是第二条管线(analyze_st), 与 frontend 九步同构但少了递归/栈深门禁 → 报告口径与编译口径可能不一致。\n3) 类型检查在生产路径只落到重名门禁; 形式化 typing 关系(type_check_program)不在生产路径。\n4) 证明/生产解耦是有意设计: 端到端 semantics preservation 建立在 compile_program + type_check_program 上\n   (compiler_correctness.v:85-99), 生产走 compile_program_gc(串入 csites/fbctx); gc 路径只有 CALL 结构定理(:2228-2493)。"];
+    { rank=sink; note1; }
+}

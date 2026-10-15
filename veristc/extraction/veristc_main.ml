@@ -237,10 +237,11 @@ let bool_to_string (b : Datatypes.bool) : string =
      Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)
    链接器(P3) 为"信任+测试"层（不进安全核），故 .svobj 仅
    把跨模块链接点以相对量记录，不烘焙绝对地址：
-     reloc.kind : 0=CALL_IDX  1=INST_BASE_IMM  2=GLOBAL_OFF(预留)
+     reloc.kind : 0=CALL_IDX  1=INST_BASE_IMM  2=GLOBAL_OFF
      sym.kind   : 0=FB_EXEC   1=INST_DATA      2=GLOBAL_EXT(未定义)
-   GLOBAL_OFF/GLOBAL_EXT 为 VAR_IN_OUT 逐引用别名预留；当前
-   编译器尚无 IN_OUT 逐引用代码生成，故本切片不产出该类行。
+   GLOBAL_OFF 行由 VAR_IN_OUT 逐引用别名的实参地址立即数产生
+   （addend = 全局线性地址 - GLOBAL_BASE），对应的全局以
+   GLOBAL_EXT 符号登记，aux 恒为 0（重定位只依赖 addend）。
    符号/数据块按名字排序保证字节级确定性 (PRE-2)。
    ================================================================ *)
 
@@ -294,6 +295,12 @@ let dedup_sorted (l : string Stdlib.List.t) : string Stdlib.List.t =
     (fun acc x -> if Stdlib.List.mem x acc then acc else acc @ [x])
     [] (sv_sort Stdlib.String.compare l)
 
+(* sym_row = ((string,nat),Z) -> (name, kind, aux) *)
+let decode_sym (r : G.sym_row) : string * int * int =
+  let Datatypes.Coq_pair (kn, aux) = r in
+  let Datatypes.Coq_pair (name_cs, kind_n) = kn in
+  (native_of_coq_string name_cs, nat_to_int kind_n, z_to_int aux)
+
 let emit_svobj (source_path : string) : string =
   let corest = frontend source_path in
   let relocs =
@@ -304,33 +311,28 @@ let emit_svobj (source_path : string) : string =
       (fun (i1, _, _, _) (i2, _, _, _) -> Stdlib.String.compare i1 i2)
       (Stdlib.List.map decode_inst
          (sv_list_to_ocaml (G.compile_program_inst_info corest))) in
-  let is_call (k, _, _, _, _) = k = 0 in
-  let is_inst (k, _, _, _, _) = k = 1 in
-  let call_syms = Stdlib.List.map (fun (_, s, _, _, _) -> s)
-                    (Stdlib.List.filter is_call relocs) in
-  let inst_syms =
-    Stdlib.List.map (fun (i, _, _, _) -> i) blocks
-    @ Stdlib.List.map (fun (_, s, _, _, _) -> s)
-        (Stdlib.List.filter is_inst relocs) in
-  let call_aux = Stdlib.List.map (fun (_, s, f, _, _) -> (s, f))
-                   (Stdlib.List.filter is_call relocs) in
-  let inst_base = Stdlib.List.map (fun (i, _, b, _) -> (i, b)) blocks in
-  let all_syms = dedup_sorted (call_syms @ inst_syms) in
-  let sym_index = Stdlib.List.mapi (fun i s -> (s, i)) all_syms in
-  let sym_idx_of s = try Stdlib.List.assoc s sym_index with Not_found -> 0 in
-  let sym_kind s =
-    if Stdlib.List.mem s call_syms then 0
-    else if Stdlib.List.mem s inst_syms then 1
-    else 2 in
-  let sym_aux s k =
-    match k with
-    | 0 -> (try Stdlib.List.assoc s call_aux with Not_found -> 0)
-    | 1 -> (try Stdlib.List.assoc s inst_base with Not_found -> 0)
-    | _ -> 0 in
+  (* SYMTAB 直接来自编译器导出表 (name, kind, aux)：
+     kind 0=FB_EXEC(aux=本模块函数索引) 1=INST_DATA(aux=块基址)
+     2=GLOBAL_EXT(aux=0)。主机侧不再从 reloc 行反推 aux。 *)
+  let sym_rows =
+    Stdlib.List.map decode_sym
+      (sv_list_to_ocaml (G.compile_program_sym_info corest)) in
+  let sym_names =
+    dedup_sorted (Stdlib.List.map (fun (n, _, _) -> n) sym_rows) in
+  let row_of n =
+    try Stdlib.List.find (fun (m, _, _) -> m = n) sym_rows
+    with Not_found ->
+      failwith (Printf.sprintf "svobj: symbol %s has no info row" n)
+  in
+  let sym_index = Stdlib.List.mapi (fun i s -> (s, i)) sym_names in
+  let sym_idx_of s =
+    try Stdlib.List.assoc s sym_index
+    with Not_found ->
+      failwith (Printf.sprintf "svobj: reloc symbol %s missing from symtab" s) in
   let symtab = Buffer.create 256 in
   Stdlib.List.iter (fun s ->
-      let k = sym_kind s in
-      put_name symtab s; put_u8 symtab k; put_u32 symtab (sym_aux s k)) all_syms;
+      let (_, k, a) = row_of s in
+      put_name symtab s; put_u8 symtab k; put_u32 symtab a) sym_names;
   let reloc_buf = Buffer.create 256 in
   Stdlib.List.iter (fun (k, s, f, o, a) ->
       put_u8 reloc_buf k;
@@ -350,7 +352,7 @@ let emit_svobj (source_path : string) : string =
   Buffer.add_string out svobj_magic;
   put_u16 out svobj_version;
   put_u16 out 0;
-  put_u32 out (Stdlib.List.length all_syms);
+  put_u32 out (Stdlib.List.length sym_names);
   put_u32 out (Stdlib.List.length relocs);
   put_u32 out (Stdlib.List.length blocks);
   put_u32 out (Stdlib.String.length st_s);
@@ -410,8 +412,33 @@ let verify_svobj (path : string) : unit =
   in
   let got_syms = walk_symtab svobj_header_len n_syms 0 in
   if got_syms <> n_syms then failwith "svobj: symtab count mismatch";
-  Printf.printf "svobj OK: syms=%d relocs=%d blocks=%d image=%dB crc=%08x\n"
-    n_syms n_relocs n_blocks img_len (stored_crc land 0xFFFFFFFF)
+  (* RELOC 段逐条校验：符号索引在范围内，并统计各重定位类型 *)
+  let reloc_base = svobj_header_len + st_len in
+  let rec walk_reloc off left (c, i, g, bad) =
+    if left = 0 then (c, i, g, bad)
+    else
+      let k = g8 off in
+      let sidx = g32 (off + 1) in
+      let (c, i, g, bad) =
+        match k with
+        | 0 -> (c + 1, i, g, bad)
+        | 1 -> (c, i + 1, g, bad)
+        | 2 -> (c, i, g + 1, bad)
+        | _ -> (c, i, g, bad + 1)
+        in
+      let bad = if sidx >= n_syms then bad + 1 else bad in
+      walk_reloc (off + svobj_reloc_entry_len) (left - 1) (c, i, g, bad)
+  in
+  let n_call, n_inst, n_global, n_bad =
+    walk_reloc reloc_base n_relocs (0, 0, 0, 0)
+  in
+  if n_bad <> 0 then
+    failwith (Printf.sprintf "svobj: %d reloc entr(y|ies) invalid (bad kind or symbol index)"
+                n_bad);
+  Printf.printf
+    "svobj OK: syms=%d relocs=%d (call=%d inst=%d global=%d) blocks=%d image=%dB crc=%08x\n"
+    n_syms n_relocs n_call n_inst n_global n_blocks img_len
+    (stored_crc land 0xFFFFFFFF)
 
 let analyze_st (source_path : string) : unit =
   let native_src = read_file source_path in

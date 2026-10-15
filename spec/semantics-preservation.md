@@ -1294,6 +1294,9 @@ A: 编译正确性定理只保证"如果 VM 正确执行 SafeASM 指令，则结
 **Q: 函数调用怎么保证语义保持？**
 A: v1.4 工程实现将合法 `FUNCTION` 编译为 SafeASM 函数。调用点生成 `[args] CALL func_idx`；被调函数使用独立帧，参数和非参数局部变量每次调用重新初始化，返回前把隐式函数结果变量压入值栈。`FUNCTION` 仍是无状态纯函数，跨扫描周期状态必须由调用方或 `FUNCTION_BLOCK` 持有。单表达式函数未来可选择性内联，但内联只是优化，不再是语义或合法性前提。当前 CALL/RETURN 路径已由 VM 单元测试、函数控制流测试和核电端到端测试覆盖；完整 Coq 语义保持证明是 Phase 5 的后续任务。
 
+**Q: `VAR_IN_OUT` 端口的别名语义怎么落地？**
+A: v1.5 起端口不再「拷贝进 / 拷贝出」，而是**逐引用别名**。`desugar_pou` 把 `D_IN_OUT` 降级为一个普通形参槽，并由 `cfunc_ptr_params` 记录哪些形参是别名；调用点 `CS_FB_CALL` 把被别名全局的**线性地址**压入该槽（`I32_CONST addr`），被调 POU 体内每次读写发射 `LOCAL_GET slot ; I32_LOAD_PTR / I32_STORE_PTR`（`0x30` / `0x31`，地址取自值栈而非静态 `mem_offset`）。绑定形状由 `function_check.v` 静态限定（实参只能是全局变量或调用方自身的 `VAR_IN_OUT` 端口，类型一致且 32 位宽），违反即以 `KIND=alias` 拒绝——因此别名集合仍是编译期可枚举的，不引入不可静态验证的指针。跨模块链接所需的地址以 `.svobj` 的 `GLOBAL_OFF` 重定位行导出（`spec/safeasm-spec.md` 附录 D.4）。当前该路径由 `run_vm_checks.sh` 的双实例共享 `shared`、跨实例字段别名 e2e、5 条拒绝用例与 p13 特性探针覆盖；别名 codegen 与 `GLOBAL_OFF` 派生属生产 gc 路径，尚无 Coq 语义保持定理（与 CALL/RETURN 同状态）。
+
 ---
 
 ## 附录 B：编译器逐阶段证明对应表
