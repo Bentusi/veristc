@@ -261,6 +261,29 @@ memory_arg (4 字节):
 | 0x39 | `F64_STORE` | `memory_arg` | `addr:i32 val:f64 → -` | 存储 f64 |
 | 0x3A | `I32_STORE8` | `memory_arg` | `addr:i32 val:i32 → -` | **存储 1 字节（取低8位），v1.1** |
 
+##### 指针解引用内存操作（v1.5，`VAR_IN_OUT` 逐引用别名）
+
+操作码 `0x30`–`0x33`（`0x34`–`0x35` 保留）：
+
+| 操作码 | 指令 | 参数 | 栈效果 | 说明 |
+|--------|------|------|--------|------|
+| `0x30` | `I32_LOAD_PTR` | `memory_arg` | `addr:i32 → val:i32` | 以栈顶值为地址读 i32 |
+| `0x31` | `I32_STORE_PTR` | `memory_arg` | `addr:i32 val:i32 → -` | 以栈中地址写 i32（值在栈顶，与 `I32_STORE` 逐字节同序） |
+| `0x32` | `F32_LOAD_PTR` | `memory_arg` | `addr:i32 → val:f32` | 同 `0x30`，按 f32 位型解释 |
+| `0x33` | `F32_STORE_PTR` | `memory_arg` | `addr:i32 val:f32 → -` | 同 `0x31`，写入 32 位位型 |
+
+与普通 `I32_LOAD`/`I32_STORE` 的**唯一**区别：地址本身作为数据在栈上传递，
+有效地址 = `栈顶值 + mem_offset`。这一原语是必需的而非可选的——帧局部槽位
+不在 `.sasm` 线性内存段内，静态 `mem_offset` 无法表达"间接寻址"，因此
+`VAR_IN_OUT` 端口的逐引用别名没有其它落地方式。
+
+代码生成约定（`global_codegen.v`）：调用点把被别名全局的**地址**压入端口
+槽位（`I32_CONST addr`，链接期由 `GLOBAL_OFF` 重定位，见附录 D.4），FB 体内
+对该端口的每次读写都是 `LOCAL_GET port_slot ; *_PTR {align=2, offset=0}`。
+C VM 中 I32/F32 两组变体运行时等价（`sasm_value` 即 32 位位型），故当前
+编译器只发射 `0x30`/`0x31`。越界解引用与其它内存访问同样返回
+`VM_ERR_MEM_OUT_OF_BOUNDS`。
+
 保留打印端口：
 
 - `0x7FFFFFF8`：`PRINT()` 写入 32 位值，VM 输出 `value, `。
@@ -772,6 +795,12 @@ VM 使用静态存储实现，工程默认容量如下：
 | `0x37` | `I64_STORE` | `align:uint16 offset:uint16` | 5 |
 | `0x38` | `F32_STORE` | `align:uint16 offset:uint16` | 5 |
 | `0x39` | `F64_STORE` | `align:uint16 offset:uint16` | 5 |
+| `0x2C` | `I32_LOAD8_U` | `align:uint16 offset:uint16` | 5 |
+| `0x3A` | `I32_STORE8` | `align:uint16 offset:uint16` | 5 |
+| `0x30` | `I32_LOAD_PTR` | `align:uint16 offset:uint16` | 5 |
+| `0x31` | `I32_STORE_PTR` | `align:uint16 offset:uint16` | 5 |
+| `0x32` | `F32_LOAD_PTR` | `align:uint16 offset:uint16` | 5 |
+| `0x33` | `F32_STORE_PTR` | `align:uint16 offset:uint16` | 5 |
 
 ### A.5 i32 常量指令
 
@@ -1131,3 +1160,84 @@ ST:  qDINT := QINT_var;     -- QINT → QDINT (提升)
 
 **结论**：所有质量操作的 WCET 均可静态计算，无隐藏分支或循环 ✅
 ```
+
+---
+
+## 附录 D：`.svobj` 可重定位对象格式（P2）
+
+VeriSTC 编译器除产出可直接装载的 `.sasm`（`-c`）外，还可产出**可重定位目标文件** `.svobj`（`-g`），供后续链接器 `veristc-ld`（P3）跨模块链接。目标：把 `tools/stpreproc.py` 的源到源文本展开替换为真正的「逻辑一份 + 数据分离 + 类 C 连接」编译—链接工具链。
+
+### D.1 分层与信任边界
+
+- **编译器侧（Coq）**：`veristc/src/global_codegen.v` 中的 `compile_program_reloc_info` / `compile_program_inst_info` / `compile_program_sym_info` 从**已链接**的 `.sasm` 镜像中，把属于跨模块链接点的指令位置与符号信息提取为**扁平可提取元数据表**（纯新增定义，不触碰任何已证明结构）。这些定义经 Extraction 暴露给 OCaml。
+- **编码侧（主机 OCaml）**：`veristc/extraction/veristc_main.ml` 的 `emit_svobj` 把元数据确定性编码为 `.svobj` 字节（SYMTAB 的 `kind`/`aux` 直接取自 `compile_program_sym_info`，不再由 reloc 行反推）；`verify_svobj`（`-x`）做结构 + CRC + RELOC 逐条（类型直方图、`sym_idx` 范围）round-trip。
+- 链接器正确性属**「信任 + 测试」**层，不进安全核，故 `.svobj` 仅记录相对量、不烘焙绝对地址。
+
+### D.2 文件布局（小端 / 定宽，无 LEB128，与 `.sasm` 风格一致）
+
+```
+Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)
+```
+
+**Header（36 字节）**
+
+| 偏移 | 宽度 | 字段 | 说明 |
+|------|------|------|------|
+| 0 | 4 | magic | `"SOBJ"` = `0x53 0x4F 0x42 0x4A` |
+| 4 | 2 | version | `1` |
+| 6 | 2 | flags | 0（保留） |
+| 8 | 4 | n_syms | 符号表条目数 |
+| 12 | 4 | n_relocs | 重定位条目数 |
+| 16 | 4 | n_blocks | FB 实例数据块数 |
+| 20 | 4 | symtab_len | SYMTAB 段字节数 |
+| 24 | 4 | reloc_len | RELOC 段字节数（= n_relocs×17） |
+| 28 | 4 | blocks_len | BLOCKS 段字节数 |
+| 32 | 4 | image_len | IMAGE 段字节数 |
+
+尾部 4 字节为 CRC32，覆盖 `[0, total-4)`；装载/校验时对不上即拒绝。
+
+**SYMTAB**（变长条目，按名字升序，保证确定性）
+```
+u16 name_len | byte name[name_len] | u8 kind | u32 aux
+```
+- `kind`：`0=FB_EXEC`（`FUNCTION_BLOCK` 的 `__exec` 函数，`aux`=该函数在**本模块**内的函数索引，即被修补 `CALL` 立即数的现值）/ `1=INST_DATA`（FB 实例数据块，`aux`=块基址）/ `2=GLOBAL_EXT`（未定义外部符号，`aux`=0，其地址由引用它的 `GLOBAL_OFF` 行的 `addend` 给出）。
+
+**RELOC**（定长 17 字节条目，按派生序）
+```
+u8 kind | u32 sym_idx | u32 func_idx | u32 offset | i32 addend
+```
+- `kind`：`0=CALL_IDX`（对某 FB `__exec` 的 `CALL`，需重编号）/ `1=INST_BASE_IMM`（`CS_FB_CALL` 降级时压入实例 `self` 基址的 `I32_CONST`）/ `2=GLOBAL_OFF`（`VAR_IN_OUT` 端口实参为「调用方全局」时压入的该全局地址 `I32_CONST`，`addend = 线性地址 − GLOBAL_BASE`，见 D.4）。
+- `sym_idx`=目标在 SYMTAB 的下标；`func_idx`×`offset`=被修补指令在其函数体内的**字节偏移**（相对量，链接时由各函数绝对基址换算）。
+
+**BLOCKS**（变长条目，按实例名升序）
+```
+u16 name_len | byte name | u16 fb_len | byte fb_name | u32 base | u32 size
+```
+- 每个 FB 实例的可写字段数据块：`size = 4 × 字段数`（声明序，每字段 4 字节的 self 相对布局）。
+
+**IMAGE**：链接后的 `.sasm` 模块原始字节（`encode_module` 输出，含占位 CRC 尾），供链接器切分/重定位，装载器亦可直接消费。
+
+### D.3 派生正确性依据
+
+`scan_instrs` 采用「基址候选 + 遇 FB `CALL` 配对」的前向扫描：`CS_FB_CALL` 降级恰以 `I32_CONST base` 开始、以 `CALL exec` 结束，故 `base` 立即数与其对应 `CALL` 精确配对，中间输入表达式常量不误配。函数索引序 = `entry_first_functions` 序。`offset` 由 `instr_size` 累加得到，与编码字节布局一致。
+
+符号表由 `compile_program_sym_info` 独立导出（FB `__exec` + 实例数据块 + 被别名全局三类），因此 `aux` 是结构性事实而非启发式推断；`sym_idx_of` 查不到符号时**直接报错**（而非静默回落到 0）。
+
+### D.4 `VAR_IN_OUT` 逐引用别名与 `GLOBAL_OFF`
+
+编译器已实现 v1.5 的 `VAR_IN_OUT` 逐引用别名（语言语义见 `spec/safest-spec.md`）：端口降级为「持有调用方存储地址的形参槽」，函数体内读写走 `I32_LOAD_PTR` / `I32_STORE_PTR`（0x30 / 0x31）。`.svobj` 侧的派生规则：
+
+- `build_alias_table` 从调用点**结构**（`csites` 的端口别名标记 + `find_bound` 得到的实参形状 `CE_VAR g`）导出「被别名全局 → 线性地址」表 `pl`，不从指令流猜测谁是被别名的全局。
+- 扫描器在「`I32_CONST base` → `CALL exec`」窗口内遇到命中 `pl` 的立即数，记一行 `GLOBAL_OFF`：符号为该全局（SYMTAB 中 `kind=2 GLOBAL_EXT`、`aux=0`），`addend = 地址 − GLOBAL_BASE`，与 `INST_BASE_IMM`/`CALL_IDX` 一起按窗口顺序落地。
+- **别名判定优先于基址判定**：`expand_instances` 展开出的字段全局（如 `a1_LAST`）其地址恰等于该实例的 `self` 基址。若先查基址表，绑定 `ACC := a1_LAST` 的实参会被误认为下一次调用的基址，既错记 `INST_BASE_IMM` 又丢掉 `GLOBAL_OFF`。
+- 透传（实参是调用方自身的 `VAR_IN_OUT` 端口）压的是 `LOCAL_GET` 槽位、不含立即数 ⇒ 不产行，别名在运行时沿调用链解析。
+- 已知精度取舍（属「信任 + 测试」层，与 `INST_BASE_IMM` 同类的窗口启发式）：窗口内若某个**值端口**读了「同时被别名过」的全局，codegen 也压该全局地址（`global_load`），会多出一条 `GLOBAL_OFF`；该行陈述「此 `I32_CONST` 持有符号 X 的地址」，对被多记的站点同样为真，链接期回写结果一致。窗口外（无基址候选）的全局地址常量不入行。
+
+实测（由 `run_vm_checks.sh` 断言覆盖）：
+
+| 用例 | CALL_IDX | INST_BASE_IMM | GLOBAL_OFF | 符号数 |
+|------|----------|---------------|------------|--------|
+| `native_fb_multi_instance.st`（无 IN_OUT） | 2 | 2 | 0 | 3 |
+| `native_fb_in_out.st`（`ACC := shared`×2） | 2 | 2 | 2 | 4（含 `shared`=GLOBAL_EXT） |
+| `in_out_alias_field.st`（`ACC := a1_LAST`） | 2 | 2 | 2 | 5（含 `t`、`a1_LAST`） |
+

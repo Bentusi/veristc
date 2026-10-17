@@ -36,6 +36,7 @@ PROBES=(
   "p10_quality_ops|p10|1|xfail"
   "p11_nested_fn|p11|2|pass"
   "p12_divzero_trap|p12|5|trap"
+  "p13_in_out_alias|p13|4|pass"
 )
 
 np=0; nx=0; nf=0

@@ -121,6 +121,7 @@ Definition st_type_to_sasm (t : st_type) : sasm_value_type :=
   | T_QLREAL                   => F64
   | T_QTIME                    => I64
   | T_ARRAY _ _ _             => I32  (* 数组基址视为 i32 指针 *)
+  | T_FB _                    => I32  (* FB 实例基址视为 i32 指针 *)
   end.
 
 (* 从 CoreST 函数构建编译环境 *)
@@ -329,6 +330,7 @@ Definition instr_size (i : sasm_instr) : Z :=
   (* 内存操作: 1 + 4 (memory_arg) *)
   | I32_LOAD _ | I64_LOAD _ | F32_LOAD _ | F64_LOAD _ | I32_LOAD8_U _ => 5
   | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ | I32_STORE8 _ => 5
+  | I32_LOAD_PTR _ | I32_STORE_PTR _ | F32_LOAD_PTR _ | F32_STORE_PTR _ => 5
 
   (* 安全扩展 *)
   | SAFE_ASSERT (ASSERT_CYCLE_LIMIT _) => 6    (* 1+1+4 *)
@@ -1771,7 +1773,8 @@ Definition exec_instr (st : runtime_state) (i : sasm_instr) : option runtime_sta
       end
 
   (* ── 内存操作 ── *)
-  | I32_LOAD arg | I64_LOAD arg | F32_LOAD arg | F64_LOAD arg =>
+  | I32_LOAD arg | I64_LOAD arg | F32_LOAD arg | F64_LOAD arg
+  | I32_LOAD_PTR arg | F32_LOAD_PTR arg =>
       match st.(rt_values) with
       | V_I32 addr :: vs =>
           match read_memory st addr arg.(mem_offset) with
@@ -1796,7 +1799,8 @@ Definition exec_instr (st : runtime_state) (i : sasm_instr) : option runtime_sta
                   rt_cycle_cnt := st.(rt_cycle_cnt) + 1; |}
       | _ => None
       end
-  | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _ =>
+  | I32_STORE _ | I64_STORE _ | F32_STORE _ | F64_STORE _
+  | I32_STORE_PTR _ | F32_STORE_PTR _ =>
       match st.(rt_values) with
       | V_I32 _ :: V_I32 _ :: vs =>
           Some {| rt_values := vs; rt_frames := st.(rt_frames);
@@ -7758,7 +7762,8 @@ Definition var_assign_program : corest_program :=
            cfunc_return_type := None;
            cfunc_params := nil;
            cfunc_locals := [(ID "x", T_DINT); (ID "y", T_DINT)];
-           cfunc_body := [CS_ASSIGN (ID "x") (CE_VAR (ID "y"))] |}];
+           cfunc_body := [CS_ASSIGN (ID "x") (CE_VAR (ID "y"))];
+           cfunc_ptr_params := nil |}];
      cprog_global_vars := nil;
      cprog_entry := ID "P";
      cprog_io_mapping := nil |}.
@@ -7823,7 +7828,8 @@ Definition lit_assign_program (n : Z) : corest_program :=
            cfunc_return_type := None;
            cfunc_params := nil;
            cfunc_locals := [(ID "x", T_DINT)];
-           cfunc_body := [CS_ASSIGN (ID "x") (CE_LIT (L_INT n))] |}];
+           cfunc_body := [CS_ASSIGN (ID "x") (CE_LIT (L_INT n))];
+           cfunc_ptr_params := nil |}];
      cprog_global_vars := nil;
      cprog_entry := ID "P";
      cprog_io_mapping := nil |}.
@@ -7851,7 +7857,8 @@ Definition add_assign_program (n1 n2 : Z) : corest_program :=
            cfunc_locals := [(ID "x", T_DINT)];
            cfunc_body :=
              [CS_ASSIGN (ID "x")
-                (CE_BIN_OP B_ADD (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2)))] |}];
+                (CE_BIN_OP B_ADD (CE_LIT (L_INT n1)) (CE_LIT (L_INT n2)))];
+           cfunc_ptr_params := nil |}];
      cprog_global_vars := nil;
      cprog_entry := ID "P";
      cprog_io_mapping := nil |}.

@@ -140,6 +140,15 @@ extern "C" {
 #define OP_I32_LOAD8_U   0x2C
 #define OP_I32_STORE8    0x3A
 
+/* ===== 指针解引用内存操作 (v1.5, VAR_IN_OUT 逐引用别名) =====
+   与普通 I32_LOAD/I32_STORE 的区别：栈顶值本身即目标地址，
+   有效地址 = addr + offset（编译器惯例 offset := 0）。
+   F32_*_PTR 与 I32_*_PTR 在运行时等价（sasm_value 为 int32 位模式）。 */
+#define OP_I32_LOAD_PTR   0x30
+#define OP_I32_STORE_PTR  0x31
+#define OP_F32_LOAD_PTR   0x32
+#define OP_F32_STORE_PTR  0x33
+
 /* ===== 类型转换 (v1.1) ===== */
 #define OP_I32_WRAP_I64         0xA7
 #define OP_I64_EXTEND_I32_S     0xA8   /* 注: 原 encoder.v 误用 0xAE 与 F64_GT 冲突, 修正为 0xA8 */

@@ -54,6 +54,9 @@ Separate Extraction
   veristc_src.codegen.compile_program
   veristc_src.global_codegen.compile_program_g
   veristc_src.global_codegen.compile_program_gc
+  veristc_src.global_codegen.compile_program_reloc_info
+  veristc_src.global_codegen.compile_program_inst_info
+  veristc_src.global_codegen.compile_program_sym_info
   veristc_src.analysis.analyze
   veristc_src.encoder.encode_sasm_instr
   veristc_src.encoder.encode_module

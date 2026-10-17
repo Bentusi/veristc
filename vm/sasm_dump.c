@@ -126,6 +126,10 @@ static const char *opcode_name(uint8_t op) {
     case OP_F64_SQRT:    return "F64_SQRT";
     case OP_I32_LOAD8_U: return "I32_LOAD8_U";
     case OP_I32_STORE8:  return "I32_STORE8";
+    case OP_I32_LOAD_PTR:  return "I32_LOAD_PTR";
+    case OP_I32_STORE_PTR: return "I32_STORE_PTR";
+    case OP_F32_LOAD_PTR:  return "F32_LOAD_PTR";
+    case OP_F32_STORE_PTR: return "F32_STORE_PTR";
     case OP_I32_WRAP_I64: return "I32_WRAP_I64";
     case OP_I64_EXTEND_I32_S: return "I64_EXTEND_I32_S";
     case OP_I32_TRUNC_F32_S:  return "I32_TRUNC_F32_S";
@@ -169,7 +173,11 @@ static int op_has_mem_arg(uint8_t op) {
     case OP_I32_LOAD: /* fall through */
     case OP_I32_STORE: /* fall through */
     case OP_I32_LOAD8_U: /* fall through */
-    case OP_I32_STORE8:
+    case OP_I32_STORE8: /* fall through */
+    case OP_I32_LOAD_PTR: /* fall through */
+    case OP_I32_STORE_PTR: /* fall through */
+    case OP_F32_LOAD_PTR: /* fall through */
+    case OP_F32_STORE_PTR:
         return 1;
     default:
         return 0;

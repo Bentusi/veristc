@@ -1,0 +1,110 @@
+// flow-vm-unwired.dot
+// VeriSTC 运行期"已实现但未接入"能力图 (当前状态 / AS-IS) —— flow-visualizer + graphviz
+// 本图只回答一个问题: 哪些运行期能力在代码里已经实现，但没有进入 svm 的可执行路径，断点具体在哪一行。
+// 与 flow-vm-runtime.dot 互补: 那张图是"实际会执行的"，这张图是"存在但不执行的"。
+// 证据: vm/svm.c, vm/safeasm_interp.c, vm/io/io_mapping.c, vm/hotstandby/*.c, rtos/rtthread/*.c, Makefile
+// 读法: 橙色虚线簇 = 一簇未接入能力；橙色节点 = 已实现代码；红色节点 = 断点；灰色 = 契约/测试替身/实际路径参照。
+// 纵向阅读顺序: ① I/O 扫描 → ④ RT-Thread(与①共享硬件契约) → ② 双机热备 → ③ 增量下装
+// 重新渲染: dot -Tsvg flow-vm-unwired.dot -o flow-vm-unwired.svg
+digraph "veristc_unwired_runtime" {
+    graph [
+        rankdir=TB,
+        label="运行期已实现但未接入的能力 (AS-IS)\n问题: 断在哪一行 / 谁在调 / 谁能调\n证据日期 2026-10-14",
+        labelloc=t, fontsize=17, fontname="Helvetica",
+        nodesep=0.4, ranksep=0.75, newrank=true, bgcolor="white"
+    ];
+    node [shape=box, style="rounded,filled", fontsize=11, fontname="Helvetica", fillcolor="#fff4e6", color="#fb8500"];
+    edge [fontsize=10, fontname="Helvetica", color="#fb8500", style=dashed];
+
+    // 所有簇共同的事实参照(放在最上方, 避免长边横跨)
+    svm_fact [shape=box, style="rounded,filled", fillcolor="#dcf5e3", color="#1a7f37",
+              label="实际运行路径参照\nvm/svm.c:205 直接调 vm_run → vm_execute_cycle\n周期体内无 I/O 同步、无主备同步、无看门狗"];
+
+    // ================= ① I/O 扫描链路 =================
+    subgraph cluster_io {
+        label="① I/O 扫描链路 —— 实现完整，但 svm 不链接 libvm_io"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+
+        scan_cycle [label="vm_scan_cycle(vm, iomap)\n设计上的完整周期入口\n全仓零调用点\nvm/safeasm_interp.c:1162 | vm/vm.h:349"];
+        io_cycle   [label="io_mapping_cycle (真实实现)\nread_all → vm_run → write_all\nvm/io/io_mapping.c:254-269"];
+        shim       [label="★ 断点: svm.c 内的同名本地桩\n丢弃 table 参数, 直接 return vm_run\n存在只为解析 vm_scan_cycle 引用的外部符号\n它自身也没被主循环调用\nvm/svm.c:31-37,205",
+                    fillcolor="#ffe2e2", color="#cf222e"];
+        read_all   [label="io_mapping_read_all\nio_read → raw_to_eng → 安全限值饱和\n→ 写 vm->memory\nvm/io/io_mapping.c:141-189"];
+        write_all  [label="io_mapping_write_all\n内存 → safety_check → eng_to_raw → io_write\nvm/io/io_mapping.c:199-244"];
+        scale      [label="缩放/偏置 + 安全限值\nvm/io/io_mapping.c:48-68,74-80"];
+        iomap_gap  [shape=note, fillcolor="#f2cc60", color="#9a6b00",
+                    label="★ 断点: 装载出的 IOMap 表\nSasmModule.iomap (vm/loader.c:175-193)\n从未被转换成 IOMappingTable\n且 scale/bias 在加载时被强制 1.0/0.0"];
+        io_test    [shape=note, fillcolor="#f6f8fa", color="#8250df",
+                    label="当前唯一驱动者: test_io_mapping\n用 mock 的 g_vm_interface\nMakefile:121-124 (-lvm_io -lvm_core)"];
+    }
+    svm_fact -> scan_cycle [color="#8b949e", label="对照"];
+    scan_cycle -> io_cycle [label="extern 引用\nvm/safeasm_interp.c:1172"];
+    shim       -> io_cycle [label="被本地桩取代", color="#cf222e"];
+    io_cycle   -> read_all;
+    io_cycle   -> write_all;
+    read_all   -> scale [style=dotted, color="#8b949e"];
+    write_all  -> scale [style=dotted, color="#8b949e"];
+    iomap_gap  -> read_all [label="缺一个显式构造步骤", color="#cf222e", fontcolor="#cf222e"];
+    io_test    -> read_all [color="#8250df"];
+
+    // ================= ④ RT-Thread 移植 (紧接①, 因为共享硬件契约) =================
+    hw [shape=hexagon, fillcolor="#f6f8fa", color="#6e7781",
+        label="物理 I/O 通道 AI/AO/DI/DO\nVM_Interface 的 25 个函数指针契约\nrtos/abstract.h:77-288,294"];
+
+    subgraph cluster_rtos {
+        label="④ RT-Thread 移植层 —— I/O 与看门狗的唯一真实使用者，但未被构建"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        rt_main  [label="vm_rtthread.c 三线程架构\nio_drv / vm_main / vm_wdt\n周期取自 config.scan_cycle_ms\nrtos/rtthread/vm_rtthread.c:483-505,355"];
+        rt_wdt   [label="vm_wdt: 运行期唯一的超周期兜底\n检测周期停滞并 vm_init 复位\nrtos/rtthread/vm_rtthread.c:398-427"];
+        rt_iface [label="g_vm_interface 聚合 25 个 OS 回调\nrtos/rtthread/vm_rtthread.c:269-295"];
+        rt_break [label="★ 断点(四条, 任一即阻断)\n· rtthread 不在 all / build-tests 目标 (Makefile:72,74)\n· CC=gcc 无交叉编译器; vm_rtthread.elf 只出现在 clean, 无构建规则\n· vm_rtthread.c:30 include \"../../vm/loader.h\" —— vm/ 下只有 vm.h 与 sasm_dump.h\n· 即使设了 RTTHREAD_SDK 也只语法编译, 不链接 (Makefile:182-190)",
+                    fillcolor="#ffe2e2", color="#cf222e"];
+    }
+    read_all  -> hw [label="io_read"];
+    write_all -> hw [label="io_write"];
+    rt_main   -> read_all [label="io_mapping_read_all\nvm_rtthread.c:335"];
+    rt_main   -> write_all [label="io_mapping_write_all\nvm_rtthread.c:347"];
+    rt_main   -> rt_wdt;
+    rt_main   -> rt_iface [style=dotted, color="#8b949e"];
+    rt_iface  -> hw [label="io_read / io_write"];
+    rt_break  -> rt_main [label="因此以上全部不生效", color="#cf222e"];
+    rt_wdt    -> svm_fact [label="本应监督周期循环", color="#cf222e", constraint=false];
+
+    // ================= ② 双机热备 =================
+    subgraph cluster_hs {
+        label="② 双机热备 —— 库函数完整，但没有任何运行站程序把主备周期跑起来"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+
+        hs_run   [label="hs_run_cycle → hs_master_cycle / hs_standby_cycle\n5 状态 × 7 事件迁移表\n故障计数达阈值 → FAILED；备站连续丢 3 次心跳 → SWITCHING\nvm/hotstandby/state_machine.c:371,326,357,98-255\n※ 四个 *_cycle 入口全仓零调用点\n★ 与 VM core 的唯一耦合点: hs_master_cycle 内调 vm_run (:333)"];
+        hs_sync  [label="hs_sync_send / hs_sync_receive + 心跳(magic HBT)\n共享内存 send/recv 带 __sync_synchronize 屏障\nvm/hotstandby/sync.c:205,230,158,178,92,119"];
+        snapshot [label="hs_snapshot_create / hs_snapshot_apply\n包头 → 脏页 → 值栈 → 帧栈 → CRC 回填\nGLOBAL + FB_DATA 段强制整段纳入\napply 先校验 CRC(-2) / magic(-3) / 栈指针(-4)\nvm/hotstandby/snapshot.c:207,324,239-257,304-310"];
+        dirty    [label="脏页追踪 hs_dirty_mark (snapshot.c:129)\n★ 断点: 解释器 STORE 路径从不标记脏页\n唯一调用者 = test_hotstandby.c:326+ 起"];
+        chaninit [label="★ 断点: hs_chan_shmem_init 把\nsend/recv/last_activity 全置 NULL\nvm/hotstandby/sync.c:75-77",
+                    fillcolor="#ffe2e2", color="#cf222e"];
+        hs_test  [shape=note, fillcolor="#f6f8fa", color="#8250df",
+                    label="当前唯一驱动者: test_hotstandby\n用 #include \"../../vm/hotstandby/*.c\" 内联源码\n而非链接 libvm_hs.a\ntests/vm-tests/test_hotstandby.c:18-23 | Makefile:128-129"];
+        libs     [shape=box, style="rounded,filled", fillcolor="#f6f8fa", color="#6e7781",
+                    label="构建产物: libvm_core.a / libvm_io.a / libvm_hs.a\n均在 all 目标内 (Makefile:72,82,94,106)\n★ libvm_io.a 与 libvm_hs.a 未被任何可执行目标链接"];
+    }
+    rt_break -> hs_run [style=invis];
+    hs_test  -> hs_run [label="绕过周期封装, 直调底层 API", color="#8250df"];
+    hs_run   -> hs_sync;
+    hs_sync  -> snapshot [label="create / apply"];
+    dirty    -> snapshot [label="脏页范围", color="#cf222e"];
+    chaninit -> hs_sync  [label="通道未真正接好", color="#cf222e"];
+    libs     -> hs_test  [style=dotted, color="#8b949e"];
+
+    // ================= ③ 增量下装 =================
+    subgraph cluster_dl {
+        label="③ 增量下装 —— 切换逻辑自洽，仅在测试里被驱动"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        dl_prep  [label="dl_manager_init / dl_prepare_download\n静态单例 s_dl_mgr, 2 个版本槽(无 VM 句柄参数)\nvm/hotstandby/download.c:276,297,266"];
+        dl_diff  [label="compute_diff / apply_patch\nvm/hotstandby/download.c:100,210"];
+        dl_commit[label="dl_commit_switch: 先 sasm_validate 再换槽\n失败即回滚 (周期边界原子切换)\nvm/hotstandby/download.c:332-346\n※ 唯一调用者 = test_hotstandby.c:561,581"];
+    }
+    snapshot -> dl_prep [style=invis];
+    dl_prep  -> dl_diff;
+    dl_diff  -> dl_commit;
+    dl_commit -> libs [label="复用加载期 sasm_validate\nvm/loader.c:302-342", style=dotted, color="#8b949e"];
+
+    // ================= 结论 =================
+    note3 [shape=note, fillcolor="#fff8c5", color="#9a6b00", fontsize=10,
+           label="四类断点性质不同，修复代价也不同\nA 链接层缺失: svm 不链 libvm_io / libvm_hs，改用本地桩与源码内联绕过 → 只需补 Makefile 链接关系。\nB 数据结构未桥接: SasmModule.iomap 与 IOMappingTable 之间无转换代码 → 需要一个显式构造步骤(且 scale/bias 需在加载期保留)。\nC 周期封装无调用者: vm_scan_cycle / hs_*_cycle / dl_commit_switch 都只有测试入口 → 缺一个运行站主程序。\nD 移植层不可编译: 缺头文件 + 无交叉构建 → 在拿到 RT-Thread SDK 前无法验证。"];
+    { rank=sink; note3; }
+}

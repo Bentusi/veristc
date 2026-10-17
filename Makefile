@@ -278,7 +278,8 @@ extract: $(EXTRACT_STAMP)
 # 编译提取后的 OCaml 可执行程序
 VERISTC_BIN = veristc/extraction/veristc
 
-$(VERISTC_BIN): $(EXTRACT_STAMP)
+# veristc_main.ml 为手写源（不参与提取），须显式列为依赖，否则改动不重链接
+$(VERISTC_BIN): $(EXTRACT_STAMP) $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc_main.ml
 	@echo "  [OCAML] Compiling veristc executable..."
 	@cd $(VERISTC_DIR)/$(EXTRACTION_DIR) && \
 		ocamlfind ocamlopt -package str -linkpkg -c $$(ocamldep -sort *.mli 2>/dev/null) && \

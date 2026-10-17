@@ -46,6 +46,19 @@ Proof.
 Qed.
 
 (* ================================================================
+   t7: 原生 FUNCTION_BLOCK 的 self 相对寻址在本规范语义内可表达
+
+   pc_step 现已含 I32_LOAD / I32_STORE 构造子（见 safeasm.v），故
+   multi_step_sasm（即 multi_pc_step）自动覆盖 FB 字段读写。 编译器把
+   `inst.FLD := expr` 与 `read(inst.FLD)` 降级为
+     LOCAL_GET __self_slot ; I32_STORE/LOAD {mem_offset := 4*field_idx}
+   以下便捷引理已在 safeasm.v 中证明，作为 FB 语义的规范入口：
+     - self_relative_load_step   : 基址在栈顶时的字段读单步
+     - self_relative_store_step  : [值;基址] 在栈顶时的字段写单步
+     - fb_field_access_valid_address : FB_DATA 段内布局 ⇒ 地址合法
+   ================================================================ *)
+
+(* ================================================================
    终态定义（WS-B.2 推广）
 
    早期把"终态"定义为单帧且 rt_frames = nil，只适用于无调用的平面

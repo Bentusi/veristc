@@ -1,0 +1,95 @@
+// flow-vm-runtime.dot
+// VeriSTC SafeASM VM 运行期主路径数据流 (当前状态 / AS-IS) —— flow-visualizer + graphviz
+// 本图只回答一个问题: .sasm 进入 svm 后，一个扫描周期里真正执行了什么。
+// "已实现但没有接入运行路径"的能力(I/O 扫描、双机热备、增量下装、RT-Thread 移植)见 flow-vm-unwired.dot。
+// 证据: vm/svm.c, vm/loader.c, vm/safeasm_interp.c, vm/vm.h
+// 读法: 全部实线 = svm 可执行文件里真正会执行的路径；红色虚线 = 拒绝/终止分支；橙色节点 = 语义弱化点。
+// 重新渲染: dot -Tsvg flow-vm-runtime.dot -o flow-vm-runtime.svg
+digraph "veristc_vm_runtime_main" {
+    graph [
+        rankdir=TB,
+        label="SafeASM VM 运行期主路径 (AS-IS)\n触发: svm [-d] [-n CYCLES] [-p MS] file.sasm\n一个周期 = vm_run(纯计算) + 绝对定时休眠；无 I/O、无看门狗、无安全态",
+        labelloc=t, fontsize=17, fontname="Helvetica",
+        nodesep=0.35, ranksep=0.7, newrank=true, bgcolor="white"
+    ];
+    node [shape=box, style="rounded,filled", fontsize=11, fontname="Helvetica", fillcolor="#eaf3ff", color="#57606a"];
+    edge [fontsize=10, fontname="Helvetica", color="#57606a"];
+
+    sasm [shape=note, fillcolor="#f2cc60", color="#9a6b00", label=".sasm 镜像文件\n(编译器 -c 产出)"];
+
+    // ================= 1. 装载与校验 =================
+    subgraph cluster_load {
+        label="① 装载与校验  ——  svm 内实际执行"; style="rounded"; color="#1a7f37"; fontsize=12;
+
+        fopen_fread [label="load_module: fopen + fread\n进 2MB 静态缓冲\nlen==0 或 len>=缓冲 → 拒绝\nvm/svm.c:70-83,24"];
+        magic_ver   [label="sasm_load: 长度<8 → -1\nmagic(SASM) → version(0x01)\nloader.c:91,99-106"];
+        sections    [label="段循环解析\nTypes/Funcs/Segments/IOMap/Code/Safety\n每处越界或非法 → return -1\nloader.c:111-281"];
+        iomap_note  [label="IOMap 段解析\n取 name/mem_offset/channel/dir/type/width/limit\n但 scale 强制 1.0、bias 强制 0.0\n跳过 16 字节 float64×2\nloader.c:186-190",
+                     fillcolor="#ffe9d5"];
+        crc_check   [label="尾部 CRC32 比对\n不匹配且 stored!=0 → -2\nstored==0 放行 (legacy fixture 约定)\nloader.c:283-289",
+                     fillcolor="#ffe9d5"];
+        validate    [label="sasm_validate (第二道)\ncycle_limit<=1e6 / 栈深 / 内存 /\n入口 / 代码区间\nloader.c:302-342 | 调用 svm.c:90-93"];
+        vm_init     [label="vm_init\nVM{val_stack[1024], frame_stack[256],\nmemory[1MiB], safety, entry}\n无独立 FB 实例区, FB 数据即内存段\nvm/vm.h:309-321,175 | svm.c:94"];
+        reject      [shape=octagon, fillcolor="#ffe2e2", color="#cf222e",
+                     label="任一校验不过 → 打印错误并退出\n(尺寸/magic/version/段/CRC/validate)"];
+
+        fopen_fread -> magic_ver -> sections -> crc_check -> validate -> vm_init;
+        sections    -> iomap_note [style=dotted, color="#fb8500"];
+        fopen_fread -> reject [style=dashed, color="#cf222e", constraint=false];
+        magic_ver   -> reject [style=dashed, color="#cf222e", constraint=false];
+        sections    -> reject [style=dashed, color="#cf222e", constraint=false];
+        crc_check   -> reject [style=dashed, color="#cf222e", constraint=false];
+        validate    -> reject [style=dashed, color="#cf222e", constraint=false];
+    }
+    sasm -> fopen_fread [label="路径参数", color="#1a7f37", penwidth=1.6];
+
+    dump [label="-d 模式: sasm_dump 反汇编后退出\nvm/svm.c:8 + vm/sasm_dump.c", fillcolor="#f6f8fa"];
+    vm_init -> dump [label="-d", style=dashed, color="#6e7781"];
+
+    // ================= 2. 周期主循环 =================
+    subgraph cluster_cycle {
+        label="② 扫描周期主循环  ——  周期体内只有 vm_run"; style="rounded"; color="#1a7f37"; fontsize=12;
+
+        loop [shape=diamond, label="while (!stop && (n==0 || executed<n))\nvm/svm.c:204", fillcolor="#dcf5e3"];
+        vmrun [label="vm_run\n重置计数 → 压入口帧 → 执行\nsafeasm_interp.c:1138-1156\n★ 直接调用, 未经任何 I/O 包装\nvm/svm.c:205",
+               fillcolor="#dcf5e3"];
+        exec_cycle [label="vm_execute_cycle\nwhile (frame->pc < body_size)\n单一大 opcode switch\nsafeasm_interp.c:259-274,1088",
+                    fillcolor="#dcf5e3"];
+        cycle_limit [label="每指令 cycle_count++\n超过 safety.cycle_limit → VM_ERR_CYCLE_LIMIT\n注意 cycle_limit==0 时该检查完全不生效\nsafeasm_interp.c:265-269", fillcolor="#ffe9d5"];
+        ptr_ops [label="指针访存已实现\nOP_I32_LOAD_PTR 0x30 / STORE_PTR 0x31\n(VAR_IN_OUT 逐引用别名, 地址取自值栈)\nsafeasm_interp.c:577,594 | vm.h:147-148"];
+        print_res [label="打印结果到 stdout\n取 frame_stack[0].locals[0] 或 local[i]\nvm/svm.c:211-213"];
+        expected  [label="可选期望值比对\natoi(expected)!=result → return 1\nvm/svm.c:215-218", fillcolor="#f6f8fa"];
+        deadline  [label="advance_deadline + sleep_until\nCLOCK_MONOTONIC 绝对定时\n周期 = -p MS (默认 1000)\nvm/svm.c:119-136,223-224"];
+
+        loop -> vmrun [label="同一 VM 实例反复执行"];
+        vmrun -> exec_cycle;
+        exec_cycle -> cycle_limit;
+        exec_cycle -> ptr_ops [style=dotted, color="#0969da"];
+        vmrun -> print_res [label="VM_OK"];
+        print_res -> expected;
+        expected -> deadline;
+        deadline -> loop [label="下一周期", color="#1a7f37"];
+    }
+    vm_init -> loop [label="默认模式", color="#1a7f37", penwidth=1.8];
+
+    signal [label="SIGINT / SIGTERM → stop_requested\n唯一的外部停止手段\nvm/svm.c:39-43,197-198"];
+    signal -> loop [label="退出循环", style=dashed, color="#6e7781"];
+
+    // ================= 3. 错误处理语义 =================
+    subgraph cluster_err {
+        label="③ 错误处理语义  ——  发现即退出，不进安全态"; style="rounded"; color="#cf222e"; fontsize=12;
+        err_codes [label="非法码 / 除零 / 栈溢出 / 越界 → VM_ERR_*\n(vm.h:180-188)\ncheck_mem_bounds: 先 memory_size\n再 safety.mem_access_ranges 白名单\nsafeasm_interp.c:167-181,520,1085"];
+        soft_err  [label="语义弱化点\n· pop_value 下溢: 记 last_error 后返回 0 并继续执行\n· OP_SAFE_ASSERT: 运行时只读不阻断\n· 打印端口魔法地址绕过边界检查\nsafeasm_interp.c:44-50,630-637,541-557",
+                   fillcolor="#ffe9d5"];
+        stop_out  [label="vm_run != VM_OK\nfprintf + return 3 停机\nvm/svm.c:206-208", fillcolor="#ffe2e2"];
+    }
+    cycle_limit -> err_codes [style=dashed, color="#cf222e"];
+    exec_cycle  -> soft_err  [style=dashed, color="#cf222e"];
+    err_codes   -> stop_out  [style=dashed, color="#cf222e"];
+    soft_err    -> exec_cycle [label="继续执行", style=dashed, color="#fb8500"];
+
+    // ================= 读图要点 =================
+    note2 [shape=note, fillcolor="#fff8c5", color="#9a6b00", fontsize=10,
+           label="主路径结论\n1) 装载有两道关: sasm_load(结构+CRC) 与 sasm_validate(安全参数)；损坏文件确实被拒(run_vm_checks.sh:209 断言 -2)，\n   但 stored_crc==0 的未签名文件被放行(loader.c:286-288)，改写后清零即可绕过——完整性校验对这类文件不强制。\n2) 周期体内不含 I/O 输入同步也不含输出同步: svm.c:205 直接调 vm_run。\n   装载出的 IOMap 表此后从未被任何代码消费。\n3) 超周期只有指令数上限(cycle_limit)，且 cycle_limit==0 时失效；无看门狗、无安全态迁移。\n4) 失败即进程退出，交由上层重启，VM 自身不实现故障收敛。"];
+    { rank=sink; note2; }
+}
