@@ -368,6 +368,14 @@ Definition local_decls (ds : list st_var_decl) : list (ident * st_type) :=
   List.map (fun vd => (vd.(var_name), vd.(var_type)))
            (List.filter is_local_decl ds).
 
+(* FUNCTION 仅允许 VAR_INPUT + 局部 VAR（function_check.function_decls_ok），
+   其形参表与 spec 语义 function_semantics.input_param_names 逐项对应；
+   D_IN_OUT 别名端口只属于原生 FB（cfunc_ptr_params 仅 FB 分支填充）。 *)
+Definition input_only_decls (ds : list st_var_decl) : list (ident * st_type) :=
+  List.map (fun vd => (vd.(var_name), vd.(var_type)))
+           (List.filter (fun vd =>
+              match vd.(var_dir) with D_INPUT => true | _ => false end) ds).
+
 Definition desugar_pou (p : st_pou) : corest_function :=
   let body := match p with P_PROGRAM _ _ b => b | P_FUNCTION _ _ _ b => b | P_FUNCTION_BLOCK _ _ b => b end in
   let name := match p with P_PROGRAM n _ _ => n | P_FUNCTION n _ _ _ => n | P_FUNCTION_BLOCK n _ _ => n end in
@@ -383,7 +391,7 @@ Definition desugar_pou (p : st_pou) : corest_function :=
               形参表 = __self ++ 值端口（含 IN_OUT 别名槽位），__self 恒为
               槽位 0。 *)
            (ID "__self", T_DINT) :: param_decls decls
-       | _ => param_decls decls
+       | _ => input_only_decls decls
        end;
      cfunc_locals :=
        match p with

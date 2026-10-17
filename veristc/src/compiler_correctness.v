@@ -2237,6 +2237,33 @@ Qed.
    ================================================================ *)
 
 (* desugar_pou 保持输入参数数量：cfunc_params 长度 = input_param_names 长度 *)
+Lemma desugar_pou_FUNCTION_params :
+  forall (n : ident) (t : st_type) (d : list st_var_decl) (b : list st_stmt),
+    (desugar_pou (P_FUNCTION n t d b)).(cfunc_params) = input_only_decls d.
+Proof.
+  intros n t d b. reflexivity.
+Qed.
+
+Lemma desugar_pou_FB_params :
+  forall (n : ident) (d : list st_var_decl) (b : list st_stmt),
+    (desugar_pou (P_FUNCTION_BLOCK n d b)).(cfunc_params)
+    = (ID "__self", T_DINT) :: param_decls d.
+Proof.
+  intros n d b. reflexivity.
+Qed.
+
+Lemma input_only_decls_length :
+  forall (ds : list st_var_decl),
+    List.length (input_only_decls ds)
+    = List.length (function_semantics.input_param_names ds).
+Proof.
+  induction ds as [|d rest IH].
+  - reflexivity.
+  - unfold input_only_decls in *.
+    destruct d as [nm ty dir q ini]; simpl;
+    destruct dir; simpl; rewrite IH; reflexivity.
+Qed.
+
 Lemma desugar_pou_param_count :
   forall (p : st_pou),
     match p with
@@ -2244,21 +2271,19 @@ Lemma desugar_pou_param_count :
     | P_FUNCTION _ _ d _ => List.length (desugar_pou p).(cfunc_params)
       = List.length (function_semantics.input_param_names d)
     | P_FUNCTION_BLOCK _ d _ => List.length (desugar_pou p).(cfunc_params)
-      = List.length (function_semantics.input_param_names d)
+      = S (List.length (param_decls d))
     end.
 Proof.
   intros p.
-  destruct p as [n1 d1 b1 | n2 t d2 b2 | n3 d3 b3]; simpl.
+  destruct p as [n1 d1 b1 | n2 t d2 b2 | n3 d3 b3].
   - (* P_PROGRAM *)
-    reflexivity.
+    simpl. reflexivity.
   - (* P_FUNCTION *)
-    simpl.
-    induction d2 as [|d rest IH]; simpl; auto.
-    destruct d.(var_dir) eqn:Hdir; simpl; rewrite IH; auto.
-  - (* P_FUNCTION_BLOCK *)
-    simpl.
-    induction d3 as [|d rest IH]; simpl; auto.
-    destruct d.(var_dir) eqn:Hdir; simpl; rewrite IH; auto.
+    rewrite desugar_pou_FUNCTION_params, input_only_decls_length.
+    reflexivity.
+  - (* P_FUNCTION_BLOCK：__self ++ param_decls *)
+    rewrite desugar_pou_FB_params.
+    simpl. reflexivity.
 Qed.
 
 (* callee 的类型段形参数 = 源函数 cfunc_params 数量。 *)
@@ -2451,7 +2476,10 @@ Theorem compile_st_to_sasm_calls_with_source :
       List.nth_error (entry_first_functions p) j = Some g /\
       ft = build_sasm_func_type g /\
       fn = compile_function_gc (build_global_env p)
-             (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g /\
+             (assign_func_indices (entry_first_functions p) 0)
+             (build_call_sites (build_global_env p)
+                (entry_first_functions p) (cprog_global_vars p))
+             (Z.of_nat j) g /\
       lookup_func_type (compile_program_gc p) (Z.of_nat j) = Some ft /\
       lookup_function (compile_program_gc p) (Z.of_nat j) = Some fn /\
       (List.length ft.(sasm_param_types)
@@ -2461,7 +2489,10 @@ Proof.
   destruct (List.nth_error (entry_first_functions p) j) as [g|] eqn:Hg.
   - exists g, (build_sasm_func_type g),
       (compile_function_gc (build_global_env p)
-         (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g).
+         (assign_func_indices (entry_first_functions p) 0)
+         (build_call_sites (build_global_env p)
+            (entry_first_functions p) (cprog_global_vars p))
+         (Z.of_nat j) g).
     split; [reflexivity |].
     split; [reflexivity |].
     split; [reflexivity |].
@@ -3049,14 +3080,22 @@ Proof.
   rewrite Hfn'_eq.
   (* 现在需要证明：length args <= length (compile_function_gc ... g_src).(sasm_locals) *)
   assert (Hge_len : (List.length (compile_function_gc (build_global_env (desugar_program p))
-    (assign_func_indices (entry_first_functions (desugar_program p)) 0) (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals)
+    (assign_func_indices (entry_first_functions (desugar_program p)) 0)
+    (build_call_sites (build_global_env (desugar_program p))
+       (entry_first_functions (desugar_program p))
+       (cprog_global_vars (desugar_program p)))
+    (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals)
     >= List.length args)%nat).
   {
     (* 从 compile_function_gc_locals_adequate 知：
        length (build_sasm_func_type g_src).(sasm_param_types) <= length (compile_function_gc ... g_src).(sasm_locals) *)
     assert (Hadeq : (List.length (build_sasm_func_type g_src).(sasm_param_types) <=
       List.length (compile_function_gc (build_global_env (desugar_program p))
-        (assign_func_indices (entry_first_functions (desugar_program p)) 0) (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals))%nat).
+        (assign_func_indices (entry_first_functions (desugar_program p)) 0)
+        (build_call_sites (build_global_env (desugar_program p))
+           (entry_first_functions (desugar_program p))
+           (cprog_global_vars (desugar_program p)))
+        (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals))%nat).
     { apply compile_function_gc_locals_adequate. }
     
     (* 从 build_sasm_func_type_param_count 知：
