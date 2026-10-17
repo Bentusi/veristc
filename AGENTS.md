@@ -15,6 +15,7 @@ veristc/
 ├── run_nuclear_e2e.sh            ← 核电 ST→SASM→VM 端到端验证
 ├── run_feature_probes.sh         ← SafeST 特性面探针矩阵（PASS/XFAIL 覆盖表）
 ├── run_channel_e2e.sh            ← 单组 RPS 4 通道保护黄金时间线 e2e
+├── run_algo_e2e.sh               ← RS/SR/PID/FBY 算法块多实例黄金时间线 e2e
 ├── run_misra_check.sh            ← MISRA-C 静态检查（逐文件用例式输出，可传文件参数）
 ├── plan/                         ← Phase 描述文件（见下方导航）
 │   ├── phase0-spec-skeleton.prompt.md
@@ -171,6 +172,7 @@ veristc/
 - `run_nuclear_e2e.sh`：核电 ST（>10000 行）→ VeriSTC → SASM → VM 端到端验证
 - `run_feature_probes.sh`：SafeST 特性面探针矩阵（12 探针，PASS/XFAIL 覆盖表）
 - `run_channel_e2e.sh`：单组 RPS 4 通道保护 + ESFAS 顺序器黄金时间线验证
+- `run_algo_e2e.sh`：RS/SR/PID/FBY 算法块多实例（不同变量调用相同算法功能）12 周期黄金时间线验证
 - `run_misra_check.sh`：MISRA-C 静态合规检查（cppcheck，逐文件用例输出）
 - `run_sanitizer.sh`：ASan/UBSan 内存安全检测
 - `run_fuzzer.sh`：.sasm 加载器模糊测试
@@ -193,6 +195,7 @@ veristc/
 | `tests/st-examples/feature-probes/*.st` | `./run_feature_probes.sh` | 特性探针变更 |
 | `tests/st-examples/nuclear*.st` | `./run_nuclear_e2e.sh` | 核电用例变更 |
 | `tests/st-examples/*channel*.st` | `./run_channel_e2e.sh` | 通道黄金时间线变更 |
+| `tests/st-examples/algo_blocks*.st` | `./run_algo_e2e.sh` | 算法块库/多实例用例变更 |
 | `run_*.sh` 或 `Makefile` | `./run_tests.sh` | 基础设施变更 → 全量回归 |
 | `*.md`、`*.json`、`*.yml` | 无需验证 | 文档/配置 |
 

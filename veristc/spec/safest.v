@@ -522,34 +522,289 @@ Inductive has_type : type_env_func -> type_env -> st_expr -> st_type -> Prop :=
    第 10 部分：良构性定义 (Well-formedness)
    ================================================================ *)
 
-(* 无重复声明定义 *)
-Definition no_duplicate_declarations (p : st_program) : Prop :=
-  True.
-(* 所有引用已声明：完整定义需递归遍历表达式/语句树（Phase 2 完善）。当前简化：始终成立。 *)
-Definition all_refs_declared (p : st_program) : Prop := True.
-
 Definition MAX_CYCLE_LIMIT : Z := 1000000.
 
-(* 无直接递归调用：POU 不调用自身 *)
+(* --- 辅助函数 --- *)
+
+Definition pou_name_spec (p : st_pou) : ident :=
+  match p with
+  | P_PROGRAM name _ _ => name
+  | P_FUNCTION name _ _ _ => name
+  | P_FUNCTION_BLOCK name _ _ => name
+  end.
+
+Fixpoint var_decl_names (decls : list st_var_decl) : list ident :=
+  match decls with
+  | nil => nil
+  | d :: rest => d.(var_name) :: var_decl_names rest
+  end.
+
+Fixpoint in_ident_list (x : ident) (xs : list ident) : bool :=
+  match xs with
+  | nil => false
+  | y :: rest => ident_eq x y || in_ident_list x rest
+  end.
+
+Fixpoint hasDuplicates (xs : list ident) : bool :=
+  match xs with
+  | nil => false
+  | x :: rest => in_ident_list x rest || hasDuplicates rest
+  end.
+
+(* --- 1. 无重复声明 --- *)
+Definition no_duplicate_declarations (p : st_program) : Prop :=
+  hasDuplicates (var_decl_names p.(global_vars)) = false /\
+  hasDuplicates (List.map pou_name_spec p.(pou_list)) = false.
+
+(* --- 2. 所有引用已声明 --- *)
+
+Fixpoint refs_in_expr (e : st_expr) : list ident :=
+  match e with
+  | E_LIT _ => nil
+  | E_VAR x => [x]
+  | E_ARRAY_ACCESS a i => refs_in_expr a ++ refs_in_expr i
+  | E_UNARY_OP _ e1 => refs_in_expr e1
+  | E_BIN_OP _ e1 e2 | E_COMP _ e1 e2
+  | E_AND e1 e2 | E_OR e1 e2 | E_XOR e1 e2 =>
+      refs_in_expr e1 ++ refs_in_expr e2
+  | E_FUNC_CALL _ args =>
+      List.fold_right (fun a acc => refs_in_expr a ++ acc) nil args
+  | E_QUALITY_OP _ args =>
+      List.fold_right (fun a acc => refs_in_expr a ++ acc) nil args
+  end.
+
+Fixpoint refs_in_stmt (s : st_stmt) : list ident :=
+  match s with
+  | S_ASSIGN x e => [x] ++ refs_in_expr e
+  | S_ARRAY_ASSIGN x i e => [x] ++ refs_in_expr i ++ refs_in_expr e
+  | S_IF cond tb eb =>
+      refs_in_expr cond ++
+      List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil tb ++
+      match eb with Some stmts =>
+        List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil stmts
+      | None => nil end
+  | S_CASE sel brs def =>
+      refs_in_expr sel ++
+      List.fold_right (fun br acc =>
+        match br with CASE_ELEM _ body =>
+          List.fold_right (fun st acc2 => refs_in_stmt st ++ acc2) nil body ++ acc
+        end
+      ) nil brs ++
+      match def with Some stmts =>
+        List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil stmts
+      | None => nil end
+  | S_FOR v st fn _ body =>
+      [v] ++ refs_in_expr st ++ refs_in_expr fn ++
+      List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body
+  | S_WHILE cond body => refs_in_expr cond ++
+      List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body
+  | S_REPEAT body cond =>
+      List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body ++
+      refs_in_expr cond
+  | S_FB_CALL _ params =>
+      List.fold_right (fun pe acc => refs_in_expr (snd pe) ++ acc) nil params
+  | S_RETURN | S_EXIT => nil
+  end.
+
+Definition all_declared_names (p : st_program) : list ident :=
+  var_decl_names p.(global_vars) ++
+  List.fold_right (fun pou acc =>
+    match pou with
+    | P_PROGRAM _ decls _ => var_decl_names decls ++ acc
+    | P_FUNCTION _ _ decls _ => var_decl_names decls ++ acc
+    | P_FUNCTION_BLOCK _ decls _ => var_decl_names decls ++ acc
+    end
+  ) nil p.(pou_list).
+
+Definition all_refs_declared (p : st_program) : Prop :=
+  let env := all_declared_names p in
+  List.forallb (fun x => in_ident_list x env)
+    (List.fold_right (fun pou acc =>
+      match pou with
+      | P_PROGRAM _ _ body =>
+          List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body ++ acc
+      | P_FUNCTION _ _ _ body =>
+          List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body ++ acc
+      | P_FUNCTION_BLOCK _ _ body =>
+          List.fold_right (fun st acc => refs_in_stmt st ++ acc) nil body ++ acc
+      end
+    ) nil p.(pou_list)) = true.
+
+(* --- 3. 无递归调用 --- *)
+
+Fixpoint calls_in_expr (e : st_expr) : list ident :=
+  match e with
+  | E_LIT _ | E_VAR _ => nil
+  | E_ARRAY_ACCESS a i => calls_in_expr a ++ calls_in_expr i
+  | E_UNARY_OP _ e1 => calls_in_expr e1
+  | E_BIN_OP _ e1 e2 | E_COMP _ e1 e2
+  | E_AND e1 e2 | E_OR e1 e2 | E_XOR e1 e2 =>
+      calls_in_expr e1 ++ calls_in_expr e2
+  | E_FUNC_CALL f args =>
+      [f] ++ List.fold_right (fun a acc => calls_in_expr a ++ acc) nil args
+  | E_QUALITY_OP _ args =>
+      List.fold_right (fun a acc => calls_in_expr a ++ acc) nil args
+  end.
+
+Fixpoint calls_in_stmt (s : st_stmt) : list ident :=
+  match s with
+  | S_ASSIGN _ e => calls_in_expr e
+  | S_ARRAY_ASSIGN _ i e => calls_in_expr i ++ calls_in_expr e
+  | S_IF cond tb eb =>
+      calls_in_expr cond ++
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil tb ++
+      match eb with Some stmts =>
+        List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil stmts
+      | None => nil end
+  | S_CASE sel brs def =>
+      calls_in_expr sel ++
+      List.fold_right (fun br acc =>
+        match br with CASE_ELEM _ body =>
+          List.fold_right (fun st acc2 => calls_in_stmt st ++ acc2) nil body ++ acc
+        end
+      ) nil brs ++
+      match def with Some stmts =>
+        List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil stmts
+      | None => nil end
+  | S_FOR _ st fn _ body =>
+      calls_in_expr st ++ calls_in_expr fn ++
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body
+  | S_WHILE cond body => calls_in_expr cond ++
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body
+  | S_REPEAT body cond =>
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body ++
+      calls_in_expr cond
+  | S_FB_CALL _ _ | S_RETURN | S_EXIT => nil
+  end.
+
+Definition callees_of_pou (pou : st_pou) : list ident :=
+  match pou with
+  | P_PROGRAM _ _ body =>
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body
+  | P_FUNCTION _ _ _ body =>
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body
+  | P_FUNCTION_BLOCK _ _ body =>
+      List.fold_right (fun st acc => calls_in_stmt st ++ acc) nil body
+  end.
+
+Fixpoint dfs_reaches
+         (fuel : nat) (pous : list st_pou) (target : ident) (current : ident)
+         (visited : list ident) {struct fuel} : bool :=
+  match fuel with
+  | O => false
+  | S fuel' =>
+      if ident_eq current target then true
+      else if in_ident_list current visited then false
+      else
+        match List.find (fun p => ident_eq (pou_name_spec p) current) pous with
+        | Some p =>
+            List.existsb (fun c =>
+              dfs_reaches fuel' pous target c (current :: visited))
+              (callees_of_pou p)
+        | None => false
+        end
+  end.
+
 Definition no_recursive_calls (p : st_program) : Prop :=
-  True.
+  let fuel := List.length p.(pou_list) in
+  List.forallb (fun pou =>
+    let name := pou_name_spec pou in
+    negb (List.existsb (fun c =>
+      ident_eq c name ||
+      dfs_reaches fuel p.(pou_list) name c [name]
+    ) (callees_of_pou pou))
+  ) p.(pou_list) = true.
 
-(* 函数无副作用：SafeST 子集保证 *)
-Definition all_functions_pure (p : st_program) : Prop := True.
+(* --- 4. 函数无副作用 --- *)
 
-(* 循环有界性：SafeST 子集保证所有循环有编译期上界 *)
-Definition all_loops_bounded (p : st_program) : Prop := True.
+Fixpoint local_writable_names (decls : list st_var_decl) : list ident :=
+  match decls with
+  | nil => nil
+  | d :: rest =>
+      match d.(var_dir) with
+      | D_LOCAL => d.(var_name) :: local_writable_names rest
+      | _ => local_writable_names rest
+      end
+  end.
 
-(* 程序良构：解析器+类型检查器保证 *)
+Fixpoint writable_ok_stmt (writable : list ident) (s : st_stmt) : bool :=
+  match s with
+  | S_ASSIGN x _ => in_ident_list x writable
+  | S_ARRAY_ASSIGN x _ _ => in_ident_list x writable
+  | S_IF _ tb eb =>
+      List.forallb (writable_ok_stmt writable) tb &&
+      match eb with Some stmts => List.forallb (writable_ok_stmt writable) stmts
+                    | None => true end
+  | S_CASE _ brs def =>
+      List.forallb (fun br =>
+        match br with CASE_ELEM _ body =>
+          List.forallb (writable_ok_stmt writable) body
+        end) brs &&
+      match def with Some stmts => List.forallb (writable_ok_stmt writable) stmts
+                    | None => true end
+  | S_FOR v _ _ _ body =>
+      in_ident_list v writable && List.forallb (writable_ok_stmt writable) body
+  | S_WHILE _ body => List.forallb (writable_ok_stmt writable) body
+  | S_REPEAT body _ => List.forallb (writable_ok_stmt writable) body
+  | S_FB_CALL _ _ | S_RETURN | S_EXIT => true
+  end.
+
+Definition all_functions_pure (p : st_program) : Prop :=
+  List.forallb (fun pou =>
+    match pou with
+    | P_FUNCTION name _ decls body =>
+        List.forallb (writable_ok_stmt (name :: local_writable_names decls)) body
+    | _ => true
+    end
+  ) p.(pou_list) = true.
+
+(* --- 5. 循环有界性 --- *)
+
+Fixpoint is_constant_int_expr (e : st_expr) : bool :=
+  match e with
+  | E_LIT (L_INT _) => true
+  | E_UNARY_OP U_NEG e1 => is_constant_int_expr e1
+  | _ => false
+  end.
+
+Fixpoint for_bounds_ok_stmt (s : st_stmt) : bool :=
+  match s with
+  | S_FOR _ start finish mstep body =>
+      is_constant_int_expr start &&
+      is_constant_int_expr finish &&
+      (match mstep with Some step => is_constant_int_expr step
+                       | None => true end) &&
+      List.forallb for_bounds_ok_stmt body
+  | S_IF _ tb eb =>
+      List.forallb for_bounds_ok_stmt tb &&
+      match eb with Some stmts => List.forallb for_bounds_ok_stmt stmts
+                    | None => true end
+  | S_CASE _ brs def =>
+      List.forallb (fun br =>
+        match br with CASE_ELEM _ body =>
+          List.forallb for_bounds_ok_stmt body
+        end) brs &&
+      match def with Some stmts => List.forallb for_bounds_ok_stmt stmts
+                    | None => true end
+  | S_WHILE _ body => List.forallb for_bounds_ok_stmt body
+  | S_REPEAT body _ => List.forallb for_bounds_ok_stmt body
+  | S_ASSIGN _ _ | S_ARRAY_ASSIGN _ _ _ | S_FB_CALL _ _
+  | S_RETURN | S_EXIT => true
+  end.
+
+Definition all_loops_bounded (p : st_program) : Prop :=
+  List.forallb (fun pou =>
+    match pou with
+    | P_FUNCTION _ _ _ body => List.forallb for_bounds_ok_stmt body
+    | P_PROGRAM _ _ body => List.forallb for_bounds_ok_stmt body
+    | P_FUNCTION_BLOCK _ _ body => List.forallb for_bounds_ok_stmt body
+    end
+  ) p.(pou_list) = true.
+
+(* 程序良构 *)
 Definition well_formed_program (p : st_program) : Prop :=
-  (* 1. 无重复声明 *)
   no_duplicate_declarations p /\
-  (* 2. 所有引用已声明 *)
   all_refs_declared p /\
-  (* 3. 无递归调用 *)
   no_recursive_calls p /\
-  (* 4. 函数无副作用 *)
   all_functions_pure p /\
-  (* 5. 所有循环有界 *)
-  all_loops_bounded p
-.
+  all_loops_bounded p.

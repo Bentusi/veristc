@@ -214,8 +214,8 @@ EXTRACTION_FILE = extraction/extraction.v
 SPEC_VO = $(addprefix $(VERISTC_DIR)/, $(SPEC_FILES:.v=.vo))
 SRC_VO  = $(addprefix $(VERISTC_DIR)/, $(SRC_FILES:.v=.vo))
 EXTR_VO = $(addprefix $(VERISTC_DIR)/, $(EXTRACTION_FILE:.v=.vo))
-COMPILER_VO = $(VERISTC_DIR)/spec/compiler_correctness.vo
-COMPILER_SRC = $(VERISTC_DIR)/spec/compiler_correctness.v
+COMPILER_VO = $(VERISTC_DIR)/src/compiler_correctness.vo
+COMPILER_SRC = $(VERISTC_DIR)/src/compiler_correctness.v
 
 # 顶层目标：构建所有 .vo 文件
 coq: $(SPEC_VO) $(SRC_VO) $(COMPILER_VO) $(EXTR_VO)
@@ -236,7 +236,7 @@ $(VERISTC_DIR)/extraction/%.vo: $(VERISTC_DIR)/extraction/%.v
 # ── 依赖关系 ──
 $(COMPILER_VO): $(COMPILER_SRC) $(SPEC_VO) $(SRC_VO)
 	@echo "  [ROQC] $<"
-	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) spec/compiler_correctness.v
+	@cd $(VERISTC_DIR) && $(ROQC) $(ROQCFLAGS) src/compiler_correctness.v
 
 $(VERISTC_DIR)/spec/safest.vo:        $(VERISTC_DIR)/spec/safeasm.vo
 $(VERISTC_DIR)/spec/st_semantics.vo:  $(VERISTC_DIR)/spec/safest.vo

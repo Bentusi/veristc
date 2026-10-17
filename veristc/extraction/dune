@@ -1,13 +1,35 @@
 ; VeriSTC extraction
 ; Build OCaml executable from extracted code
 
-(executable
- (name veristc)
- (public_name veristc)
- (modules 
-   veristc_main
-   PrimFloat
-   safeasm safest st_semantics function_semantics asm_semantics
-   encoder lexer parser inline desugar analysis typechecker function_check codegen global_codegen)
- (libraries str)
- (flags (:standard -w -26-27)))
+(rocq.extraction
+ (prelude extraction)
+ (extracted_files
+   veristc_src.lexer
+   veristc_src.parser
+   veristc_src.inline
+   veristc_src.desugar
+   veristc_src.typechecker
+   veristc_src.function_check
+   veristc_src.codegen
+   veristc_src.global_codegen
+   veristc_src.analysis
+   veristc_src.encoder
+   veristc_spec.safeasm
+   veristc_spec.safest
+   veristc_spec.st_semantics
+   veristc_spec.function_semantics
+   veristc_spec.asm_semantics
+   veristc_src.compiler_correctness)
+ (theories veristc_spec veristc_src))
+
+; Temporarily disabled for testing extraction
+; (executable
+;  (name veristc)
+;  (public_name veristc)
+;  (modules 
+;    veristc_main
+;    PrimFloat
+;    safeasm safest st_semantics function_semantics asm_semantics
+;    encoder lexer parser inline desugar analysis typechecker function_check codegen global_codegen)
+;  (libraries str)
+;  (flags (:standard -w -26-27)))

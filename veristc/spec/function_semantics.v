@@ -562,6 +562,110 @@ Proof.
 Qed.
 
 (* ================================================================
+   WS-D.2b: eval_expr_fn_flat — 桥接 st_state 与 st_env 的燃料有界求值。
+
+   将 st_semantics.eval_expr 的函数调用桩（E_FUNC_CALL → ST_V_INT 0）
+   和质量运算桩（Q_VALUE → ST_V_INT 0）替换为真实语义：
+   - E_FUNC_CALL 委托给 call_function_fn
+   - Q_STATUS/Q_GOOD/Q_BAD/Q_VALUE 查询质量表
+   - 其余表达式与 eval_expr_fn 一致
+   ================================================================ *)
+
+Definition state_to_env (s : st_state) : st_env := s.(st_vars).
+
+Fixpoint eval_exprs_fn_flat
+         (fuel : nat) (pous : list st_pou) (s : st_state)
+         (es : list st_expr) {struct fuel} : option (list st_value) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match es with
+      | nil => Some nil
+      | e :: rest =>
+          match eval_expr_fn_flat fuel' pous s e,
+                eval_exprs_fn_flat fuel' pous s rest with
+          | Some v, Some vs => Some (v :: vs)
+          | _, _ => None
+          end
+      end
+  end
+
+with eval_expr_fn_flat
+       (fuel : nat) (pous : list st_pou) (s : st_state)
+       (e : st_expr) {struct fuel} : option st_value :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match e with
+      | E_QUALITY_OP op args =>
+          match op with
+          | Q_STATUS =>
+              match args with
+              | [E_VAR id] =>
+                  Some (ST_V_INT (lookup_quality s.(st_quality) id))
+              | _ => None
+              end
+          | Q_VALUE =>
+              match args with
+              | [E_VAR id] => lookup_var s.(st_vars) id
+              | _ => None
+              end
+          | Q_GOOD =>
+              match args with
+              | [E_VAR id] =>
+                  Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 0))
+              | _ => None
+              end
+          | Q_BAD =>
+              match args with
+              | [E_VAR id] =>
+                  Some (ST_V_BOOL (lookup_quality s.(st_quality) id =? 1))
+              | _ => None
+              end
+          | _ => None
+          end
+      | E_ARRAY_ACCESS arr idx =>
+          match eval_expr_fn_flat fuel' pous s arr with
+          | Some _ =>
+              match eval_expr_fn_flat fuel' pous s idx with
+              | Some (ST_V_INT _) => Some (ST_V_INT 0)
+              | _ => None
+              end
+          | _ => None
+          end
+      | _ => eval_expr_fn fuel' pous (state_to_env s) e
+      end
+  end.
+
+(* 纯表达式判定：不含 E_FUNC_CALL 和 E_QUALITY_OP *)
+Fixpoint is_pure_expr (e : st_expr) : bool :=
+  match e with
+  | E_FUNC_CALL _ _ => false
+  | E_QUALITY_OP _ _ => false
+  | E_UNARY_OP _ e1 => is_pure_expr e1
+  | E_BIN_OP _ e1 e2 | E_COMP _ e1 e2
+  | E_AND e1 e2 | E_OR e1 e2 | E_XOR e1 e2
+  | E_ARRAY_ACCESS e1 e2 =>
+      is_pure_expr e1 && is_pure_expr e2
+  | _ => true
+  end.
+
+(* 注：eval_expr_fn_flat 对纯表达式的兼容性（is_pure_expr e = true →
+   eval_expr_fn_flat fuel pous s e = eval_expr s e，当 fuel 充足时）
+   将在 Gap 1 多 POU 语义保持定理中作为辅助引理建立。
+   需要燃料充足条件 fuel >= expr_depth e，因为 eval_expr_fn 是燃料有界的。 *)
+
+(* lookup_env 与 lookup_var 结构一致，在相同输入上返回值相同。 *)
+Lemma lookup_env_eq_lookup_var :
+  forall (env : list (ident * st_value)) (x : ident),
+    lookup_env env x = lookup_var env x.
+Proof.
+  induction env as [|hd rest IH]; intros x.
+  - reflexivity.
+  - destruct hd as [y v]. simpl. rewrite IH. reflexivity.
+Qed.
+
+(* ================================================================
    WS-D.2a: 有界 FOR 循环的终止度量（source-level）。
 
    出厂管线仅放行常数界的 FOR（function_check.v），desugar 后循环统一

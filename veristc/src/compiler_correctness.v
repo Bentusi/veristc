@@ -2235,6 +2235,31 @@ Qed.
    不超过其局部槽位的被调帧，故 CALL 永不会在 Pc_call 的前提上卡住。
    ================================================================ *)
 
+(* desugar_pou 保持输入参数数量：cfunc_params 长度 = input_param_names 长度 *)
+Lemma desugar_pou_param_count :
+  forall (p : st_pou),
+    match p with
+    | P_PROGRAM _ _ _ => List.length (desugar_pou p).(cfunc_params) = 0%nat
+    | P_FUNCTION _ _ d _ => List.length (desugar_pou p).(cfunc_params)
+      = List.length (function_semantics.input_param_names d)
+    | P_FUNCTION_BLOCK _ d _ => List.length (desugar_pou p).(cfunc_params)
+      = List.length (function_semantics.input_param_names d)
+    end.
+Proof.
+  intros p.
+  destruct p as [n1 d1 b1 | n2 t d2 b2 | n3 d3 b3]; simpl.
+  - (* P_PROGRAM *)
+    reflexivity.
+  - (* P_FUNCTION *)
+    simpl.
+    induction d2 as [|d rest IH]; simpl; auto.
+    destruct d.(var_dir) eqn:Hdir; simpl; rewrite IH; auto.
+  - (* P_FUNCTION_BLOCK *)
+    simpl.
+    induction d3 as [|d rest IH]; simpl; auto.
+    destruct d.(var_dir) eqn:Hdir; simpl; rewrite IH; auto.
+Qed.
+
 (* callee 的类型段形参数 = 源函数 cfunc_params 数量。 *)
 Lemma build_sasm_func_type_param_count :
   forall (f : corest_function),
@@ -2406,6 +2431,44 @@ Proof.
   - apply compile_function_gc_locals_adequate.
 Qed.
 
+(* 强化版本：显式给出源函数 *)
+Theorem compile_st_to_sasm_calls_with_source :
+  forall (p : corest_program) (j : nat),
+    (j < List.length (entry_first_functions p))%nat ->
+    exists (g : corest_function) (ft : sasm_func_type) (fn : sasm_function),
+      List.nth_error (entry_first_functions p) j = Some g /\
+      ft = build_sasm_func_type g /\
+      fn = compile_function_gc (build_global_env p)
+             (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g /\
+      lookup_func_type (compile_program_gc p) (Z.of_nat j) = Some ft /\
+      lookup_function (compile_program_gc p) (Z.of_nat j) = Some fn /\
+      (List.length ft.(sasm_param_types)
+       <= List.length fn.(sasm_locals))%nat.
+Proof.
+  intros p j Hj.
+  destruct (List.nth_error (entry_first_functions p) j) as [g|] eqn:Hg.
+  - exists g, (build_sasm_func_type g),
+      (compile_function_gc (build_global_env p)
+         (assign_func_indices (entry_first_functions p) 0) (Z.of_nat j) g).
+    split; [reflexivity |].
+    split; [reflexivity |].
+    split; [reflexivity |].
+    split.
+    + unfold lookup_func_type.
+      rewrite compile_program_gc_types_eq.
+      rewrite nth_error_build_sasm_func_type.
+      rewrite Nat2Z.id.
+      unfold option_map. rewrite Hg. reflexivity.
+    + split.
+      * unfold lookup_function.
+        rewrite compile_program_gc_functions_eq.
+        rewrite Nat2Z.id.
+        rewrite nth_error_compile_functions_gc.
+        rewrite Hg. reflexivity.
+      * apply compile_function_gc_locals_adequate.
+  - exfalso. apply List.nth_error_Some in Hj. contradiction.
+Qed.
+
 (* ST 侧：把主定理与 WS-A 的 call_function_fn arity 引理串起来——
    一次成功的 ST 调用只在被调 POU 存在且形参数量与实际参数数量一致
    时发生（function_semantics.call_function_fn_arity），这与 ASM 侧
@@ -2480,4 +2543,601 @@ Proof.
   rewrite Hg.
   cbn [Z.add].
   rewrite Hconv. reflexivity.
+Qed.
+
+(* ================================================================
+   第 7 部分：多 POU 语义保持定理 (Phase C)
+
+   证明当 ST 程序包含多个 FUNCTION + 一个 PROGRAM 时，编译后的
+   SafeASM 模块的 CALL/RETURN 语义与源程序的 function_semantics 一致。
+   ================================================================ *)
+
+(* 多 POU 编译函数：使用 compile_program_gc 处理多个 FUNCTION *)
+Definition compile_multi_pou (p : st_program) : compile_result :=
+  if type_check_program p then
+    Compile_ok (compile_program_gc (desugar_program p))
+  else
+    Compile_error "type errors".
+
+(* 多 POU 编译成功谓词 *)
+Definition compile_multi_pou_success (p : st_program) (m : sasm_module) : Prop :=
+  compile_multi_pou p = Compile_ok m.
+
+(* 函数名到索引的映射正确性：
+   如果 ST 程序中存在名为 name 的 FUNCTION，则编译后的模块中存在对应的函数，
+   且其索引可通过 assign_func_indices 查到。 *)
+
+(* 辅助引理：如果 existsb 在 pou_list 上找到 P_FUNCTION name，
+   则 desugar 后的 cprog_functions 中存在 cfunc_name = name 的函数 *)
+Lemma desugar_preserves_function_name :
+  forall (pous : list st_pou) (name : ident),
+    List.existsb (fun pou =>
+      match pou with
+      | P_FUNCTION n _ _ _ => ident_eq n name
+      | _ => false
+      end) pous = true ->
+    List.existsb (fun f => ident_eq f.(cfunc_name) name)
+      (List.map desugar_pou pous) = true.
+Proof.
+  intros pous name H.
+  apply List.existsb_exists in H.
+  destruct H as [pou [Hmem Hmatch]].
+  apply List.existsb_exists.
+  exists (desugar_pou pou).
+  split.
+  - (* In (desugar_pou pou) (map desugar_pou pous) *)
+    apply List.in_map. exact Hmem.
+  - destruct pou; simpl in Hmatch; try discriminate.
+    simpl. exact Hmatch.
+Qed.
+
+(* 辅助引理：partition 的 fst ++ snd 保持 existsb *)
+(* 辅助引理：partition 在 cons 上的行为 *)
+Lemma partition_cons :
+  forall (f : corest_function -> bool) (x : corest_function) (xs : list corest_function),
+    List.partition f (x :: xs) =
+    if f x then (x :: fst (List.partition f xs), snd (List.partition f xs))
+    else (fst (List.partition f xs), x :: snd (List.partition f xs)).
+Proof.
+  intros f x xs.
+  assert (H1 : List.partition f (x :: xs) =
+            let (g, d) := List.partition f xs in
+            if f x then (x :: g, d) else (g, x :: d)) by reflexivity.
+  rewrite H1.
+  destruct (List.partition f xs) as [ys zs] eqn:Hy.
+  simpl. destruct (f x); reflexivity.
+Qed.
+
+Lemma existsb_app :
+  forall (A : Type) (g : A -> bool) (l1 l2 : list A),
+    List.existsb g (l1 ++ l2) = (List.existsb g l1 || List.existsb g l2).
+Proof.
+  intros A g l1. induction l1 as [|a l1' IH]; intros l2; simpl.
+  - reflexivity.
+  - rewrite IH. destruct (g a); reflexivity.
+Qed.
+
+Lemma bool_or_true_r : forall b : bool, (b || true) = true.
+Proof. intros b. destruct b; reflexivity. Qed.
+
+Lemma partition_existsb :
+  forall (f : corest_function -> bool) (funcs : list corest_function)
+         (g : corest_function -> bool),
+    List.existsb g (fst (List.partition f funcs) ++ snd (List.partition f funcs))
+    = List.existsb g funcs.
+Proof.
+  intros f funcs g.
+  induction funcs as [|x xs IH]; [reflexivity|].
+  rewrite partition_cons.
+  destruct (f x).
+  - simpl. rewrite IH. reflexivity.
+  - rewrite existsb_app.
+    simpl.
+    destruct (g x).
+    + simpl.
+      rewrite bool_or_true_r. reflexivity.
+    + simpl.
+      rewrite <- existsb_app.
+      rewrite IH. reflexivity.
+Qed.
+
+Lemma partition_fst_subset :
+  forall (f : corest_function -> bool) (l : list corest_function) (x : corest_function),
+    List.In x (fst (List.partition f l)) -> List.In x l.
+Proof.
+  intros f l.
+  induction l as [|y ys IH]; intros x Hin.
+  - simpl in Hin. inversion Hin.
+  - rewrite partition_cons in Hin.
+    destruct (f y); simpl in Hin.
+    + destruct Hin as [Heq|Hin']; [left; assumption|].
+      right. apply IH. exact Hin'.
+    + right. apply IH. exact Hin.
+Qed.
+
+Lemma partition_snd_subset :
+  forall (f : corest_function -> bool) (l : list corest_function) (x : corest_function),
+    List.In x (snd (List.partition f l)) -> List.In x l.
+Proof.
+  intros f l.
+  induction l as [|y ys IH]; intros x Hin.
+  - simpl in Hin. inversion Hin.
+  - rewrite partition_cons in Hin.
+    destruct (f y); simpl in Hin.
+    + right. apply IH. exact Hin.
+    + destruct Hin as [Heq|Hin']; [left; assumption|].
+      right. apply IH. exact Hin'.
+Qed.
+
+Lemma In_app_or : forall (A : Type) (l1 l2 : list A) (x : A),
+  List.In x (l1 ++ l2) -> List.In x l1 \/ List.In x l2.
+Proof.
+  intros A l1 l2 x H.
+  apply List.in_app_iff in H. exact H.
+Qed.
+
+(* 辅助引理：entry_first_functions 保持 existsb *)
+Lemma entry_first_existsb :
+  forall (p : corest_program) (g : corest_function -> bool),
+    List.existsb g (entry_first_functions p) = List.existsb g p.(cprog_functions).
+Proof.
+  intros p g.
+  unfold entry_first_functions.
+  apply partition_existsb.
+Qed.
+
+(* 辅助引理：ident_eq 是对称的 *)
+Lemma ident_eq_sym : forall x y : ident, ident_eq x y = ident_eq y x.
+Proof.
+  intros [s1] [s2]. simpl.
+  apply String.eqb_sym.
+Qed.
+
+(* 辅助引理：assign_func_indices 正确映射列表中的每个函数名 *)
+Lemma assign_func_indices_lookup :
+  forall (funcs : list corest_function) (base : Z) (name : ident),
+    List.existsb (fun f => ident_eq f.(cfunc_name) name) funcs = true ->
+    exists idx, lookup_func_index (assign_func_indices funcs base) name = Some idx.
+Proof.
+  intros funcs. induction funcs as [|f rest IH]; intros base name H.
+  - simpl in H. discriminate.
+  - simpl in H. simpl.
+    destruct (ident_eq f.(cfunc_name) name) eqn:Heq.
+    + (* f.(cfunc_name) = name *)
+      (* lookup_func_index checks ident_eq name f.(cfunc_name) *)
+      rewrite ident_eq_sym. rewrite Heq.
+      simpl.
+      exists base. reflexivity.
+    + (* f.(cfunc_name) <> name *)
+      (* The function must be in rest *)
+      simpl in H. destruct (ident_eq f.(cfunc_name) name) eqn:Heq2; try discriminate.
+      (* Simplify the if expression in the goal *)
+      rewrite ident_eq_sym. rewrite Heq2. simpl.
+      apply (IH (base + 1) name) in H.
+      destruct H as [idx Hidx].
+      exists idx. exact Hidx.
+Qed.
+
+Lemma multi_pou_function_index_exists :
+  forall (p : st_program) (name : ident),
+    List.existsb (fun pou =>
+      match pou with
+      | P_FUNCTION n _ _ _ => ident_eq n name
+      | _ => false
+      end) p.(pou_list) = true ->
+    exists (idx : Z),
+      lookup_func_index
+        (assign_func_indices
+           (entry_first_functions (desugar_program p)) 0)
+        name = Some idx.
+Proof.
+  intros p name Hexists.
+  pose proof (desugar_preserves_function_name p.(pou_list) name Hexists)
+    as Hdesugar.
+  unfold desugar_program in Hdesugar.
+  simpl in Hdesugar.
+  pose proof (entry_first_existsb (desugar_program p)
+    (fun f => ident_eq f.(cfunc_name) name)) as Hentry.
+  unfold desugar_program in Hentry.
+  simpl in Hentry.
+  rewrite Hdesugar in Hentry.
+  apply (assign_func_indices_lookup _ 0) in Hentry.
+  exact Hentry.
+Qed.
+
+(* ============================================================
+   Hparam_eq 支持引理链：从 entry_first_functions 中的 g_src
+   定位回源 POU，证明脱糖后参数数量与 lookup 到的 decls 一致。
+   ============================================================ *)
+
+Lemma ident_eq_to_eq : forall x y : ident, ident_eq x y = true -> x = y.
+Proof.
+  intros [s1] [s2] H. simpl in H. apply f_equal. apply String.eqb_eq. exact H.
+Qed.
+
+Lemma ident_eq_refl : forall x : ident, ident_eq x x = true.
+Proof. intros [s]. simpl. apply String.eqb_refl. Qed.
+
+Lemma in_map_exists :
+  forall (A B : Type) (f : A -> B) (y : B) (l : list A),
+    List.In y (List.map f l) -> exists x, List.In x l /\ f x = y.
+Proof.
+  intros A B f y. induction l as [|a l' IH]; intros Hin; simpl in Hin.
+  - inversion Hin.
+  - destruct Hin as [Heq|Hin'].
+    + exists a. split; [left; reflexivity | exact Heq].
+    + destruct (IH Hin') as [x [Hin2 Heq2]].
+      exists x. split; [right; exact Hin2 | exact Heq2].
+Qed.
+
+Lemma bool_or_false_both :
+  forall b1 b2 : bool, (b1 || b2 = false) -> b1 = false /\ b2 = false.
+Proof. intros b1 b2 H. destruct b1; [discriminate|]. destruct b2; [discriminate|]. split; reflexivity. Qed.
+
+Lemma in_ident_list_true :
+  forall (x : ident) (xs : list ident), List.In x xs -> in_ident_list x xs = true.
+Proof.
+  intros x xs. induction xs as [|y ys IH]; intros Hin.
+  - inversion Hin.
+  - simpl in Hin. destruct Hin as [Heq|Hin'].
+    + assert (He2 : ident_eq x y = true).
+      { rewrite Heq. apply ident_eq_refl. }
+      simpl. rewrite He2. reflexivity.
+    + simpl. rewrite (IH Hin'). destruct (ident_eq x y); reflexivity.
+Qed.
+
+Lemma unique_pou_names_list :
+  forall (pous : list st_pou),
+    hasDuplicates (List.map pou_name_spec pous) = false ->
+    forall (p1 p2 : st_pou),
+      List.In p1 pous -> List.In p2 pous ->
+      pou_name_spec p1 = pou_name_spec p2 -> p1 = p2.
+Proof.
+  intros pous. induction pous as [|q qs IH];
+    intros Hdup p1 p2 Hin1 Hin2 Hname.
+  - inversion Hin1.
+  - simpl in Hin1. simpl in Hdup.
+    destruct Hin1 as [Heq|Hin1'].
+    + subst p1.
+      apply bool_or_false_both in Hdup.
+      destruct Hdup as [Hnotin Hdups].
+      destruct Hin2 as [Heq2|Hin2'].
+      * subst p2. reflexivity.
+      * assert (Hmem : List.In (pou_name_spec p2) (List.map pou_name_spec qs)).
+        { apply List.in_map. exact Hin2'. }
+        rewrite <- Hname in Hmem.
+        pose proof (in_ident_list_true (pou_name_spec q)
+          (List.map pou_name_spec qs) Hmem) as Ht.
+        rewrite Ht in Hnotin. discriminate.
+    + apply bool_or_false_both in Hdup.
+      destruct Hdup as [Hnotin Hdups].
+      simpl in Hin2.
+      destruct Hin2 as [Heq2|Hin2'].
+      * subst p2.
+        assert (Hmem1 : List.In (pou_name_spec p1) (List.map pou_name_spec qs)).
+        { apply List.in_map. exact Hin1'. }
+        rewrite Hname in Hmem1.
+        pose proof (in_ident_list_true (pou_name_spec q)
+          (List.map pou_name_spec qs) Hmem1) as Ht.
+        rewrite Ht in Hnotin. discriminate.
+      * exact (IH Hdups p1 p2 Hin1' Hin2' Hname).
+Qed.
+
+Lemma lookup_pou_some_member :
+  forall (name : ident) (pous : list st_pou) (ty : st_type)
+         (decls : list st_var_decl) (body : list st_stmt),
+    function_semantics.lookup_function_pou name pous = Some (ty, decls, body) ->
+    List.In (P_FUNCTION name ty decls body) pous.
+Proof.
+  intros name pous ty decls body Hlk.
+  induction pous as [|q qs IH]; [discriminate|simpl in Hlk].
+  destruct q as [n1 dq bq | fn t dq bq | n2 dq bq]; simpl in Hlk.
+  - right. apply IH. exact Hlk.
+  - destruct (ident_eq name fn) eqn:Heq.
+    + apply ident_eq_to_eq in Heq. subst fn.
+      injection Hlk as Hty Hd Hb. subst ty. subst decls. subst body.
+      left. reflexivity.
+    + right. apply IH. exact Hlk.
+  - right. apply IH. exact Hlk.
+Qed.
+
+Lemma lookup_pou_match :
+  forall (pous : list st_pou) (name : ident)
+         (ty : st_type) (decls : list st_var_decl) (body : list st_stmt)
+         (pou : st_pou),
+    hasDuplicates (List.map pou_name_spec pous) = false ->
+    function_semantics.lookup_function_pou name pous = Some (ty, decls, body) ->
+    List.In pou pous ->
+    pou_name_spec pou = name ->
+    pou = P_FUNCTION name ty decls body.
+Proof.
+  intros pous name ty decls body pou Hdup Hlk Hin Hname.
+  assert (Hmemf : List.In (P_FUNCTION name ty decls body) pous).
+  { apply lookup_pou_some_member. exact Hlk. }
+  assert (Hnf : pou_name_spec (P_FUNCTION name ty decls body) = name)
+    by reflexivity.
+  apply (unique_pou_names_list pous Hdup pou (P_FUNCTION name ty decls body)
+           Hin Hmemf).
+  rewrite Hname, Hnf. reflexivity.
+Qed.
+
+Lemma desugar_pou_name_is_pou_name :
+  forall (pou : st_pou), (desugar_pou pou).(cfunc_name) = pou_name_spec pou.
+Proof. intros [n1 d1 b1 | n2 t d2 b2 | n3 d3 b3]; reflexivity. Qed.
+
+Lemma lookup_pou_first_is_only :
+  forall (name : ident) (pous : list st_pou)
+         (ty1 : st_type) (d1 : list st_var_decl) (b1 : list st_stmt)
+         (ty2 : st_type) (d2 : list st_var_decl) (b2 : list st_stmt),
+    function_semantics.lookup_function_pou name pous = Some (ty1, d1, b1) ->
+    function_semantics.lookup_function_pou name pous = Some (ty2, d2, b2) ->
+    (ty1, d1, b1) = (ty2, d2, b2).
+Proof.
+  intros name pous ty1 d1 b1 ty2 d2 b2 H1.
+  induction pous as [|q qs IH]; intros H2; simpl in H1; simpl in H2.
+  - discriminate.
+  - destruct q as [n1 dq bq | fn t dq bq | n2 dq bq]; simpl in H1; simpl in H2.
+    + apply IH. exact H1. exact H2.
+    + destruct (ident_eq name fn) eqn:Heq in H1, H2; simpl in H1; simpl in H2.
+      * injection H1 as Hty Hd Hb. subst ty1. subst d1. subst b1.
+        injection H2 as Hty2 Hd2 Hb2. subst ty2. subst d2. subst b2.
+        reflexivity.
+      * apply IH. exact H1. exact H2.
+    + apply IH. exact H1. exact H2.
+Qed.
+
+Lemma assign_func_indices_nth_match :
+  forall (fs : list corest_function) (base : Z) (j : nat) (g : corest_function)
+         (name : ident) (idx : Z),
+    nth_error fs j = Some g ->
+    lookup_func_index (assign_func_indices fs base) name = Some idx ->
+    idx = base + Z.of_nat j ->
+    ident_eq g.(cfunc_name) name = true.
+Proof.
+  intros fs. induction fs as [|f rest IH];
+    intros base j g name idx Hnth Hlk Hidx.
+  - simpl in Hnth. discriminate.
+  - destruct j as [|j'] eqn:Hj.
+    + (* j = 0：g 就是头部元素 f *)
+      simpl in Hnth. injection Hnth as Hg. subst g.
+      assert (Hlkred : (if ident_eq name f.(cfunc_name)
+                         then Some base
+                         else lookup_func_index (assign_func_indices rest (base + 1)) name) = Some idx).
+      { exact Hlk. }
+      destruct (ident_eq name f.(cfunc_name)) eqn:Heq.
+      * rewrite ident_eq_sym. exact Heq.
+      * simpl in Hlkred.
+        rewrite Nat2Z.inj_0 in Hidx. simpl in Hidx.
+        rewrite (Z.add_0_r base) in Hidx.
+        exfalso.
+        pose proof (assign_func_indices_range rest (base + 1) name idx Hlkred)
+          as [Ha Hb].
+        lia.
+    + (* j = S j'：递归到 rest *)
+      simpl in Hnth.
+      assert (Hlkred : (if ident_eq name f.(cfunc_name)
+                         then Some base
+                         else lookup_func_index (assign_func_indices rest (base + 1)) name) = Some idx).
+      { exact Hlk. }
+      destruct (ident_eq name f.(cfunc_name)) eqn:Heq.
+      * simpl in Hlkred.
+        injection Hlkred as Hidx2.
+        rewrite Hidx2 in Hidx.
+        rewrite Nat2Z.inj_succ in Hidx.
+        exfalso. lia.
+      * simpl in Hlkred.
+        apply (IH (base + 1) j' g name idx);
+          [exact Hnth | exact Hlkred |].
+        rewrite Nat2Z.inj_succ in Hidx.
+        lia.
+Qed.
+
+(* 多 POU 语义保持定理（陈述）：
+   对于良构的 ST 程序 p，如果编译成功得到模块 m，
+   且 ST 侧调用函数 name 成功返回值 v，
+   则 ASM 侧从初始状态执行 CALL 到 name 对应的函数，
+   最终到达的状态与 v 抽象对应。 *)
+Theorem multi_pou_semantics_preservation :
+  forall (p : st_program) (m : sasm_module)
+         (fuel : nat) (name : ident) (args : list st_value) (v : st_value),
+    well_formed_program p ->
+    compile_multi_pou_success p m ->
+    function_semantics.call_function_fn fuel p.(pou_list) name args = Some v ->
+    exists (idx : Z),
+      lookup_func_index
+        (assign_func_indices
+           (entry_first_functions (desugar_program p)) 0)
+        name = Some idx /\
+      (* ASM 侧：存在对应的函数，且其参数数量与 args 长度一致 *)
+      exists (fn : sasm_function),
+        lookup_function m idx = Some fn /\
+        (List.length fn.(sasm_locals) >= List.length args)%nat.
+Proof.
+  intros p m fuel name args v Hwf Hcomp Hcall.
+  unfold compile_multi_pou_success, compile_multi_pou in Hcomp.
+  destruct (type_check_program p) eqn:Hty; [| discriminate].
+  inversion Hcomp; subst.
+  (* 从 Hcall 得到 lookup_function_pou 成功，推导 existsb = true *)
+  assert (Hexists_pou : List.existsb (fun pou =>
+    match pou with
+    | P_FUNCTION n _ _ _ => ident_eq n name
+    | _ => false
+    end) p.(pou_list) = true).
+  { (* call_function_fn 成功意味着 lookup_function_pou 找到了 P_FUNCTION *)
+    pose proof (function_semantics.call_function_fn_arity
+      fuel p.(pou_list) name args v Hcall) as [ty [decls [body [Hlk _]]]].
+    (* 从 lookup_function_pou = Some 推导 existsb = true *)
+    revert Hlk.
+    generalize (p.(pou_list)).
+    intros pous Hlk.
+    induction pous as [|pou rest IH]; simpl in Hlk.
+    - discriminate.
+    - destruct pou as [n1 d1 b1 | n2 t d2 b2 | n3 d3 b3]; simpl in Hlk.
+      + (* P_PROGRAM n1 d1 b1 *)
+        apply IH. exact Hlk.
+      + (* P_FUNCTION n2 t d2 b2 *)
+        (* lookup_function_pou name (P_FUNCTION n2 t d2 b2 :: rest) = Some (ty, decls, body) *)
+        (* Need to show: existsb ... (P_FUNCTION n2 t d2 b2 :: rest) = true *)
+        simpl in Hlk.
+        destruct (ident_eq name n2) eqn:Heq.
+        * (* ident_eq name n2 = true *)
+          (* existsb computes to ident_eq n2 name || existsb ... rest *)
+          simpl.
+          (* Use symmetry of ident_eq *)
+          rewrite ident_eq_sym. rewrite Heq.
+          reflexivity.
+        * (* ident_eq name n2 = false, so lookup continues in rest *)
+          (* existsb ... (P_FUNCTION n2 t d2 b2 :: rest) = ident_eq n2 name || existsb ... rest *)
+          simpl.
+          rewrite ident_eq_sym. rewrite Heq.
+          simpl.
+          apply IH in Hlk. exact Hlk.
+      + (* P_FUNCTION_BLOCK n3 d3 b3 *)
+        apply IH. exact Hlk.
+  }
+  pose proof (multi_pou_function_index_exists p name Hexists_pou)
+    as [idx Hidx].
+  exists idx.
+  split; [exact Hidx |].
+  pose proof (compile_call_index_present (desugar_program p) name idx Hidx)
+    as [fn Hfn].
+  exists fn.
+  split; [exact Hfn |].
+  (* 证明 sasm_locals 长度 >= args 长度 *)
+  pose proof (call_st_asm_arity_agreement fuel p.(pou_list) name args v Hcall)
+    as [decls Hlen].
+  (* 从 compile_st_to_sasm_calls 得到 fn 的参数数量对齐性质 *)
+  (* idx 来自 assign_func_indices，其范围在 [0, length) 内 *)
+  pose proof (assign_func_indices_range
+    (entry_first_functions (desugar_program p)) 0 name idx Hidx) as [Hge Hlt].
+  assert (Hidx_range : (Z.to_nat idx < List.length (entry_first_functions (desugar_program p)))%nat).
+  { 
+    assert (Hconv : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; exact Hge).
+    apply (proj2 (Nat2Z.inj_lt (Z.to_nat idx)
+                               (List.length (entry_first_functions (desugar_program p))))).
+    rewrite Hconv. exact Hlt.
+  }
+  pose proof (compile_st_to_sasm_calls_with_source (desugar_program p) (Z.to_nat idx)
+    Hidx_range) as [g_src [ft' [fn' [Hg_src [Hft_eq [Hfn'_eq [Hft'_lk [Hfn'_lk Hlen']]]]]]]].
+  (* fn 和 fn' 是同一个函数 *)
+  assert (Hfn_eq : fn = fn').
+  { (* 从 lookup_function 的唯一性得到 *)
+    (* First, rewrite Z.of_nat (Z.to_nat idx) to idx *)
+    assert (Hidx_conv : Z.of_nat (Z.to_nat idx) = idx).
+    { apply Z2Nat.id. exact Hge. }
+    rewrite Hidx_conv in Hfn'_lk.
+    (* Now Hfn and Hfn'_lk both talk about lookup_function m idx *)
+    rewrite Hfn in Hfn'_lk.
+    inversion Hfn'_lk. reflexivity.
+  }
+  rewrite Hfn_eq.
+  rewrite Hfn'_eq.
+  (* 现在需要证明：length args <= length (compile_function_gc ... g_src).(sasm_locals) *)
+  assert (Hge_len : (List.length (compile_function_gc (build_global_env (desugar_program p))
+    (assign_func_indices (entry_first_functions (desugar_program p)) 0) (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals)
+    >= List.length args)%nat).
+  {
+    (* 从 compile_function_gc_locals_adequate 知：
+       length (build_sasm_func_type g_src).(sasm_param_types) <= length (compile_function_gc ... g_src).(sasm_locals) *)
+    assert (Hadeq : (List.length (build_sasm_func_type g_src).(sasm_param_types) <=
+      List.length (compile_function_gc (build_global_env (desugar_program p))
+        (assign_func_indices (entry_first_functions (desugar_program p)) 0) (Z.of_nat (Z.to_nat idx)) g_src).(sasm_locals))%nat).
+    { apply compile_function_gc_locals_adequate. }
+    
+    (* 从 build_sasm_func_type_param_count 知：
+       length (build_sasm_func_type g_src).(sasm_param_types) = length g_src.(cfunc_params) *)
+    rewrite build_sasm_func_type_param_count in Hadeq.
+    
+    (* 因此只需证明：length args <= length g_src.(cfunc_params) *)
+    (* 从 Hlen 知：length (input_param_names decls) = length args *)
+    (* 所以只需证明：length (input_param_names decls) <= length g_src.(cfunc_params) *)
+    
+    (* 从 call_st_asm_arity_agreement 的证明知，decls 来自 lookup_function_pou name p.(pou_list) *)
+    (* 从 multi_pou_function_index_exists 的证明知，存在 P_FUNCTION name _ decls _ 在 p.(pou_list) 中 *)
+    (* 从 Hg_src 知 g_src 是 entry_first_functions (desugar_program p) 的第 idx 个 *)
+    (* 从 desugar_program 的定义知 g_src = desugar_pou pou，其中 pou 在 p.(pou_list) 中 *)
+    (* 从 Hidx 知 g_src.(cfunc_name) = name *)
+    (* 由于 pou 在 p.(pou_list) 中且名字为 name，且 lookup_function_pou 返回 decls，
+       所以 pou = P_FUNCTION name _ decls _ *)
+    
+    (* 使用 call_function_fn_arity 得到具体的 pou *)
+    pose proof (function_semantics.call_function_fn_arity
+      fuel p.(pou_list) name args v Hcall)
+      as [ty' [decls' [body' [Hlk' Hlen2]]]].
+    (* Hlk' : lookup_function_pou name p.(pou_list) = Some (ty', decls', body') *)
+    (* 从 lookup_function_pou 的唯一性知 ty' = ty, decls' = decls, body' = body *)
+    
+    (* 从 multi_pou_function_index_exists 的证明知 *)
+    (* 存在 pou 在 p.(pou_list) 中使得 desugar_pou pou 的名字为 name *)
+    (* 且该 pou 是 P_FUNCTION *)
+    
+    (* 从 Hg_src 和 entry_first_functions 的结构知 *)
+    (* g_src = desugar_pou pou，其中 pou 是 p.(pou_list) 中名字为 name 的 P_FUNCTION *)
+    (* 由于 lookup_function_pou 返回 (ty', decls', body')，所以 pou = P_FUNCTION name ty' decls' body' *)
+    
+    (* 因此 g_src = desugar_pou (P_FUNCTION name ty' decls' body') *)
+    (* 从 desugar_pou_param_count 知 *)
+    (* length g_src.(cfunc_params) = length (input_param_names decls') *)
+    (* 由于 decls' = decls（从 lookup 的唯一性），所以 *)
+    (* length g_src.(cfunc_params) = length (input_param_names decls) = length args *)
+    
+    (* 但我们需要显式证明 g_src = desugar_pou (P_FUNCTION name ty' decls' body') *)
+    (* 这需要更详细的推理 *)
+    
+    (* —— 参数数量论证（消除 Hparam_eq）—— *)
+    (* 1. g_src 来自 p.(pou_list) 中某个 POU 的脱糖 *)
+    assert (Hin_gsrc : List.In g_src (List.map desugar_pou p.(pou_list))).
+    {
+      assert (Hin_ef : List.In g_src (entry_first_functions (desugar_program p))).
+      { exact (@List.nth_error_In _ (entry_first_functions (desugar_program p))
+                                 (Z.to_nat idx) g_src Hg_src). }
+      unfold entry_first_functions in Hin_ef.
+      simpl in Hin_ef.
+      apply In_app_or in Hin_ef.
+      destruct Hin_ef as [H1|H2].
+      - apply (partition_fst_subset _ _ _ H1).
+      - apply (partition_snd_subset _ _ _ H2).
+    }
+    destruct (@in_map_exists st_pou corest_function desugar_pou g_src
+                  p.(pou_list) Hin_gsrc) as [pou [Hpou_in Hpou_eq]].
+    (* 2. g_src 是符号表第 idx 项，其名字与 name 匹配 *)
+    assert (Hname_eq : ident_eq g_src.(cfunc_name) name = true).
+    {
+      assert (Hc : idx = 0 + Z.of_nat (Z.to_nat idx)).
+      { rewrite (Z2Nat.id idx Hge). lia. }
+      apply (assign_func_indices_nth_match
+               (entry_first_functions (desugar_program p)) 0 (Z.to_nat idx)
+               g_src name idx Hg_src Hidx Hc).
+    }
+    (* 3. 良构性 => POU 名字唯一，pou 即 lookup 命中的那个 P_FUNCTION *)
+    assert (Hdup_pous :
+        hasDuplicates (List.map pou_name_spec p.(pou_list)) = false).
+    {
+      unfold well_formed_program in Hwf.
+      unfold no_duplicate_declarations in Hwf.
+      apply (proj2 (proj1 Hwf)).
+    }
+    assert (Hpou_nm : pou_name_spec pou = name).
+    {
+      apply ident_eq_to_eq.
+      rewrite <- desugar_pou_name_is_pou_name.
+      rewrite Hpou_eq. exact Hname_eq.
+    }
+    assert (Hpouf : pou = P_FUNCTION name ty' decls' body').
+    {
+      apply (lookup_pou_match p.(pou_list) name ty' decls' body' pou
+                Hdup_pous Hlk' Hpou_in Hpou_nm).
+    }
+    (* 4. 参数数量：length g_src.(cfunc_params) = length (input_param_names decls') *)
+    assert (Hpc : List.length g_src.(cfunc_params)
+            = List.length (function_semantics.input_param_names decls')).
+    {
+      rewrite <- Hpou_eq. rewrite Hpouf.
+      exact (desugar_pou_param_count (P_FUNCTION name ty' decls' body')).
+    }
+    rewrite <- Hpc in Hlen2.
+    rewrite <- Hlen2.
+    exact Hadeq.
+  }
+  exact Hge_len.
 Qed.

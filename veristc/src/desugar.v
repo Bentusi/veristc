@@ -515,19 +515,10 @@ Fixpoint corest_eval_expr (env : corest_eval_env) (e : corest_expr) : option st_
       corest_eval_logic_xor
         (corest_eval_expr env e1) (corest_eval_expr env e2)
   | CE_FUNC_CALL f args =>
-      Some (ST_V_INT 0)
+      None  (* 函数调用不可编译期折叠，保留至运行时 *)
 
   | CE_QUALITY_OP op args =>
-      match op with
-      | Q_STATUS =>
-          match args with
-          | [CE_VAR id] => Some (ST_V_INT 0)  (* 简化 *)
-          | _ => Some (ST_V_INT 0)
-          end
-      | Q_GOOD => Some (ST_V_BOOL true)
-      | Q_BAD => Some (ST_V_BOOL false)
-      | _ => Some (ST_V_INT 0)
-      end
+      None  (* 质量运算依赖运行时质量表，不可编译期折叠 *)
   end.
 
 Lemma corest_eval_expr_comp :
@@ -548,6 +539,119 @@ Lemma corest_eval_expr_or :
     corest_eval_expr env (CE_OR e1 e2) =
     corest_eval_logic_or (corest_eval_expr env e1) (corest_eval_expr env e2).
 Proof. reflexivity. Qed.
+
+(* ================================================================
+   燃料有界 CoreST 函数调用求值。
+
+   corest_eval_expr 对 CE_FUNC_CALL 返回 None（不可编译期折叠）。
+   当需要在编译期对函数调用进行求值时（例如多 POU 语义保持定理），
+   使用 corest_eval_expr_fn：它在燃料预算内查找函数定义、绑定参数、
+   执行函数体并返回结果变量的值。
+   ================================================================ *)
+
+Fixpoint lookup_corest_function
+         (name : ident) (funs : list corest_function)
+         : option corest_function :=
+  match funs with
+  | nil => None
+  | f :: rest =>
+      if ident_eq name f.(cfunc_name) then Some f
+      else lookup_corest_function name rest
+  end.
+
+Fixpoint corest_eval_exprs_fn
+         (fuel : nat) (funs : list corest_function)
+         (env : corest_eval_env) (es : list corest_expr)
+         {struct fuel} : option (list st_value) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match es with
+      | nil => Some nil
+      | e :: rest =>
+          match corest_eval_expr_fn fuel' funs env e,
+                corest_eval_exprs_fn fuel' funs env rest with
+          | Some v, Some vs => Some (v :: vs)
+          | _, _ => None
+          end
+      end
+  end
+
+with corest_eval_expr_fn
+       (fuel : nat) (funs : list corest_function)
+       (env : corest_eval_env) (e : corest_expr)
+       {struct fuel} : option st_value :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match e with
+      | CE_FUNC_CALL name args =>
+          match corest_eval_exprs_fn fuel' funs env args with
+          | Some vals =>
+              match lookup_corest_function name funs with
+              | Some f =>
+                  let params := List.map fst f.(cfunc_params) in
+                  if Nat.eqb (List.length params) (List.length vals) then
+                    let arg_env := List.combine params vals in
+                    let local_env :=
+                      arg_env ++
+                      List.map (fun lv => (fst lv, ST_V_INT 0))
+                        f.(cfunc_locals) in
+                    match corest_exec_stmts_fn fuel' funs local_env
+                            f.(cfunc_body) with
+                    | Some env' => lookup_var env' name
+                    | None => None
+                    end
+                  else None
+              | None => None
+              end
+          | None => None
+          end
+      | CE_QUALITY_OP _ _ => None
+      | _ => corest_eval_expr env e
+      end
+  end
+
+with corest_exec_stmts_fn
+       (fuel : nat) (funs : list corest_function)
+       (env : corest_eval_env) (stmts : list corest_stmt)
+       {struct fuel} : option corest_eval_env :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match stmts with
+      | nil => Some env
+      | CS_ASSIGN x e :: rest =>
+          match corest_eval_expr_fn fuel' funs env e with
+          | Some v =>
+              corest_exec_stmts_fn fuel' funs
+                ((x, v) :: env) rest
+          | None => None
+          end
+      | CS_IF cond then_b else_b :: rest =>
+          match corest_eval_expr_fn fuel' funs env cond with
+          | Some (ST_V_BOOL true) =>
+              match corest_exec_stmts_fn fuel' funs env then_b with
+              | Some env' => corest_exec_stmts_fn fuel' funs env' rest
+              | None => None
+              end
+          | Some (ST_V_BOOL false) =>
+              match corest_exec_stmts_fn fuel' funs env else_b with
+              | Some env' => corest_exec_stmts_fn fuel' funs env' rest
+              | None => None
+              end
+          | _ => None
+          end
+      | CS_RETURN :: _ => Some env
+      | CS_WHILE _ _ :: _ => None  (* 循环不可编译期求值 *)
+      | CS_BLOCK inner :: rest =>
+          match corest_exec_stmts_fn fuel' funs env inner with
+          | Some env' => corest_exec_stmts_fn fuel' funs env' rest
+          | None => None
+          end
+      | _ :: rest => corest_exec_stmts_fn fuel' funs env rest
+      end
+  end.
 
 Definition st_eval_expr (env : corest_eval_env) (e : st_expr) : option st_value :=
   corest_eval_expr env (desugar_expr e).

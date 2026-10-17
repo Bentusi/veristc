@@ -1,5 +1,5 @@
-(lang dune 3.22)
-(using rocq 0.12)
+(lang dune 3.24)
+(using rocq 0.13)
 (name veristc)
 
 (generate_opam_files)
@@ -16,4 +16,5 @@
  (depends
   (ocaml (>= 5.0))
   (dune (>= 3.16))
-  (rocq (>= 8.18))))
+  (rocq (>= 8.18))
+  rocq-stdlib))
