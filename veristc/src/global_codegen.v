@@ -411,8 +411,11 @@ Definition first_writable (f : corest_function) : option ident :=
   | nil => None
   end.
 
+(* 实例字段扁平全局名 = inst ++ derived_field_sep ++ field，
+   必须与 function_check.inst_field_global 的构造逐字一致，
+   否则这里的地址解析会查不到刚展开出来的全局。 *)
 Definition cat_ident (a b : ident) : ident :=
-  match a, b with ID x, ID y => ID (x ++ "_" ++ y) end.
+  match a, b with ID x, ID y => ID (x ++ derived_field_sep ++ y) end.
 
 Fixpoint find_fb_func (nm : ident) (funcs : list corest_function)
          : option corest_function :=
@@ -567,7 +570,7 @@ Fixpoint compile_expr_gc
    function_check 已保证实参形状只有两种合法来源：
      - 调用方自身的 IN_OUT 端口（透传）：其形参槽已持有地址，
        直接 LOCAL_GET 转发；
-     - 全局变量（VAR_GLOBAL 或实例展开的 inst_<field>）：压入其
+     - 全局变量（VAR_GLOBAL 或实例展开的 inst#field）：压入其
        线性地址常量，链接期由 GLOBAL_OFF 重定位（见 P2）。
    其余形状（字面量/表达式/局部变量）在检查层已被拒绝，这里以
    UNREACHABLE 保守落地，保证不会静默生成错误别名。 *)
@@ -932,7 +935,7 @@ Definition build_alias_table
    pl 为别名表：同一窗口内落在 pl 上的 I32_CONST 记为 GLOBAL_OFF 候选，
    随该 CALL 一起落地（addend = 地址 - GLOBAL_BASE），窗口外（无基址
    候选）的全局地址常量不入行——它们不属于跨模块链接点。
-   别名判定**优先于**基址判定：实例字段全局（如 inst_a1_LAST）的地址
+   别名判定**优先于**基址判定：实例字段派生名全局（如 a1#LAST）的地址
    恰是该实例的 self 基址，窗口内出现时必须按别名处理，否则会把别名
    实参误认成下一次调用的基址、同时丢掉了真正的基址行。
    精度：窗口内若有"值端口读某个被别名过的全局"（codegen 也压该全局

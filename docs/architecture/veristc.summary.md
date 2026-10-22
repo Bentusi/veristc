@@ -47,16 +47,16 @@ read_file → Lexer.lex → Parser.parse → 重名门禁 → Function_check.pre
 → Desugar.desugar_program → Analysis.analyze（递归拒绝 + 栈深门禁）
 ```
 
-命令行分派发生在**最前面**（`veristc_main.ml:488-500`，无模式参数时默认 `-a`），四条路径互不共享入口函数：
+命令行分派发生在**最前面**（`veristc_main.ml:511-524`，无模式参数时默认 `-a`），四条路径互不共享入口函数：
 
 - `-c` 与 `-g` 共用 `frontend()`，返回 `corest_program` 后分叉：
   `-c` 走 `compile_program_gc → encode_module → attach_crc32 → 写 .sasm`；
   `-g` 走 `compile_program_reloc_info / inst_info / sym_info → emit_svobj`，
-  其中 IMAGE 段复用同一条 `gc + encode` 结果（`veristc_main.ml:347`）。
-- `-a` 走 `analyze_st()`（`:443-472`），**不经过 `frontend`**，只 `printf` 四项指标不出文件。
+  其中 IMAGE 段复用同一条 `gc + encode` 结果（`veristc_main.ml:361`）。
+- `-a` 走 `analyze_st()`（`:457-495`），**不经过 `frontend`**，只 `printf` 四项指标不出文件。
 - `-x` 输入是 `.svobj`，纯 OCaml 反向走查，不读 `.st` 也不经任何 Coq 代码。
 
-一个值得注意的结构事实：`analyze_st` 与 `frontend` 是**九步逐行同构的两份实现**
+一个值得注意的结构事实：`analyze_st` 与 `frontend` 是**十步逐行同构的两份实现**
 （`:444-464` 对 `:184-209`），但 `analyze_st` 少了 `frontend:210-216` 的递归拒绝与栈深门禁，
 只把这两项打印出来。也就是说"静态分析报告通过"与"编译通过"不是同一个判据，
 且新增门禁时两处都要改 —— 这是模型里唯一被标为 `DuplicatedLogic` 的边界。
@@ -65,8 +65,8 @@ read_file → Lexer.lex → Parser.parse → 重名门禁 → Function_check.pre
 无法在一次调用内同时产出，只能跑两次编译。
 
 分层原则是"Coq 出语义、OCaml 出字节"：Coq 侧只导出扁平元数据行
-（`global_codegen.v:991,1007,1042`），排序、去重、小端定宽布局全在手写 OCaml 里
-（`veristc_main.ml:285-296,332-365`）。这与 `.svobj` 被定位为"信任+测试层、不进安全核"一致。
+（`global_codegen.v:1005,1021,1056`），排序、去重、小端定宽布局全在手写 OCaml 里
+（`veristc_main.ml:289-293,318-384`）。这与 `.svobj` 被定位为"信任+测试层、不进安全核"一致。
 
 ## 证明层与生产层的解耦边界
 

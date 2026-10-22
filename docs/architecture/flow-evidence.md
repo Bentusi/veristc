@@ -3,6 +3,12 @@
 对应 `flow-compile-pipeline.dot`、`flow-vm-runtime.dot`、`flow-vm-unwired.dot`。
 基线 2026-10-14 工作树。C4 节点级证据见 `veristc.evidence.md`，本文件只记录**流程步骤**与**边语义**。
 
+> **行号状态（2026-10-22）**：编译管线一节（下表 + `flow-compile-pipeline.dot`/`.svg`）的行号
+> 已按当前工作树**全量重导**；v1.5.1 的三处变化已并入：解析期把 `inst.field` 融合为派生名
+> `inst#field`、`prepare_program` 之后追加的展开后重名门禁（步骤 5b）、以及 `check_program_full_diag`
+> 内新增的 `KIND=access` 字段封装门禁。VM 两张图（`flow-vm-runtime`、`flow-vm-unwired`）不受本次
+> 改动影响，仍为 2026-10-14 基线行号。
+
 ## 编译管线（`flow-compile-pipeline.dot`）
 
 触发：ST 工程师执行 `veristc -c|-a|-g|-x input.st`。全部步骤为**同进程内函数调用**（in-process），
@@ -10,25 +16,26 @@
 
 | # | 步骤 | 载荷形态变化 | 证据 | 失败时 |
 | --- | --- | --- | --- | --- |
-| 0 | 命令行模式分派 | `argv` → 四种模式之一（默认 `-a`） | `veristc_main.ml:488-500` | 未知选项 → `usage` + `exit 1` `:495-499` |
+| 0 | 命令行模式分派 | `argv` → 四种模式之一（默认 `-a`） | `veristc_main.ml:511-524` | 未知选项 → `usage` + `exit 1` `:520-522` |
 | 1 | `read_file` | 文件 → OCaml string → Coq String | `veristc_main.ml:184-185` | 文件不可读则异常 |
-| 2 | `Lexer.lex` | string → `list token` | `src/lexer.v:377` @ `:132` | `None` → `failwith "lexer failed"` `:134` |
-| 3 | `Parser.parse` | `list token` → `st_program` | `src/parser.v:1295` @ `:136` | `parse_fail_pos`+`lex_offsets` 回推行列 `:140-145` |
+| 2 | `Lexer.lex` | string → `list token` | `src/lexer.v:377` @ `:132` | `None` → `failwith "lexer failed"` `:134`。v1.5.1：`#` 不在标识符文法内，源码出现 `#` 即在此失败（派生名不可书写） |
+| 3 | `Parser.parse` | `list token` → `st_program` | `src/parser.v:1330` @ `:136` | `parse_fail_pos`(`:1354`)+`lex_offsets` 回推行列 `:140-145`。v1.5.1：`inst.field` 融合为 `inst#field`，AST 不新增构造 |
 | 4 | 重名门禁 | `st_program` → `bool` | `src/typechecker.v:184` @ `:189` | `false` → 命名冲突 `:190` |
-| 5 | `prepare_program` | `st_program` → `option st_program` | `src/function_check.v:881` @ `:191` | `None` → FUNCTION 非法/缺 PROGRAM `:193` |
-| 6 | `check_program_full_diag` | → `option 诊断串` | `src/function_check.v:984` @ `:195` | `Some msg` → 作用域/纯性/调用类型 `:197` |
-| 7 | `normalize_program` | AST 规范化（保留函数） | `src/inline.v:647` @ `:199` | `None` → 规范化失败 `:201` |
-| 8 | `optimize_inline_program` | 叶子内联 + 死函数消除 | `src/inline.v:942` @ `:203` | `pou_list = 0` → `:204` |
-| 9 | `desugar_program` | `st_program` → `corest_program` | `src/desugar.v:401,62` @ `:206` | 空函数列表 → `:207` |
-| 10 | `analyze` | `corest` → 调用图/栈深/WCET | `src/analysis.v:242` @ `:209` | 递归 `:210-211`；栈深超限 `:212-216` |
-| 11a | `-a` 出口 | 分析结果 → stdout | `veristc_main.ml:465-472` | 无文件产物 |
-| — | ↑ 但 `-a` 不在上表 1-10 这条管线上 | `analyze_st` 重复实现同 9 步 | `veristc_main.ml:443-472` vs `:183-217` | 缺递归/栈深门禁，仅打印（见 G7） |
-| 11c | `compile_program_gc` | `corest_program` → `sasm_module` | `src/global_codegen.v:780` @ `:221` | 纯函数，无失败分支 |
-| 12c | `encode_module` | `sasm_module` → `list Z` | `src/encoder.v:327` @ `:221` | 同上 |
+| 5 | `prepare_program` | `st_program` → `option st_program` | `src/function_check.v:1084` @ `:191` | `None` → FUNCTION 非法/缺 PROGRAM `:193`。内含 `expand_instances`（产出 `inst#field` 扁平全局） |
+| 5b | 展开后重名门禁（v1.5.1） | `st_program` → `option 冲突名` | `src/typechecker.v:259` @ `:200-208` | `Some 名字` → 带名字拒绝（`duplicate_declaration_msg_catches_conflict` 不漏报 / `..agrees_with_check` 不误报） |
+| 6 | `check_program_full_diag` | → `option 诊断串` | `src/function_check.v:1191` @ `:209` | `Some msg` → 作用域/纯性/调用类型/字段封装 `:209-212`。v1.5.1：内含 `check_program_access`(`:1034`，`KIND=access`) |
+| 7 | `normalize_program` | AST 规范化（保留函数） | `src/inline.v:647` @ `:213` | `None` → 规范化失败 `:215` |
+| 8 | `optimize_inline_program` | 叶子内联 + 死函数消除 | `src/inline.v:942` @ `:217` | `pou_list = 0` → `:218` |
+| 9 | `desugar_program` | `st_program` → `corest_program` | `src/desugar.v:409,62` @ `:220` | 空函数列表 → `:221` |
+| 10 | `analyze` | `corest` → 调用图/栈深/WCET | `src/analysis.v:242` @ `:223` | 递归 `:224-225`；栈深超限 `:226-230` |
+| 11a | `-a` 出口 | 分析结果 → stdout | `veristc_main.ml:488-495` | 无文件产物 |
+| — | ↑ 但 `-a` 不在上表 1-10 这条管线上 | `analyze_st` 重复实现同 10 步 | `veristc_main.ml:457-495` vs `:183-231` | 缺递归/栈深门禁，仅打印（见 G7） |
+| 11c | `compile_program_gc` | `corest_program` → `sasm_module` | `src/global_codegen.v:783` @ `:235` | 纯函数，无失败分支 |
+| 12c | `encode_module` | `sasm_module` → `list Z` | `src/encoder.v:327` @ `:235` | 同上 |
 | 13c | `attach_crc32` | 字节串 → 带尾 CRC32 的字节串 | `veristc_main.ml:171-181` | 长度 < 10 → `failwith` `:173` |
-| 11g | `*_reloc_info` / `*_inst_info` / `*_sym_info` | `corest` → 扁平元数据行 | `src/global_codegen.v:991,1007,1042` @ `:307,313,319` | 符号缺行 → `failwith` `:325,331` |
-| 12g | `emit_svobj` | 元数据行 + IMAGE → `.svobj` 字节 | `veristc_main.ml:304-369` | 同上 |
-| 11x | `verify_svobj` | `.svobj` 字节 → 结构走查 | `veristc_main.ml:371-441` | 任一字段不符 → 报错 |
+| 11g | `*_reloc_info` / `*_inst_info` / `*_sym_info` | `corest` → 扁平元数据行 | `src/global_codegen.v:1005,1021,1056` @ `:322,327,333` | 符号缺行 → `failwith` `:339,345` |
+| 12g | `emit_svobj` | 元数据行 + IMAGE → `.svobj` 字节 | `veristc_main.ml:318-384`（IMAGE 复用 `:361`） | 同上 |
+| 11x | `verify_svobj` | `.svobj` 字节 → 结构走查 | `veristc_main.ml:385-456` | 任一字段不符 → 报错 |
 
 生命周期状态：源码 → 已解析 → 已通过门禁 → 已脱糖 → 已分析 → 已生成 IR → 已编码 → 已校验（仅 `-x`）。
 **没有中间产物落盘**，除最终 `.sasm` / `.svobj` 外全部在内存中传递。

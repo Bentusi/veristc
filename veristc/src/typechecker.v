@@ -199,6 +199,121 @@ Proof.
   unfold no_duplicate_declarations. split; assumption.
 Qed.
 
+(* ------------------------------------------------------------
+   重复名定位（诊断用）
+
+   has_duplicates 只给布尔值。expand_instances 之后仍可能出现重名：派生
+   名（如 a1#Q）之间可以相撞——同一 FB 里 VAR_OUTPUT Q 与内部 VAR Q 会
+   展开成两个同名全局，两者会静默共享同一全局槽位。（v1.5.1 把连接符改
+   为源语言不可书写的 `#`，"派生名与用户声明同名"这条路径已消除，展开
+   内部的重名仍在。）因此 CLI 需要知道"冲突的是哪个名字"才能给出可定位
+   的诊断。
+   first_duplicate 与 has_duplicates 逐条同构：返回第一个"在后续列表
+   中再次出现"的名字。下面两条定理把它们的关系钉死，保证定位函数
+   既不漏报（检查失败必有名字）也不误报（报不出名字则检查必通过）。
+   ------------------------------------------------------------ *)
+
+Fixpoint first_duplicate (l : list ident) : option ident :=
+  match l with
+  | nil => None
+  | x :: rest =>
+      if ident_in_list x rest then Some x else first_duplicate rest
+  end.
+
+Lemma first_duplicate_complete :
+  forall l : list ident,
+    has_duplicates l = true -> exists x, first_duplicate l = Some x.
+Proof.
+  induction l as [|a l IH]; simpl; intros H; [discriminate H|].
+  destruct (ident_in_list a l) eqn:Hin.
+  - exists a. simpl. reflexivity.
+  - simpl in H. apply IH in H. destruct H as [x Hx].
+    exists x. simpl. exact Hx.
+Qed.
+
+Lemma first_duplicate_sound :
+  forall l : list ident,
+    (exists x, first_duplicate l = Some x) -> has_duplicates l = true.
+Proof.
+  induction l as [|a l IH]; simpl; intros [x Hx]; [discriminate Hx|].
+  destruct (ident_in_list a l) eqn:Hin.
+  - simpl. reflexivity.
+  - simpl in Hx. simpl. apply IH. exists x. exact Hx.
+Qed.
+
+Lemma first_duplicate_not_found :
+  forall l : list ident,
+    first_duplicate l = None -> has_duplicates l = false.
+Proof.
+  induction l as [|a l IH]; simpl; intros H; [reflexivity|].
+  destruct (ident_in_list a l) eqn:Hin.
+  - simpl in H. discriminate H.
+  - simpl in H. simpl. apply IH. exact H.
+Qed.
+
+(* p 中首个重复的全局变量名；若无则首个重复的 POU 名；再无则 None。 *)
+Definition duplicate_declaration_name (p : st_program) : option ident :=
+  match first_duplicate (var_decl_names p.(global_vars)) with
+  | Some x => Some x
+  | None => first_duplicate (List.map pou_name p.(pou_list))
+  end.
+
+(* CLI 打印形式：OCaml 侧只能取用 String.string。 *)
+Definition duplicate_declaration_msg (p : st_program) : option String.string :=
+  match duplicate_declaration_name p with
+  | Some (ID s) => Some s
+  | None => None
+  end.
+
+(* 不漏报：判定失败 ⇒ 必能报出冲突名（否则冲突仍会静默共享内存）。 *)
+Theorem duplicate_declaration_msg_catches_conflict :
+  forall p : st_program,
+    check_no_duplicate_declarations p = false ->
+    exists s : String.string, duplicate_declaration_msg p = Some s.
+Proof.
+  intros p H.
+  unfold check_no_duplicate_declarations in H.
+  destruct (has_duplicates (var_decl_names (global_vars p))) eqn:Hg.
+  - apply first_duplicate_complete in Hg.
+    destruct Hg as [x Hx]. destruct x as [s].
+    exists s. unfold duplicate_declaration_msg, duplicate_declaration_name.
+    now rewrite Hx.
+  - destruct (has_duplicates (List.map pou_name (pou_list p))) eqn:Hp.
+      + (* 全局名无重复 ⇒ first_duplicate 必为 None（否则与 Hg 矛盾） *)
+        destruct (first_duplicate (var_decl_names (global_vars p)))
+          as [x|] eqn:Hf.
+          * exfalso.
+            assert (Ht : has_duplicates (var_decl_names (global_vars p)) = true).
+            { apply first_duplicate_sound. exists x. exact Hf. }
+            rewrite Hg in Ht. discriminate Ht.
+          * apply first_duplicate_complete in Hp.
+            destruct Hp as [y Hy]. destruct y as [s].
+            exists s.
+            unfold duplicate_declaration_msg, duplicate_declaration_name.
+            rewrite Hf. simpl. now rewrite Hy.
+      + simpl in H. discriminate H.
+Qed.
+
+(* 不误报：报不出名字 ⇒ 判定本就通过。 *)
+Theorem duplicate_declaration_msg_agrees_with_check :
+  forall p : st_program,
+    duplicate_declaration_msg p = None ->
+    check_no_duplicate_declarations p = true.
+Proof.
+  intros p H.
+  unfold duplicate_declaration_msg, duplicate_declaration_name in H.
+  destruct (first_duplicate (var_decl_names (global_vars p)))
+    as [x|] eqn:Hg.
+  - destruct x as [s]. simpl in H. discriminate H.
+  - destruct (first_duplicate (List.map pou_name (pou_list p)))
+      as [y|] eqn:Hp.
+      + destruct y as [s]. simpl in H. discriminate H.
+      + unfold check_no_duplicate_declarations.
+        rewrite (first_duplicate_not_found _ Hg),
+                (first_duplicate_not_found _ Hp).
+        reflexivity.
+Qed.
+
 (* 循环计数计算: loop_count start end_ step = Some n
    n = max(0, (end - start) / step + 1)  当 step != 0 且方向正确 *)
 Definition loop_count (start end_ step : st_expr) : option Z :=

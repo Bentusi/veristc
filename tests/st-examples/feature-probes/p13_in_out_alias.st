@@ -30,5 +30,5 @@ END_VAR
   tick := CycleCounter();
   i1(ACC := shared, K := tick);
   i2(ACC := shared, K := 100);
-  PRINT('p13 shared=', shared, ' i1=', i1_LAST, ' i2=', i2_LAST, '\n');
+  PRINT('p13 shared=', shared, ' i1=', i1.LAST, ' i2=', i2.LAST, '\n');
 END_PROGRAM

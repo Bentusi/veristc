@@ -12,7 +12,7 @@
      shared := t                 调用方写入别名目标
      a1(K := 10)  : LAST := t,       shared := t + 10
      a2(K := 100) : LAST := t + 10,  shared := t + 110
-   ⇒ PRINT 输出 (tick, shared, a1_LAST, a2_LAST)
+   ⇒ PRINT 输出 (tick, shared, a1.LAST, a2.LAST)
         t=1 → 1, 111, 1, 11     t=3 → 3, 113, 3, 13
    LAST 互不相同 ⇒ 实例数据仍分离；shared 单点累加 ⇒ 端口是别名。
    ================================================================ *)
@@ -46,5 +46,5 @@ END_VAR
   shared := tick;
   a1(ACC := shared, K := 10);
   a2(ACC := shared, K := 100);
-  PRINT('tick', tick, shared, a1_LAST, a2_LAST);
+  PRINT('tick', tick, shared, a1.LAST, a2.LAST);
 END_PROGRAM

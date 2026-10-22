@@ -134,6 +134,86 @@ for neg in in_out_local in_out_expr in_out_unbound in_out_type in_out_unknown_po
     fi
 done
 
+# 派生名分隔符 '#' 不在标识符文法内 ⇒ 用户写不出 a1#Q，静态冲突只剩下
+# "expand_instances 自身产出重名"这一条路径：同一 FB 的两个可写字段重名
+# （VAR_OUTPUT Q 与实例状态 VAR Q）⇒ 两条 a1#Q 声明落到同一全局槽位。
+# 展开前的重复名检查看不到派生名，故 GATE-1 必须在 prepare_program 后再跑
+# 一次，并让诊断报出冲突的名字。
+if "$V" -c tests/compiler-tests/negative/name_collision_expanded.st \
+    -o /tmp/veristc-name-collision.sasm \
+    > /tmp/veristc-name-collision.out 2>&1; then
+    echo "  instance-field name collision rejection ... FAIL (compiler accepted it)"
+    _TF_FAIL=$((_TF_FAIL + 1))
+else
+    echo "  instance-field name collision rejection ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+fi
+assert_contains /tmp/veristc-name-collision.out "'a1#Q'" \
+    "collision diagnostic names the offending declaration"
+
+# 封装规则（KIND=access）：qualified 访问 inst.field 体外只允许**读**
+# VAR_OUTPUT；读/写 FB 内部 VAR、体外写 VAR_OUTPUT 一律 KIND=access 拒绝。
+# （VAR_INPUT / VAR_IN_OUT 不生成派生全局，走下面的 KIND=type 路径。）
+# 违规诊断带 VAR=<派生名> 定位。
+for neg in qualified_internal_read qualified_output_write; do
+    if "$V" -c "tests/compiler-tests/negative/${neg}.st" \
+        -o "/tmp/veristc-access-${neg}.sasm" \
+        > "/tmp/veristc-access-${neg}.out" 2>&1; then
+        echo "  access rule ${neg} rejection ... FAIL (compiler accepted it)"
+        _TF_FAIL=$((_TF_FAIL + 1))
+    else
+        echo "  access rule ${neg} rejection ... OK"
+        _TF_PASS=$((_TF_PASS + 1))
+    fi
+    assert_contains "/tmp/veristc-access-${neg}.out" "KIND=access" \
+        "access rule ${neg} diagnostic is marked KIND=access"
+done
+assert_contains /tmp/veristc-access-qualified_internal_read.out "VAR=a1#C" \
+    "internal-state leak names the hidden field"
+assert_contains /tmp/veristc-access-qualified_output_write.out "VAR=a1#Q" \
+    "output write-back violation names the field"
+
+# 方向表另一行（spec 6.5.1）：VAR_INPUT / VAR_IN_OUT 根本不生成派生全局，
+# 体外用点号引用它们 = 引用不存在的名，由类型检查阶段以 KIND=type 拒绝。
+# 该路径的诊断不指认名字（通用类型错误，无 VAR=），这是已知精度取舍。
+for neg in qualified_input_read qualified_in_out_read; do
+    if "$V" -c "tests/compiler-tests/negative/${neg}.st" \
+        -o "/tmp/veristc-port-ref-${neg}.sasm" \
+        > "/tmp/veristc-port-ref-${neg}.out" 2>&1; then
+        echo "  port field reference ${neg} rejection ... FAIL (compiler accepted it)"
+        _TF_FAIL=$((_TF_FAIL + 1))
+    else
+        echo "  port field reference ${neg} rejection ... OK"
+        _TF_PASS=$((_TF_PASS + 1))
+    fi
+    assert_contains "/tmp/veristc-port-ref-${neg}.out" "KIND=type" \
+        "port field reference ${neg} is rejected as a type/undeclared-name error"
+done
+
+# 点号访问与扁平全局分离：l1.Q（融合为派生名 l1#Q）与用户声明的普通
+# 全局 l1_Q 可以同时存在且各自独立演化 ⇒ 派生名不可书写确实消除了别名
+"$V" -c tests/st-examples/qualified_access_field.st \
+    -o /tmp/qaf.sasm > /tmp/qaf_compile.out 2>&1
+assert_contains "/tmp/qaf_compile.out" "compiled:" "qualified access compile OK"
+./vm/svm -n 4 -p 0 /tmp/qaf.sasm > /tmp/qaf_run.out
+# t: l1_Q = 100t（用户全局）；l1.Q = t+1（实例输出）
+assert_contains "/tmp/qaf_run.out" "tick1, 100, 2," "qualified access @cycle1 separates names"
+assert_contains "/tmp/qaf_run.out" "tick2, 200, 3," "qualified access @cycle2 separates names"
+assert_contains "/tmp/qaf_run.out" "tick4, 400, 5," "qualified access @cycle4 separates names"
+
+# 字面 '#' 不可书写：派生名只能由编译器产生，用户手写 a1#Q 在词法即报错
+if "$V" -c tests/compiler-tests/negative/literal_derived_name.st \
+    -o /tmp/veristc-literal-derived.sasm \
+    > /tmp/veristc-literal-derived.out 2>&1; then
+    echo "  literal derived name rejection ... FAIL (compiler accepted it)"
+    _TF_FAIL=$((_TF_FAIL + 1))
+else
+    echo "  literal derived name rejection ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+fi
+assert_contains /tmp/veristc-literal-derived.out "lexer failed" \
+    "literal derived name is rejected at the lexer (unwritable by design)"
+
 # P2 可重定位对象 .svobj：编译器导出跨模块链接元数据 + 主机侧结构/CRC round-trip
 "$V" -g tests/st-examples/native_fb_multi_instance.st \
     -o /tmp/native_fb.svobj > /tmp/native_fb_svobj.out 2>&1

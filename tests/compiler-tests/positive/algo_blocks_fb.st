@@ -11,11 +11,14 @@
      - VAR_IN_OUT 逐引用别名（TRACE：诊断量直写调用方全局）
      - 实例声明分离：rs1/rs2 同一份代码、独立数据段
      - IF/ELSIF/ELSE 控制流、表达式实参、命名实参（:=）
-   限制：FB 体内不得声明成员实例（嵌套 FB 不支持，P1 范围外）；
-   调用输出在调用点以扁平名 inst_FIELD 读取。
+   限制：FB 体内不得声明成员实例（嵌套 FB 不支持，P1 范围外）。
+   调用点在外部以 IEC 点号访问 inst.FIELD 读取字段（v1.5.1；编译器内部
+   融合为不可书写的派生名 inst#FIELD，外部只能读 VAR_OUTPUT）。
 
-   黄金时间线（与 FUNCTION 版一致，t: rs1 rs2 sr1 sr2 | u1 ui1 |
-   u2 ui2 | f1 f2，u 与 tr 恒等因 TRACE 别名）：
+   黄金时间线（数值列与 FUNCTION 版一致，t: rs1 rs2 sr1 sr2 | u1 ui1 |
+   u2 ui2 | f1 f2，u 与 tr 恒等因 TRACE 别名）。列标签自 v1.5.1 起写作
+   点号形式（rs1.Q / pid1.U / pid1.UI / fby1.Y …）指认"这一列来自哪个
+   实例的哪个字段"；golden 文件随之只改标签文本，12 行数值逐列不变：
      t1 : 1 0 0 0 | 170 118 | 140 65  |  20   0
      t2 : 1 0 0 0 | 170 200 | 140 90  |  40   0
      t3 : 1 1 0 0 | 170 200 | 140 90  |  60   0
@@ -171,10 +174,10 @@ END_VAR
   END_IF;
   fby2(IN := in2, DR := 50);
 
-  PRINT('FB t=', tick, ' rs1=', rs1_Q, ' rs2=', rs2_Q,
-        ' sr1=', sr1_Q, ' sr2=', sr2_Q,
-        ' u1=', pid1_U, ' ui1=', pid1_UI,
-        ' u2=', pid2_U, ' ui2=', pid2_UI,
-        ' f1=', fby1_Y, ' f2=', fby2_Y,
-        ' tr1=', trace1, ' tr2=', trace2, '\n');
+  PRINT('FB t=', tick, ' rs1.Q,=', rs1.Q, ' rs2.Q,=', rs2.Q,
+        ' sr1.Q,=', sr1.Q, ' sr2.Q,=', sr2.Q,
+        ' pid1.U,=', pid1.U, ' pid1.UI,=', pid1.UI,
+        ' pid2.U,=', pid2.U, ' pid2.UI,=', pid2.UI,
+        ' fby1.Y,=', fby1.Y, ' fby2.Y,=', fby2.Y,
+        ' trace1,=', trace1, ' trace2,=', trace2, '\n');
 END_PROGRAM

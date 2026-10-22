@@ -481,6 +481,19 @@ with parse_primary_expression (fuel : nat) (st : parser_state) {struct fuel}
                   | Parse_fail => Parse_fail
                   | Parse_error msg => Parse_error msg
                   end
+              (* 限定访问 inst.field —— IEC 风格写法。构造 AST 时直接融合成
+                 派生内部名 inst#field（safest.derived_field_sep），因此规范核
+                 仍只有 E_VAR、没有成员访问节点，下游各层无需感知。
+                 `#` 不在标识符文法内 ⇒ 派生名不可由用户书写，这个分支是唯一
+                 入口。词法层已把 `..` 产出为 TK_RANGE，不会误入此分支。 *)
+              | Some TK_DOT =>
+                  let st2 := snd (consume st1) in
+                  match peek st2 with
+                  | Some (TK_IDENT fname) =>
+                      let st3 := snd (consume st2) in
+                      Parse_ok ((E_VAR (ID (name ++ derived_field_sep ++ fname))), st3)
+                  | _ => Parse_error "Expected field name after '.'"
+                  end
               | _ => Parse_ok ((E_VAR (ID name)), st1)
               end
           | _ => Parse_error "Expected identifier"
@@ -910,6 +923,28 @@ with parse_assignment_or_fb_call (fuel : nat) (st : parser_state) {struct fuel}
                   end
               | Parse_fail => Parse_fail
               | Parse_error msg => Parse_error msg
+              end
+          (* 限定访问作为赋值目标：`a1.Q := e` 同样融合成内部名后照常建
+             S_ASSIGN，让 function_check 的方向规则（KIND=access）判定该
+             字段能否被外部 POU 写 —— 比在词法层笼统报语法错误更可定位。 *)
+          | Some TK_DOT =>
+              let st2 := snd (consume st1) in
+              match peek st2 with
+              | Some (TK_IDENT fname) =>
+                  let st3 := snd (consume st2) in
+                  match peek st3 with
+                  | Some TK_ASSIGN =>
+                      let st4 := snd (consume st3) in
+                      match parse_expression fuel' st4 with
+                      | Parse_ok (expr, st5) =>
+                          let st6 := snd (expect_token st5 TK_SEMI) in
+                          Parse_ok ((S_ASSIGN (ID (name ++ derived_field_sep ++ fname)) expr), st6)
+                      | Parse_fail => Parse_fail
+                      | Parse_error msg => Parse_error msg
+                      end
+                  | _ => Parse_error "Expected ':=' after qualified access"
+                  end
+              | _ => Parse_error "Expected field name after '.'"
               end
           | _ => Parse_error "Expected := or ( after identifier"
           end

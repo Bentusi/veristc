@@ -30,5 +30,5 @@ END_VAR
   rs2(S := tick = 4, R := tick = 8);
 
   (* 输出消费：读实例上下文全局（本 demo 只消费状态 Q） *)
-  PRINT('tick', tick, rs1_Q, rs2_Q);
+  PRINT('tick', tick, rs1.Q, rs2.Q);
 END_PROGRAM

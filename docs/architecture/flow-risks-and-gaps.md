@@ -89,9 +89,9 @@
 
 ## G7 `-a` 与 `-c` 是两份同构管线，门禁判据不同
 
-`analyze_st`（`veristc_main.ml:443-472`）与 `frontend`（`:183-217`）九步逐行同构
-（`:444-464` 对 `:184-209`），但 `analyze_st` **不做** `frontend:210-216` 的递归拒绝与栈深超限拒绝，
-只把 `recursive calls` 与 `stack depth` 打印出来（`:465-469`）。
+`analyze_st`（`veristc_main.ml:457-495`）与 `frontend`（`:183-231`）十步逐行同构
+（`:458-487` 对 `:184-231`），但 `analyze_st` **不做** `frontend:224-230` 的递归拒绝与栈深超限拒绝，
+只把 `recursive calls` 与 `stack depth` 打印出来（`:488-492`）。
 
 后果有两层：
 1. 判据不一致 —— 同一程序可以"`-a` 报告正常"而"`-c` 编译失败"。若把 `-a` 输出当作

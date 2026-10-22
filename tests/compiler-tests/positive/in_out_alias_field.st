@@ -1,7 +1,7 @@
 (* ================================================================
    positive/in_out_alias_field.st  --  别名目标可以是实例数据字段
 
-   a2.ACC 绑定到 a1_LAST（expand_instances 展开出的扁平全局字段），
+   a2.ACC 绑定到 a1.LAST（expand_instances 展开出的扁平全局字段），
    即"跨实例逐引用"：a2 的写直接落在 a1 的输出字段存储上，
    与 a1 自己的读写共享同一地址。合法 ⇒ 编译器必须接受。
    ================================================================ *)
@@ -31,6 +31,6 @@ PROGRAM MAIN
   tick := CycleCounter();
   t := tick;
   a1(ACC := t, K := 1);
-  a2(ACC := a1_LAST, K := 5);
-  PRINT('t', t, a1_LAST, a2_LAST);
+  a2(ACC := a1.LAST, K := 5);
+  PRINT('t', t, a1.LAST, a2.LAST);
 END_PROGRAM

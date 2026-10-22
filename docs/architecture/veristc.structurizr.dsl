@@ -6,7 +6,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
     model {
 
         // ---------- Actors ----------
-        stEngineer = person "ST 应用工程师" "在上位机侧编写 .st 并调用 veristc 命令行做编译/分析/生成可重定位对象。证据: AGENTS.md 架构概览、veristc/extraction/veristc_main.ml:495+ 命令行分支。无图形界面代码，人机交互仅证据到 CLI 层。" {
+        stEngineer = person "ST 应用工程师" "在上位机侧编写 .st 并调用 veristc 命令行做编译/分析/生成可重定位对象。证据: AGENTS.md 架构概览、veristc/extraction/veristc_main.ml:511+ 命令行分支。无图形界面代码，人机交互仅证据到 CLI 层。" {
             tags "Person", "Conf-Medium"
         }
 
@@ -34,58 +34,58 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
             compiler = container "veristc (编译器可执行)" "单入口 OCaml 原生程序，按 -c/-a/-g/-x 四种模式驱动 Coq 提取出来的计算函数。" "OCaml native (ocamlopt) + Coq-extracted modules" {
                 tags "Conf-High", "HostTool", "Deploy-上位机"
 
-                cli = component "CLI 入口 (手写)" "veristc_main.ml 为手写源，不参与提取；负责参数解析、读写文件、CRC32、.svobj 字节编码。模式分派在 :488-500，-a 为默认模式。" "OCaml" {
+                cli = component "CLI 入口 (手写)" "veristc_main.ml 为手写源，不参与提取；负责参数解析、读写文件、CRC32、.svobj 字节编码。模式分派在 :511-524，-a 为默认模式。" "OCaml" {
                     tags "Conf-High"
                 }
-                analyzeSt = component "analyze_st (-a 模式独立管线)" "read_file→parse_or_fail→重名→prepare→diag→normalize→optimize→desugar→analyze 九步与 frontend(:183-217) 重复实现，但**不做递归拒绝与栈深门禁**(:210-216 只在 frontend 里)，只把 stack depth / recursive calls / estimated wcet / loops bounded 四项 printf 到 stdout。证据 veristc_main.ml:443-472。" "Coq extracted + OCaml" {
+                analyzeSt = component "analyze_st (-a 模式独立管线)" "read_file→parse_or_fail→重名→prepare→展开后重名→diag→normalize→optimize→desugar→analyze 十步与 frontend(:183-231) 重复实现，但**不做递归拒绝与栈深门禁**(:224-230 只在 frontend 里)，只把 stack depth / recursive calls / estimated wcet / loops bounded 四项 printf 到 stdout。证据 veristc_main.ml:457-495。" "Coq extracted + OCaml" {
                     tags "Conf-High", "DuplicatedLogic"
                 }
                 lexer = component "Lexer.lex" "字符流 -> token 表。证据 veristc/src/lexer.v:377, 调用点 veristc_main.ml:132。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                parser = component "Parser.parse" "token -> st_program；失败时用 parse_fail_pos + lex_offsets 回推行列。证据 veristc/src/parser.v:1295,1319; veristc_main.ml:136-148。" "Coq extracted" {
+                parser = component "Parser.parse" "token -> st_program；失败时用 parse_fail_pos + lex_offsets 回推行列。v1.5.1: `inst.field` 在此融合为派生名 `inst#field`(分隔符 safest.v:94)，AST 不新增成员访问构造。证据 veristc/src/parser.v:1330,1354; veristc_main.ml:136-148。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                dupchk = component "check_no_duplicate_declarations" "扁平命名空间重名即编译错误。证据 veristc/src/typechecker.v:184, veristc_main.ml:189-190。" "Coq extracted" {
+                dupchk = component "check_no_duplicate_declarations / duplicate_declaration_msg" "扁平命名空间重名即编译错误。v1.5.1 起该门禁跑两次：解析后(:184, 调用:189-190) 与 expand_instances 之后(:259, 调用:200-208，报出冲突名字；不漏报/不误报各有定理)。证据 veristc/src/typechecker.v:184,259; veristc_main.ml:189-190,200-208。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                funcCheck = component "Function_check.prepare_program / check_program_full_diag" "FUNCTION 结果变量准备 + 作用域/纯性/调用类型全量诊断。证据 veristc/src/function_check.v:881,984; veristc_main.ml:191-198。" "Coq extracted" {
+                funcCheck = component "Function_check.prepare_program / check_program_full_diag" "FUNCTION 结果变量准备 + 作用域/纯性/调用类型全量诊断；expand_instances 在此把 FB 实例摊成 `inst#field` 扁平全局。v1.5.1 新增字段封装门禁 check_program_access(:1034)：体外只读 VAR_OUTPUT，读写内部 VAR 或体外写 VAR_OUTPUT 以 KIND=access 拒绝。证据 veristc/src/function_check.v:1084,1191,1034; veristc_main.ml:191-212。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                inline = component "Inline.normalize_program / optimize_inline_program" "保留函数的规范化 + 叶子内联/死函数消除。证据 veristc/src/inline.v:647,942; veristc_main.ml:199-203。" "Coq extracted" {
+                inline = component "Inline.normalize_program / optimize_inline_program" "保留函数的规范化 + 叶子内联/死函数消除。证据 veristc/src/inline.v:647,942; veristc_main.ml:213-217。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                desugar = component "Desugar.desugar_program" "st_program -> corest_program (CoreST)。证据 veristc/src/desugar.v:401,62; veristc_main.ml:206。" "Coq extracted" {
+                desugar = component "Desugar.desugar_program" "st_program -> corest_program (CoreST)。证据 veristc/src/desugar.v:409,62; veristc_main.ml:220。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                analysis = component "Analysis.analyze" "调用图/递归/栈深/WCET；生产入口用它做递归拒绝与栈深门禁。证据 veristc/src/analysis.v:242; veristc_main.ml:209-216。" "Coq extracted" {
+                analysis = component "Analysis.analyze" "调用图/递归/栈深/WCET；生产入口用它做递归拒绝与栈深门禁。证据 veristc/src/analysis.v:242; veristc_main.ml:223-230。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                gcCodegen = component "Global_codegen.compile_program_gc" "生产 codegen 路径: CoreST -> sasm_module (全局偏移 + FB 实例)。v1.5 VAR_IN_OUT 逐引用别名: 端口降级为持有调用方地址的形参槽，读写发 I32_LOAD_PTR/I32_STORE_PTR(地址取自值栈而非静态 mem_offset)。证据 veristc/src/global_codegen.v:780,480,623; veristc_main.ml:221,347。" "Coq extracted" {
+                gcCodegen = component "Global_codegen.compile_program_gc" "生产 codegen 路径: CoreST -> sasm_module (全局偏移 + FB 实例)。v1.5 VAR_IN_OUT 逐引用别名: 端口降级为持有调用方地址的形参槽，读写发 I32_LOAD_PTR/I32_STORE_PTR(地址取自值栈而非静态 mem_offset)。证据 veristc/src/global_codegen.v:783,483,626; veristc_main.ml:235,361。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                relocMeta = component "compile_program_reloc_info / inst_info / sym_info" "只导出扁平重定位/实例/符号元数据行，排序去重留给 OCaml。reloc kind 0=CALL_IDX / 1=INST_BASE_IMM / 2=GLOBAL_OFF(VAR_IN_OUT 别名实参, 由 build_alias_table 从调用点派生; 别名判定优先于基址判定)。证据 veristc/src/global_codegen.v:991,1007,1042,858-932,1008; veristc_main.ml:307-319。" "Coq extracted" {
+                relocMeta = component "compile_program_reloc_info / inst_info / sym_info" "只导出扁平重定位/实例/符号元数据行，排序去重留给 OCaml。reloc kind 0=CALL_IDX / 1=INST_BASE_IMM / 2=GLOBAL_OFF(VAR_IN_OUT 别名实参, 由 build_alias_table 从调用点派生; 别名判定优先于基址判定)。证据 veristc/src/global_codegen.v:1005,1021,1056,861-935,918,1011; veristc_main.ml:322-333。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                encoder = component "Encoder.encode_module" "sasm_module -> list Z 字节序列(定宽小端, 不含 CRC)。证据 veristc/src/encoder.v:327; veristc_main.ml:221,347。" "Coq extracted" {
+                encoder = component "Encoder.encode_module" "sasm_module -> list Z 字节序列(定宽小端, 不含 CRC)。证据 veristc/src/encoder.v:327; veristc_main.ml:235,361。" "Coq extracted" {
                     tags "Conf-High"
                 }
-                crcHost = component "attach_crc32 (OCaml 侧)" "对第 6 字节起的有效载荷计算 CRC32 并回填尾部 4 字节。证据 veristc_main.ml:163-181,221。" "OCaml" {
+                crcHost = component "attach_crc32 (OCaml 侧)" "对第 6 字节起的有效载荷计算 CRC32 并回填尾部 4 字节。证据 veristc_main.ml:163-181,235。" "OCaml" {
                     tags "Conf-High"
                 }
-                svobjEmit = component "emit_svobj" "Header36B|SYMTAB|RELOC|BLOCKS|IMAGE|CRC32 字节布局，IMAGE 复用 encode_module(compile_program_gc)。证据 veristc_main.ml:304-369。" "OCaml" {
+                svobjEmit = component "emit_svobj" "Header36B|SYMTAB|RELOC|BLOCKS|IMAGE|CRC32 字节布局，IMAGE 复用 encode_module(compile_program_gc)。证据 veristc_main.ml:318-384。" "OCaml" {
                     tags "Conf-High"
                 }
-                svobjVerify = component "verify_svobj" "纯 OCaml 反向走查 .svobj 结构与 CRC(-x 模式)，不调用 Coq 代码。证据 veristc_main.ml:371-441。" "OCaml" {
+                svobjVerify = component "verify_svobj" "纯 OCaml 反向走查 .svobj 结构与 CRC(-x 模式)，不调用 Coq 代码。证据 veristc_main.ml:385-456。" "OCaml" {
                     tags "Conf-High"
                 }
-                dataTypes = component "Coq 规范数据类型 (spec/safest.v, spec/safeasm.v)" "st_program / corest 承接类型 / sasm_module 与 sasm_io_map 的定义来源，且作为提取模块进入可执行文件。证据 veristc/spec/safest.v:343, safeasm.v:282,293; veristc/extraction/dune:4-13。" "Coq extracted" {
+                dataTypes = component "Coq 规范数据类型 (spec/safest.v, spec/safeasm.v)" "st_program / corest 承接类型 / sasm_module 与 sasm_io_map 的定义来源，且作为提取模块进入可执行文件。证据 veristc/spec/safest.v:357,94, safeasm.v:282,293; veristc/extraction/dune:4-13。" "Coq extracted" {
                     tags "Conf-High"
                 }
                 proofLayer = component "证明层 (spec/st_semantics.v, asm_semantics.v, function_semantics.v, compiler_correctness.v)" "纯定义 + 定理，构建期需要，不产出运行期指令。端到端语义保持链(compile_st_to_sasm = compile_core_program, compiler_correctness.v:85-99,98)由 type_check_program + codegen.compile_program 组成(:1688,:1739,:2007,:2204,:2216)；针对生产函数 compile_program_gc 的定理集中在 WS-C 段(:2228-2493)，内容是 CALL 结构性质(类型段/函数段长度、被调目标存在、形参数<=局部槽位数)。证据 Makefile:204-219,237-239。" "Rocq/Coq" {
                     tags "Conf-High", "BuildTimeOnly"
                 }
-                deadCode = component "证明路径专用 / 已提取但入口未调用的计算函数" "codegen.compile_program(codegen.v:1077)、typechecker.type_check_program(:511) 只出现在证明组合里；另有 global_codegen.compile_program_g(:269)、inline.inline_program(inline.v:367) 亦未被调用。生产入口调 compile_program_gc，它额外串入 csites(调用点表)与 fbctx(self 相对字段上下文)。这是有意的解耦边界: 结构证明留在 codegen.v，工程扩展在 global_codegen.v 推进而不触碰已证明结构。代价: 端到端 semantics preservation 不覆盖生产入口。证据 extraction/extraction.v:40-63; compiler_correctness.v:85-99; AGENTS.md .svobj 实现分层。" "Coq extracted" {
+                deadCode = component "证明路径专用 / 已提取但入口未调用的计算函数" "codegen.compile_program(codegen.v:1077)、typechecker.type_check_program(:623) 只出现在证明组合里；另有 global_codegen.compile_program_g(:269)、inline.inline_program(inline.v:367) 亦未被调用。生产入口调 compile_program_gc，它额外串入 csites(调用点表)与 fbctx(self 相对字段上下文)。这是有意的解耦边界: 结构证明留在 codegen.v，工程扩展在 global_codegen.v 推进而不触碰已证明结构。代价: 端到端 semantics preservation 不覆盖生产入口。证据 extraction/extraction.v:40-63; compiler_correctness.v:85-99; AGENTS.md .svobj 实现分层。" "Coq extracted" {
                     tags "Conf-High", "NotWired"
                 }
             }
@@ -163,8 +163,8 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
             // ===== 容器级关系 =====
             stEngineer -> compiler "调用编译/分析/生成/校验" "-c / -a / -g / -x" { tags "Conf-High" }
             compiler -> stSrc "读取源码" "文件读" { description "veristc_main.ml:184 read_file"; tags "Conf-High" }
-            compiler -> sasmFile "写出镜像" "文件写" { description "veristc_main.ml:219-226"; tags "Conf-High" }
-            compiler -> svobjFile "写出可重定位对象" "文件写" { description "veristc_main.ml:304-369,520-522"; tags "Conf-High" }
+            compiler -> sasmFile "写出镜像" "文件写" { description "veristc_main.ml:233-235,538-540"; tags "Conf-High" }
+            compiler -> svobjFile "写出可重定位对象" "文件写" { description "veristc_main.ml:318-384,543-545"; tags "Conf-High" }
             compiler -> coqToolchain "构建期依赖" "coqc -> extraction -> ocamlopt" { description "Makefile:197-292; dune 目标见 veristc/extraction/dune:4-13"; tags "Conf-High", "BuildTimeOnly" }
             sasmFile -> svm "载入字节流" "fread -> sasm_load" { description "vm/svm.c:70-99"; tags "Conf-High" }
             svm -> svobjFile "不读取" "无入口" { description "当前 SVM 无 .svobj 装载路径；可重定位对象只在编译器侧被 -x 校验"; tags "Conf-High", "NotWired" }
@@ -186,20 +186,20 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
         veristc.compiler.cli -> veristc.compiler.lexer "1 源码字符串 -> token" "in-process" { description "veristc_main.ml:132,186"; tags "Conf-High" }
         veristc.compiler.lexer -> veristc.compiler.parser "2 token -> st_program" "in-process" { description "veristc_main.ml:136"; tags "Conf-High" }
         veristc.compiler.parser -> veristc.compiler.dupchk "3 重名检查" "in-process" { description "veristc_main.ml:189"; tags "Conf-High" }
-        veristc.compiler.dupchk -> veristc.compiler.funcCheck "4 FUNCTION 准备 + 全量诊断" "in-process" { description "veristc_main.ml:191,195"; tags "Conf-High" }
-        veristc.compiler.funcCheck -> veristc.compiler.inline "5 规范化 + 内联优化" "in-process" { description "veristc_main.ml:199,203"; tags "Conf-High" }
-        veristc.compiler.inline -> veristc.compiler.desugar "6 st_program -> corest_program" "in-process" { description "veristc_main.ml:206"; tags "Conf-High" }
-        veristc.compiler.desugar -> veristc.compiler.analysis "7 corest -> 分析结果" "in-process" { description "veristc_main.ml:209"; tags "Conf-High" }
-        veristc.compiler.analysis -> veristc.compiler.gcCodegen "8 -c/-g: corest -> sasm_module" "in-process" { description "veristc_main.ml:221,347"; tags "Conf-High" }
-        veristc.compiler.gcCodegen -> veristc.compiler.encoder "9 sasm_module -> list Z 字节" "in-process" { description "veristc_main.ml:221"; tags "Conf-High" }
+        veristc.compiler.dupchk -> veristc.compiler.funcCheck "4 FUNCTION 准备 + 展开后重名 + 全量诊断" "in-process" { description "veristc_main.ml:191,200,209"; tags "Conf-High" }
+        veristc.compiler.funcCheck -> veristc.compiler.inline "5 规范化 + 内联优化" "in-process" { description "veristc_main.ml:213,217"; tags "Conf-High" }
+        veristc.compiler.inline -> veristc.compiler.desugar "6 st_program -> corest_program" "in-process" { description "veristc_main.ml:220"; tags "Conf-High" }
+        veristc.compiler.desugar -> veristc.compiler.analysis "7 corest -> 分析结果" "in-process" { description "veristc_main.ml:223"; tags "Conf-High" }
+        veristc.compiler.analysis -> veristc.compiler.gcCodegen "8 -c/-g: corest -> sasm_module" "in-process" { description "veristc_main.ml:235,361"; tags "Conf-High" }
+        veristc.compiler.gcCodegen -> veristc.compiler.encoder "9 sasm_module -> list Z 字节" "in-process" { description "veristc_main.ml:235"; tags "Conf-High" }
         veristc.compiler.encoder -> veristc.compiler.crcHost "10 字节串 -> 附 CRC32" "in-process" { description "veristc_main.ml:171-181"; tags "Conf-High" }
-        veristc.compiler.gcCodegen -> veristc.compiler.relocMeta "8b -g: 扁平元数据行" "in-process" { description "veristc_main.ml:307,313,319"; tags "Conf-High" }
-        veristc.compiler.relocMeta -> veristc.compiler.svobjEmit "9b 排序/去重/字节布局" "in-process" { description "veristc_main.ml:285-296,332-365"; tags "Conf-High" }
-        veristc.compiler.encoder -> veristc.compiler.svobjEmit "IMAGE 复用同一 encode_module 结果" "in-process" { description "veristc_main.ml:347"; tags "Conf-High" }
-        veristc.compiler.cli -> veristc.compiler.svobjVerify "-x 独立校验路径" "in-process" { description "veristc_main.ml:371-441"; tags "Conf-High" }
-        veristc.compiler.cli -> veristc.compiler.analyzeSt "-a 独立路径, 不经 frontend" "in-process" { description "模式分派 veristc_main.ml:488-500; 管线 :443-472"; tags "Conf-High", "DuplicatedLogic" }
-        veristc.compiler.analyzeSt -> veristc.compiler.desugar "复用同一批 Coq 计算函数(第 9 步)" "in-process" { description "A.analyze (D.desugar_program ast) :464 —— 与 frontend:206-209 重复"; tags "Conf-High", "DuplicatedLogic" }
-        veristc.compiler.dataTypes -> veristc.compiler.lexer "共享 AST/IR 类型定义" "提取模块" { description "veristc/spec/safest.v:343, safeasm.v:282"; tags "Conf-High" }
+        veristc.compiler.gcCodegen -> veristc.compiler.relocMeta "8b -g: 扁平元数据行" "in-process" { description "veristc_main.ml:322,327,333"; tags "Conf-High" }
+        veristc.compiler.relocMeta -> veristc.compiler.svobjEmit "9b 排序/去重/字节布局" "in-process" { description "veristc_main.ml:289-293,318-384"; tags "Conf-High" }
+        veristc.compiler.encoder -> veristc.compiler.svobjEmit "IMAGE 复用同一 encode_module 结果" "in-process" { description "veristc_main.ml:361"; tags "Conf-High" }
+        veristc.compiler.cli -> veristc.compiler.svobjVerify "-x 独立校验路径" "in-process" { description "veristc_main.ml:385-456"; tags "Conf-High" }
+        veristc.compiler.cli -> veristc.compiler.analyzeSt "-a 独立路径, 不经 frontend" "in-process" { description "模式分派 veristc_main.ml:511-524; 管线 :457-495"; tags "Conf-High", "DuplicatedLogic" }
+        veristc.compiler.analyzeSt -> veristc.compiler.desugar "复用同一批 Coq 计算函数(第 9 步)" "in-process" { description "A.analyze (D.desugar_program ast) :487 —— 与 frontend:220-223 重复"; tags "Conf-High", "DuplicatedLogic" }
+        veristc.compiler.dataTypes -> veristc.compiler.lexer "共享 AST/IR 类型定义" "提取模块" { description "veristc/spec/safest.v:357,94, safeasm.v:282"; tags "Conf-High" }
         veristc.compiler.proofLayer -> veristc.compiler.dataTypes "复用规范定义陈述定理" "Coq Require" { description "veristc/spec/compiler_correctness.v:19-22 反向引用 src 计算函数"; tags "Conf-High", "BuildTimeOnly" }
         veristc.compiler.deadCode -> veristc.compiler.gcCodegen "证明路径函数与生产函数并列" "未被调用" { description "端到端语义保持建立在 compile_program + type_check_program 上(compiler_correctness.v:85-99); 生产入口调 compile_program_gc; gc 路径另有 CALL 结构定理(:2228-2493)"; tags "Conf-High", "NotWired" }
     }

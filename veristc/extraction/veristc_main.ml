@@ -192,6 +192,20 @@ let frontend (source_path : string) =
     | Some p -> p
     | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
   in
+  (* prepare_program 会 expand_instances 派生实例字段名（如 a1#LAST）。
+     派生名与用户声明同名时二者落到同一全局槽位、互相覆盖，而展开前的
+     检查看不到派生名，故必须在展开之后再查一次，并报出冲突的名字。
+     （派生名连接符 `#` 不在标识符文法内 ⇒ 用户已无法书写派生名，本检查
+       现在兜住的是 FB 内部同名字段等展开自身产生的重名。） *)
+  begin match T.duplicate_declaration_msg prepared with
+  | Some nm ->
+      failwith
+        (Printf.sprintf
+           "duplicate global variable or POU name '%s' after instance \
+            expansion (naming conflict)"
+           (native_of_coq_string nm))
+  | None -> ()
+  end;
   begin match F.check_program_full_diag prepared with
   | None -> ()
   | Some msg -> failwith (native_of_coq_string msg)
@@ -450,6 +464,15 @@ let analyze_st (source_path : string) : unit =
     | Some p -> p
     | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
   in
+  begin match T.duplicate_declaration_msg prepared with
+  | Some nm ->
+      failwith
+        (Printf.sprintf
+           "duplicate global variable or POU name '%s' after instance \
+            expansion (naming conflict)"
+           (native_of_coq_string nm))
+  | None -> ()
+  end;
   begin match F.check_program_full_diag prepared with
   | None -> ()
   | Some msg -> failwith (native_of_coq_string msg)

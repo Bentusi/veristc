@@ -3,6 +3,13 @@
 生成日期 2026-10-14。由 `architecture-visualization` 插件的 `system-modeler` + `c4model`（结构建模）与
 `flow-visualizer` + `graphviz`（数据流建模）产出，全部为**当前状态（AS-IS）**模型。
 
+**2026-10-22 行号重导**：编译器侧（`flow-compile-pipeline.dot`/`.svg`、`veristc.structurizr.dsl`、
+`veristc.evidence.md`、`veristc.summary.md`、`flow-evidence.md`、`flow-risks-and-gaps.md` 的 G7）
+的 `文件:行号` 已按当前工作树逐条 grep 重导，并补入 v1.5.1 的两处新门禁
+（`duplicate_declaration_msg` 展开后重名、`check_program_access` 字段封装 `KIND=access`）与
+解析期 `inst.field → inst#field` 名字融合。**VM/RTOS/热备侧的图与行号未重导**（本次改动未触碰
+`vm/`、`rtos/`），仍为 2026-10-14 基线。
+
 每张图只回答一个问题；节点/边文本内嵌 `文件:行号` 证据，可直接跳读源码核对。
 
 ## 清单

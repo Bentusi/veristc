@@ -79,6 +79,20 @@ Definition ident_eq (x y : ident) : bool :=
   | ID s1, ID s2 => String.eqb s1 s2
   end.
 
+(* 实例字段派生名的连接符（v1.5.1）。
+
+   取 `#` 而不是源语言的 `.`：`#` 不在标识符文法（字母 (字母|数字|_)*）
+   之内，词法分析器遇到源码中的 `#` 直接判未知字符，因此
+   `inst#field` 这类派生名**在源语言里不可书写**。于是
+     1) 用户声明不可能与 expand_instances 生成的派生名相撞
+        （GATE-1 的展开后重复名检查退化为不变式守卫）；
+     2) 跨实例访问只能经由源语言的限定访问 `inst.field`，由 parser
+        在构造 AST 时融合成同一内部名 —— 不引入成员访问 AST 节点，
+        规范核（表达式/类型规则）保持不变。
+   拼接点：function_check.inst_field_global、global_codegen.cat_ident、
+   parser 的 TK_DOT 分支。三处必须使用本常量。 *)
+Definition derived_field_sep : string := "#".
+
 (* ================================================================
    第 2 部分：类型系统 (Type System)
    ================================================================ *)

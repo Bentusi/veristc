@@ -43,7 +43,7 @@ veristc/
 │   │   ├── desugar.v                 AST → CoreST 脱糖
 │   │   ├── analysis.v                静态分析（WCET/栈深度/循环上限）
 │   │   ├── typechecker.v             类型检查器
-│   │   ├── function_check.v          完整 FUNCTION 作用域/纯性/调用类型检查
+│   │   ├── function_check.v          FUNCTION 作用域/纯性检查 + FB 实例展开与字段封装检查
 │   │   ├── codegen.v                 CoreST → SafeASM 代码生成（8201 行，核心）
 │   │   ├── global_codegen.v          全局编译编排
 │   │   └── encoder.v                 SafeASM IR → .sasm 二进制编码
@@ -98,8 +98,8 @@ veristc/
 ```
 .st (IEC 61131-3 ST)
   → lexer.v (词法分析)
-  → parser.v (递归下降解析)
-  → function_check.v (FUNCTION 结果变量准备 + 作用域/纯性/调用类型检查)
+  → parser.v (递归下降解析；inst.field 融合为派生名 inst#field)
+  → function_check.v (FUNCTION 结果变量准备 + 作用域/纯性/调用类型检查 + expand_instances 实例展开 + 字段封装检查)
   → inline.v (normalize_program：保留函数，展开 CycleCounter，后续可选择性内联)
   → desugar.v (AST → CoreST 脱糖)
   → analysis.v (静态分析: WCET/栈深度)
@@ -172,16 +172,17 @@ veristc/
 - 布局：`Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)`（小端/定宽/非 LEB128）
 - **实现分层**：编译器侧（Coq `global_codegen.v` 的 `compile_program_reloc_info`/`compile_program_inst_info`/`compile_program_sym_info`）仅导出扁平重定位元数据（纯新增，不触碰已证明结构）；主机侧 OCaml（`veristc_main.ml` 的 `emit_svobj`/`verify_svobj`）负责确定性字节编码。链接器为“信任+测试”层，不进安全核。
 - 重定位种类：`0=CALL_IDX`（FB `__exec` 调用）/ `1=INST_BASE_IMM`（实例 self 基址）/ `2=GLOBAL_OFF`（VAR_IN_OUT 别名实参的全局地址立即数，`addend = 地址 − GLOBAL_BASE`，符号 kind=`2 GLOBAL_EXT`）
-- **v1.5 VAR_IN_OUT 逐引用别名**：端口降级为“持有调用方存储地址的形参槽”，读写走 `I32_LOAD_PTR`/`I32_STORE_PTR`（0x30/0x31，地址来自值栈而非静态 `mem_offset`）。`GLOBAL_OFF` 由 `build_alias_table` 从调用点结构派生；扫描器里**别名判定优先于基址判定**（实例字段全局 `a1_LAST` 的地址恰等于该实例 self 基址，否则两类行会互相错记）。已知精度取舍与派生规则见 `spec/safeasm-spec.md` 附录 D.3/D.4。
+- **v1.5 VAR_IN_OUT 逐引用别名**：端口降级为“持有调用方存储地址的形参槽”，读写走 `I32_LOAD_PTR`/`I32_STORE_PTR`（0x30/0x31，地址来自值栈而非静态 `mem_offset`）。`GLOBAL_OFF` 由 `build_alias_table` 从调用点结构派生；扫描器里**别名判定优先于基址判定**（实例字段派生全局 `a1#LAST` 的地址恰等于该实例 self 基址，否则两类行会互相错记）。已知精度取舍与派生规则见 `spec/safeasm-spec.md` 附录 D.3/D.4。
+- **v1.5.1 实例字段命名与封装**：`expand_instances` 派生的扁平全局名为 `实例名 # 字段名`（`safest.v` 的 `derived_field_sep`，三处拼接必须逐字一致：`function_check.inst_field_global` / `global_codegen.cat_ident` / `parser` 的 `TK_DOT`）。`#` 不在标识符文法内 ⇒ 派生名**不可书写**，用户无法与派生槽位互相冒充名字；源码唯一合法写法是 IEC 点号 `a1.Q`，由解析器融合成 `a1#Q`（不新增 AST 构造，证明核心不变）。封装规则（GATE-6，`function_check.check_program_access`，在展开后运行）：体外只可读 `VAR_OUTPUT`，读写 FB 内部 `VAR` 或体外写 `VAR_OUTPUT` → `KIND=access` 拒绝。GATE-1 重复名检查同样在展开后再跑一次并报出冲突名字（`duplicate_declaration_msg`）。
 
 ### 测试
 
 - `tests/st-examples/`：ST 示例程序
 - `tests/vm-tests/`：C VM 单元测试与端到端测试（Unity/CMock 框架）
 - `run_tests.sh`：构建并执行全部测试（调用 run_vm_checks.sh + run_nuclear_e2e.sh）
-- `run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、dump/SIL3/CRC、1000ms 周期+损坏 CRC 拒绝
+- `run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、原生 FB 多实例/VAR_IN_OUT 别名/svobj 元数据、实例字段封装与派生名拒绝（KIND=access / 展开后重名 / 字面 `#` 不可书写）、dump/SIL3/CRC、1000ms 周期+损坏 CRC 拒绝
 - `run_nuclear_e2e.sh`：核电 ST（>10000 行）→ VeriSTC → SASM → VM 端到端验证
-- `run_feature_probes.sh`：SafeST 特性面探针矩阵（12 探针，PASS/XFAIL 覆盖表）
+- `run_feature_probes.sh`：SafeST 特性面探针矩阵（13 探针，PASS/XFAIL 覆盖表）
 - `run_channel_e2e.sh`：单组 RPS 4 通道保护 + ESFAS 顺序器黄金时间线验证
 - `run_algo_e2e.sh`：RS/SR/PID/FBY 算法块多实例（不同变量调用相同算法功能）12 周期黄金时间线验证
 - `run_algo_fb_e2e.sh`：原生 FUNCTION_BLOCK 版算法块（VAR_OUTPUT 多输出、VAR 实例持久状态、VAR_IN_OUT 别名、IF 控制流）12 周期黄金时间线验证
@@ -209,6 +210,8 @@ veristc/
 | `tests/st-examples/*channel*.st` | `./run_channel_e2e.sh` | 通道黄金时间线变更 |
 | `tests/st-examples/algo_blocks*.st` | `./run_algo_e2e.sh` | 算法块库/多实例用例变更 |
 | `tests/st-examples/algo_blocks_fb.st` | `./run_algo_fb_e2e.sh` | FB 版算法块用例变更 |
+| `tests/st-examples/qualified_access_field.st` | `./run_vm_checks.sh` | 点号访问/名字分离用例变更 |
+| `tests/compiler-tests/**/*.st` | `./tests/compiler-tests/run_compiler_tests.sh && ./run_vm_checks.sh` | 正/负编译用例变更（负例还需 run_vm_checks 校验诊断内容） |
 | `run_*.sh` 或 `Makefile` | `./run_tests.sh` | 基础设施变更 → 全量回归 |
 | `*.md`、`*.json`、`*.yml` | 无需验证 | 文档/配置 |
 

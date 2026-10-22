@@ -48,6 +48,7 @@ Separate Extraction
   veristc_src.desugar.desugar_program
   veristc_src.typechecker.type_check_program
   veristc_src.typechecker.check_no_duplicate_declarations
+  veristc_src.typechecker.duplicate_declaration_msg
   veristc_src.function_check.prepare_program
   veristc_src.function_check.check_program_full
   veristc_src.function_check.check_program_full_diag

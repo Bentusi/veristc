@@ -16,11 +16,11 @@
 
 (* 实例声明必须先于 POU 列表（顶层文法：VAR_GLOBAL → POU*）*)
 VAR_GLOBAL
-  rs1 : RS_V1;
-  rs2 : RS_V1;
+  rs1 : RS_FB;
+  rs2 : RS_FB;
 END_VAR
 
-FUNCTION_BLOCK RS_V1
+FUNCTION_BLOCK RS_FB
 VAR_INPUT
   S : BOOL;
   R : BOOL;
@@ -38,5 +38,5 @@ END_VAR
   tick := CycleCounter();
   rs1(S := (tick = 2), R := (tick = 6));
   rs2(S := (tick = 4), R := (tick = 8));
-  PRINT('tick', tick, rs1_Q, rs2_Q);
+  PRINT('tick', tick, rs1.Q, rs2.Q);
 END_PROGRAM

@@ -1201,6 +1201,7 @@ Header(36B) | SYMTAB | RELOC | BLOCKS | IMAGE | CRC32(4B)
 u16 name_len | byte name[name_len] | u8 kind | u32 aux
 ```
 - `kind`：`0=FB_EXEC`（`FUNCTION_BLOCK` 的 `__exec` 函数，`aux`=该函数在**本模块**内的函数索引，即被修补 `CALL` 立即数的现值）/ `1=INST_DATA`（FB 实例数据块，`aux`=块基址）/ `2=GLOBAL_EXT`（未定义外部符号，`aux`=0，其地址由引用它的 `GLOBAL_OFF` 行的 `addend` 给出）。
+- 符号名直接取编译器侧的全局名，因此实例字段类符号（被 `VAR_IN_OUT` 别名的字段全局）带保留分隔符，形如 `a1#LAST`。名字是长度前缀字节串，`#` 无需转义；升序按字节序比较，`#`(0x23) 排在字母/数字之前，排序确定性不受影响。
 
 **RELOC**（定长 17 字节条目，按派生序）
 ```
@@ -1229,7 +1230,7 @@ u16 name_len | byte name | u16 fb_len | byte fb_name | u32 base | u32 size
 
 - `build_alias_table` 从调用点**结构**（`csites` 的端口别名标记 + `find_bound` 得到的实参形状 `CE_VAR g`）导出「被别名全局 → 线性地址」表 `pl`，不从指令流猜测谁是被别名的全局。
 - 扫描器在「`I32_CONST base` → `CALL exec`」窗口内遇到命中 `pl` 的立即数，记一行 `GLOBAL_OFF`：符号为该全局（SYMTAB 中 `kind=2 GLOBAL_EXT`、`aux=0`），`addend = 地址 − GLOBAL_BASE`，与 `INST_BASE_IMM`/`CALL_IDX` 一起按窗口顺序落地。
-- **别名判定优先于基址判定**：`expand_instances` 展开出的字段全局（如 `a1_LAST`）其地址恰等于该实例的 `self` 基址。若先查基址表，绑定 `ACC := a1_LAST` 的实参会被误认为下一次调用的基址，既错记 `INST_BASE_IMM` 又丢掉 `GLOBAL_OFF`。
+- **别名判定优先于基址判定**：`expand_instances` 展开出的字段全局（派生名 `a1#LAST`，源码中写作 `a1.LAST`）其地址恰等于该实例的 `self` 基址。若先查基址表，绑定 `ACC := a1.LAST` 的实参会被误认为下一次调用的基址，既错记 `INST_BASE_IMM` 又丢掉 `GLOBAL_OFF`。
 - 透传（实参是调用方自身的 `VAR_IN_OUT` 端口）压的是 `LOCAL_GET` 槽位、不含立即数 ⇒ 不产行，别名在运行时沿调用链解析。
 - 已知精度取舍（属「信任 + 测试」层，与 `INST_BASE_IMM` 同类的窗口启发式）：窗口内若某个**值端口**读了「同时被别名过」的全局，codegen 也压该全局地址（`global_load`），会多出一条 `GLOBAL_OFF`；该行陈述「此 `I32_CONST` 持有符号 X 的地址」，对被多记的站点同样为真，链接期回写结果一致。窗口外（无基址候选）的全局地址常量不入行。
 
@@ -1239,5 +1240,5 @@ u16 name_len | byte name | u16 fb_len | byte fb_name | u32 base | u32 size
 |------|----------|---------------|------------|--------|
 | `native_fb_multi_instance.st`（无 IN_OUT） | 2 | 2 | 0 | 3 |
 | `native_fb_in_out.st`（`ACC := shared`×2） | 2 | 2 | 2 | 4（含 `shared`=GLOBAL_EXT） |
-| `in_out_alias_field.st`（`ACC := a1_LAST`） | 2 | 2 | 2 | 5（含 `t`、`a1_LAST`） |
+| `in_out_alias_field.st`（`ACC := a1.LAST`） | 2 | 2 | 2 | 5（含 `t`、`a1#LAST`） |
 

@@ -55,7 +55,8 @@ Inductive diag_kind : Type :=
   | DK_FOR_BOUND
   | DK_RESERVED
   | DK_MISSING_ENTRY
-  | DK_ALIAS.
+  | DK_ALIAS
+  | DK_ACCESS.
 
 Record diagnostic : Type := {
   dg_pou  : ident;
@@ -74,6 +75,7 @@ Definition diag_kind_to_string (k : diag_kind) : string :=
   | DK_RESERVED => "reserved-name"
   | DK_MISSING_ENTRY => "missing-entry"
   | DK_ALIAS => "alias"
+  | DK_ACCESS => "access"
   end.
 
 Definition diag_var_string (o : option ident) : string :=
@@ -543,9 +545,13 @@ Fixpoint local_init_stmts (decls : list st_var_decl) : list st_stmt :=
    FB 实例展开 (P1 原生功能块: 逻辑一份 + 每实例数据分离)
 
    将实例声明 `inst : T_FB fbname` 展开为其可写字段的扁平全局
-   `inst_<field>`（声明序），供下游类型检查/desugar/codegen 作为
+   `inst#field`（声明序），供下游类型检查/desugar/codegen 作为
    真实 VAR_GLOBAL 处理。标记声明 inst (T_FB) 保留，供 codegen
    读取 inst→fbname 链接并计算 self 基址。
+
+   连接符用 safest.derived_field_sep（`#`，源语言不可书写），
+   派生名因此不会与用户名字空间相撞；对外的限定访问 `inst.field`
+   由 parser 融合成同一个内部名。
    ------------------------------------------------------------ *)
 
 Definition fb_writable_pair (d : st_var_decl) : option (ident * st_type) :=
@@ -585,7 +591,7 @@ Definition inst_field_global (inst_name : string) (p : ident * st_type)
          : st_var_decl :=
   match p with
   | (ID fname, fty) =>
-      Build_st_var_decl (ID (inst_name ++ "_" ++ fname)) fty D_GLOBAL Q_NONE None
+      Build_st_var_decl (ID (inst_name ++ derived_field_sep ++ fname)) fty D_GLOBAL Q_NONE None
   end.
 
 Fixpoint expand_instances (pous : list st_pou) (ds : list st_var_decl)
@@ -616,7 +622,7 @@ Fixpoint expand_instances (pous : list st_pou) (ds : list st_var_decl)
      2) 每个已声明的 IN_OUT 端口都必须被绑定（无初值可拷贝，
         不绑定即没有别名目标）；
      3) IN_OUT 实参必须是简单变量名，且解析到一个全局
-        （VAR_GLOBAL 或实例展开出的 inst_<field>）；不能是调用方
+        （VAR_GLOBAL 或实例展开出的 inst#field）；不能是调用方
         的局部变量、常量或表达式。例外：调用方自身的 IN_OUT 端口
         可以透传（其形参槽已持有地址）。
      4) 实参类型与端口类型完全相同（别名不做隐式转换），且宽度
@@ -834,6 +840,203 @@ Definition check_program_aliases
            : option diagnostic :=
   first_alias_diag (List.map (check_pou_aliases pous globals) pous).
 
+(* ------------------------------------------------------------
+   v1.5.1 限定访问的方向规则（封装）
+
+   `inst.field` 由 parser 融合成派生名 inst#field，而该名字正是
+   expand_instances 生成的扁平全局名。也就是说：只要类型对得上，任何
+   POU 都能读写任何实例的任何被展开字段 —— 这在安全级代码里是不可
+   接受的隐式共享状态。本层把可见性显式成文：
+     1) FB 的内部 `VAR`（跨周期持久状态）对外不可见：既不能读也不能写；
+     2) 实例的 `VAR_OUTPUT` 对调用方只读：写输出等于绕过 FB 算法直接
+        篡改其结果；
+     3) `VAR_INPUT` / `VAR_IN_OUT` 根本不生成派生名（INPUT 经调用实参、
+        IN_OUT 经指针形参槽传递），引用它们自然按未声明名字被类型检查
+        拒绝，本层无需重复。
+   判定依据是一张由「实例声明 × FB 声明」重新派生的方向表：与
+   expand_instances 用同一连接符 safest.derived_field_sep 拼名，因此不
+   解析字符串、也不可能被用户伪造出的名字骗到。表里查不到的名字即非
+   派生名（普通全局），不受本规则约束。
+   ------------------------------------------------------------ *)
+
+Fixpoint collect_field_dirs (ds : list st_var_decl)
+         : list (ident * var_direction) :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      match d.(var_dir) with
+      | D_INPUT | D_IN_OUT => collect_field_dirs rest
+      | _ => (d.(var_name), d.(var_dir)) :: collect_field_dirs rest
+      end
+  end.
+
+Fixpoint fb_field_dirs (fbname : string) (pous : list st_pou)
+         : list (ident * var_direction) :=
+  match pous with
+  | nil => nil
+  | P_FUNCTION_BLOCK (ID nm) decls _ :: rest =>
+      if String.eqb nm fbname then collect_field_dirs decls
+      else fb_field_dirs fbname rest
+  | _ :: rest => fb_field_dirs fbname rest
+  end.
+
+(* 派生名 inst#field ↦ 该字段在 FB 声明中的方向 *)
+Fixpoint build_field_dir_map (pous : list st_pou) (ds : list st_var_decl)
+         : list (ident * var_direction) :=
+  match ds with
+  | nil => nil
+  | d :: rest =>
+      match d.(var_type) with
+      | T_FB fbname =>
+          List.map
+            (fun p =>
+               (ID (ident_string d.(var_name) ++ derived_field_sep
+                      ++ ident_string (fst p)), snd p))
+            (fb_field_dirs fbname pous)
+          ++ build_field_dir_map pous rest
+      | _ => build_field_dir_map pous rest
+      end
+  end.
+
+Fixpoint lookup_field_dir (m : list (ident * var_direction)) (n : ident)
+         : option var_direction :=
+  match m with
+  | nil => None
+  | (k, dir) :: rest =>
+      if ident_eq k n then Some dir else lookup_field_dir rest n
+  end.
+
+Definition make_access_diag (pou_name : ident) (v : ident) (msg : string)
+           : diagnostic :=
+  {| dg_pou := pou_name; dg_var := Some v; dg_kind := DK_ACCESS;
+     dg_msg := msg |}.
+
+(* 内部 VAR 对任何外部 POU 都不可见；OUTPUT 只读不可写。 *)
+Definition field_read_forbidden (dir : var_direction) : bool :=
+  match dir with D_LOCAL => true | _ => false end.
+
+Definition field_write_forbidden (dir : var_direction) : bool :=
+  match dir with D_LOCAL | D_OUTPUT => true | _ => false end.
+
+Fixpoint expr_access_diag (pou_name : ident)
+           (m : list (ident * var_direction)) (e : st_expr)
+           : option diagnostic :=
+  match e with
+  | E_VAR n =>
+      match lookup_field_dir m n with
+      | Some dir =>
+          if field_read_forbidden dir then
+            Some (make_access_diag pou_name n
+                    "instance internal state (VAR) is not visible outside its FUNCTION_BLOCK")
+          else None
+      | None => None
+      end
+  | E_ARRAY_ACCESS a b =>
+      first_alias_diag (expr_access_diag pou_name m a
+                           :: expr_access_diag pou_name m b :: nil)
+  | E_UNARY_OP _ a => expr_access_diag pou_name m a
+  | E_BIN_OP _ a b => first_alias_diag (expr_access_diag pou_name m a
+                                          :: expr_access_diag pou_name m b :: nil)
+  | E_COMP _ a b => first_alias_diag (expr_access_diag pou_name m a
+                                        :: expr_access_diag pou_name m b :: nil)
+  | E_AND a b => first_alias_diag (expr_access_diag pou_name m a
+                                     :: expr_access_diag pou_name m b :: nil)
+  | E_OR a b => first_alias_diag (expr_access_diag pou_name m a
+                                    :: expr_access_diag pou_name m b :: nil)
+  | E_XOR a b => first_alias_diag (expr_access_diag pou_name m a
+                                     :: expr_access_diag pou_name m b :: nil)
+  | E_FUNC_CALL _ args =>
+      first_alias_diag (List.map (expr_access_diag pou_name m) args)
+  | E_QUALITY_OP _ args =>
+      first_alias_diag (List.map (expr_access_diag pou_name m) args)
+  | _ => None
+  end.
+
+(* 只在 st_stmt 上递归（与本文件 check_alias_in_stmt 同法）：语句序列一律
+   用 List.map + first_alias_diag 就地展开，避免与 list st_stmt 互相递归
+   导致 guard checker 无法判定递减。 *)
+Fixpoint stmt_access_diag (pou_name : ident)
+           (m : list (ident * var_direction)) (s : st_stmt)
+           : option diagnostic :=
+  match s with
+  | S_ASSIGN tgt rhs =>
+      match lookup_field_dir m tgt with
+      | Some dir =>
+          if field_write_forbidden dir then
+            Some (make_access_diag pou_name tgt
+                    "instance field is read-only (or invisible) outside its FUNCTION_BLOCK")
+          else expr_access_diag pou_name m rhs
+      | None => expr_access_diag pou_name m rhs
+      end
+  | S_ARRAY_ASSIGN _ idx rhs =>
+      first_alias_diag (expr_access_diag pou_name m idx
+                           :: expr_access_diag pou_name m rhs :: nil)
+  | S_IF cond then_body else_body =>
+      first_alias_diag
+        ((expr_access_diag pou_name m cond ::
+            first_alias_diag (List.map (stmt_access_diag pou_name m) then_body) :: nil) ++
+         match else_body with
+         | Some b => first_alias_diag (List.map (stmt_access_diag pou_name m) b) :: nil
+         | None => nil
+         end)
+  | S_CASE cond branches default =>
+      first_alias_diag
+        ((expr_access_diag pou_name m cond :: nil) ++
+         List.map
+           (fun ce =>
+              match ce with
+              | CASE_ELEM _ body =>
+                  first_alias_diag (List.map (stmt_access_diag pou_name m) body)
+              end)
+           branches ++
+         match default with
+         | Some b => first_alias_diag (List.map (stmt_access_diag pou_name m) b) :: nil
+         | None => nil
+         end)
+  | S_FOR _ from to step body =>
+      first_alias_diag
+        (expr_access_diag pou_name m from ::
+           expr_access_diag pou_name m to ::
+           match step with
+           | Some se => expr_access_diag pou_name m se :: nil
+           | None => nil
+           end ++
+           first_alias_diag (List.map (stmt_access_diag pou_name m) body) :: nil)
+  | S_WHILE cond body =>
+      first_alias_diag
+        (expr_access_diag pou_name m cond ::
+           first_alias_diag (List.map (stmt_access_diag pou_name m) body) :: nil)
+  | S_REPEAT body cond =>
+      first_alias_diag
+        (first_alias_diag (List.map (stmt_access_diag pou_name m) body) ::
+           expr_access_diag pou_name m cond :: nil)
+  | S_FB_CALL _ params =>
+      first_alias_diag
+        (List.map (fun p => expr_access_diag pou_name m (snd p)) params)
+  | _ => None
+  end.
+
+Definition check_pou_access
+           (pous : list st_pou) (dir_map : list (ident * var_direction))
+           (pou : st_pou) : option diagnostic :=
+  let name := match pou with
+              | P_PROGRAM n _ _ => n
+              | P_FUNCTION n _ _ _ => n
+              | P_FUNCTION_BLOCK n _ _ => n
+              end in
+  let body := match pou with
+              | P_PROGRAM _ _ b => b
+              | P_FUNCTION _ _ _ b => b
+              | P_FUNCTION_BLOCK _ _ b => b
+              end in
+  first_alias_diag (List.map (stmt_access_diag name dir_map) body).
+
+Definition check_program_access
+           (pous : list st_pou) (gdecls : list st_var_decl)
+           : option diagnostic :=
+  let dir_map := build_field_dir_map pous gdecls in
+  first_alias_diag (List.map (check_pou_access pous dir_map) pous).
+
 Definition prepare_function_pou (pou : st_pou) : option st_pou :=
   match pou with
   | P_FUNCTION name ty decls body =>
@@ -967,7 +1170,11 @@ Definition check_program_full_diag_struct (p : st_program) : option diagnostic :
         let fenv := build_fenv_from_pous p.(pou_list) in
         match check_pous_full_struct globals fenv p.(pou_list) with
         | Some d => Some d
-        | None => check_program_aliases p.(pou_list) globals
+        | None =>
+            match check_program_aliases p.(pou_list) globals with
+            | Some d => Some d
+            | None => check_program_access p.(pou_list) p.(global_vars)
+            end
         end
     end.
 
