@@ -266,6 +266,35 @@ VAR_GLOBAL
     latch_b_126 : BOOL;
     latch_a_127 : BOOL;
     latch_b_127 : BOOL;
+
+    (* ==== FUNCTION_BLOCK 实例声明（v1.5 原生 FB 支持）==== *)
+    (* RS/SR 双稳态：用于通道保护锁存与复位逻辑 *)
+    rs_prot_a : RS_FB;
+    rs_prot_b : RS_FB;
+    rs_prot_c : RS_FB;
+    rs_prot_d : RS_FB;
+    sr_reset_a : SR_FB;
+    sr_reset_b : SR_FB;
+
+    (* PID 控制器：用于反应堆功率调节回路 *)
+    pid_power : PID_FB;
+    pid_temp : PID_FB;
+    pid_press : PID_FB;
+
+    (* FBY 速率限制：用于保护信号变化率监测 *)
+    fby_power_rate : FBY_FB;
+    fby_temp_rate : FBY_FB;
+
+    (* 滤波器 FB：用于模拟量输入信号平滑处理 *)
+    filter_fb_a : FILTER_FB;
+    filter_fb_b : FILTER_FB;
+    filter_fb_c : FILTER_FB;
+    filter_fb_d : FILTER_FB;
+
+    (* PID/FBY 诊断追踪变量（VAR_IN_OUT 别名目标） *)
+    pid_power_trace : DINT;
+    pid_temp_trace : DINT;
+    pid_press_trace : DINT;
 END_VAR
 
 PROGRAM NuclearRpsEsfasFull
@@ -924,6 +953,60 @@ filter_a := FilterStep(filter_a, raw_000_a);
 filter_b := FilterStep(filter_b, raw_000_b);
 filter_c := FilterStep(filter_c, raw_000_c);
 filter_d := FilterStep(filter_d, raw_000_d);
+
+(* ==== FUNCTION_BLOCK 调用：模拟真实核电 RPS 控制回路 ==== *)
+
+(* 1. 使用 FILTER_FB 进行 FB 版滤波处理（与上方 FilterStep 并行，用于对比验证） *)
+filter_fb_a(IN := raw_000_a, ALPHA := 4);
+filter_fb_b(IN := raw_000_b, ALPHA := 4);
+filter_fb_c(IN := raw_000_c, ALPHA := 4);
+filter_fb_d(IN := raw_000_d, ALPHA := 4);
+
+(* 2. PID 控制回路：反应堆功率调节 *)
+(* 设定值 = 1000（满功率），测量值 = raw_000_a（通道 A 功率信号） *)
+(* 比例增益 KP=2，微分增益 KD=1，积分限幅 [0, 500]，输出限幅 [0, 2000] *)
+pid_power(E := 1000 - raw_000_a, KP := 2, KD := 1,
+          UI_LO := 0, UI_HI := 500, LO := 0, HI := 2000,
+          TRACE := pid_power_trace);
+
+(* 3. PID 控制回路：一回路温度调节 *)
+(* 设定值 = 300（设计温度），测量值 = raw_000_b（温度信号） *)
+pid_temp(E := 300 - raw_000_b, KP := 1, KD := 1,
+         UI_LO := 0, UI_HI := 300, LO := 0, HI := 1500,
+         TRACE := pid_temp_trace);
+
+(* 4. PID 控制回路：稳压器压力调节 *)
+(* 设定值 = 155（设计压力 bar×10），测量值 = raw_000_c（压力信号） *)
+pid_press(E := 155 - raw_000_c, KP := 3, KD := 2,
+          UI_LO := 0, UI_HI := 400, LO := 0, HI := 3000,
+          TRACE := pid_press_trace);
+
+(* 5. FBY 速率限制：功率变化率保护 *)
+(* 限制每周期最大功率变化 50 单位 *)
+fby_power_rate(IN := raw_000_a, DR := 50);
+
+(* 6. FBY 速率限制：温度变化率保护 *)
+(* 限制每周期最大温度变化 20 单位 *)
+fby_temp_rate(IN := raw_000_b, DR := 20);
+
+(* 7. RS_FB 保护锁存：通道 A 高功率保护 *)
+(* 当功率 > 1100 时置位锁存，直到系统复位 *)
+rs_prot_a(S := (raw_000_a > 1100), R := train_a_reset);
+
+(* 8. RS_FB 保护锁存：通道 B 高功率保护 *)
+rs_prot_b(S := (raw_000_b > 350), R := train_b_reset);
+
+(* 9. RS_FB 保护锁存：通道 C 高压保护 *)
+rs_prot_c(S := (raw_000_c > 170), R := train_a_reset);
+
+(* 10. RS_FB 保护锁存：通道 D 低压保护 *)
+rs_prot_d(S := (raw_000_d < 140), R := train_b_reset);
+
+(* 11. SR_FB 复位控制：通道 A 复位逻辑 *)
+sr_reset_a(S := train_a_reset, R := (raw_000_a > 1200));
+
+(* 12. SR_FB 复位控制：通道 B 复位逻辑 *)
+sr_reset_b(S := train_b_reset, R := (raw_000_b > 400));
 
 IF reactor_mode < 0 THEN
     diagnosis_count := diagnosis_count + 1;
@@ -11062,7 +11145,155 @@ ELSIF state_b = 0 THEN
     state_b := 1 + 0;
 END_IF;
 
+(* ==== FUNCTION_BLOCK 状态输出（用于调试与验证）==== *)
+PRINT('FB_DIAG t=', cycle_counter,
+      ' pid_pow.U,=', pid_power.U, ' pid_pow.UI,=', pid_power.UI,
+      ' pid_tmp.U,=', pid_temp.U, ' pid_tmp.UI,=', pid_temp.UI,
+      ' pid_prs.U,=', pid_press.U, ' pid_prs.UI,=', pid_press.UI,
+      ' fby_pow.Y,=', fby_power_rate.Y, ' fby_tmp.Y,=', fby_temp_rate.Y,
+      ' flt_a.Y,=', filter_fb_a.Y, ' flt_b.Y,=', filter_fb_b.Y,
+      ' rs_a.Q,=', rs_prot_a.Q, ' rs_b.Q,=', rs_prot_b.Q,
+      ' sr_a.Q,=', sr_reset_a.Q, ' sr_b.Q,=', sr_reset_b.Q,
+      '\n');
+
 END_PROGRAM
+
+(* ================================================================
+   FUNCTION_BLOCK 定义（v1.5 原生 FB 支持）
+
+   模拟实际核电 RPS 工程中的典型算法块：
+     RS_FB      : 置位优先双稳态（保护锁存）
+     SR_FB      : 复位优先双稳态（复位控制）
+     PID_FB     : 增量式 PID 控制器（功率/温度/压力调节）
+     FBY_FB     : 速率限制跟随器（变化率保护）
+     FILTER_FB  : 一阶低通滤波器（信号平滑）
+   ================================================================ *)
+
+(* ---- RS_FB: 置位优先双稳态（Set-Reset Flip-Flop）---- *)
+(* 用于保护通道跳闸锁存，S 与 R 同时为真时输出 1 *)
+FUNCTION_BLOCK RS_FB
+VAR_INPUT
+    S : BOOL;  (* 置位输入：保护条件触发 *)
+    R : BOOL;  (* 复位输入：系统复位信号 *)
+END_VAR
+VAR_OUTPUT
+    Q  : BOOL;  (* 正常输出 *)
+    QN : BOOL;  (* 反相输出 *)
+END_VAR
+    Q := S OR (Q AND NOT R);
+    QN := NOT Q;
+END_FUNCTION_BLOCK
+
+(* ---- SR_FB: 复位优先双稳态（Set-Reset Flip-Flop）---- *)
+(* 用于复位控制逻辑，S 与 R 同时为真时输出 0 *)
+FUNCTION_BLOCK SR_FB
+VAR_INPUT
+    S : BOOL;  (* 置位输入 *)
+    R : BOOL;  (* 复位输入：优先 *)
+END_VAR
+VAR_OUTPUT
+    Q  : BOOL;
+    QN : BOOL;
+END_VAR
+    Q := (S OR Q) AND NOT R;
+    QN := NOT Q;
+END_FUNCTION_BLOCK
+
+(* ---- PID_FB: 增量式 PID 控制器 ---- *)
+(* 用于反应堆功率、温度、压力调节回路
+   特性：
+     - 积分项抗饱和（UI 限制在 [UI_LO, UI_HI]）
+     - 输出限幅（U 限制在 [LO, HI]）
+     - 微分项基于误差变化率（DE = E - E_OLD）
+     - VAR_IN_OUT TRACE 用于诊断追踪（直写调用方全局变量）
+*)
+FUNCTION_BLOCK PID_FB
+VAR_INPUT
+    E     : DINT;   (* 当前误差 = 设定值 - 测量值 *)
+    KP    : DINT;   (* 比例增益 *)
+    KD    : DINT;   (* 微分增益 *)
+    UI_LO : DINT;   (* 积分项下限 *)
+    UI_HI : DINT;   (* 积分项上限 *)
+    LO    : DINT;   (* 输出下限 *)
+    HI    : DINT;   (* 输出上限 *)
+END_VAR
+VAR_OUTPUT
+    U   : DINT;   (* 控制输出 *)
+    UI  : DINT;   (* 积分项当前值 *)
+    ALM : BOOL;   (* 输出饱和报警 *)
+END_VAR
+VAR_IN_OUT
+    TRACE : DINT;   (* 诊断追踪：输出同步写入调用方全局 *)
+END_VAR
+VAR
+    DE    : DINT;   (* 误差变化量 *)
+    V     : DINT;   (* 积分项临时值 *)
+    E_OLD : DINT;   (* 上周期误差 *)
+END_VAR
+    DE := E - E_OLD;
+    V := UI + E;
+    IF V > UI_HI THEN
+        V := UI_HI;
+    ELSIF V < UI_LO THEN
+        V := UI_LO;
+    END_IF;
+    UI := V;
+    U := KP * E + UI + KD * DE;
+    IF U > HI THEN
+        U := HI;
+    ELSIF U < LO THEN
+        U := LO;
+    END_IF;
+    IF U >= HI THEN
+        ALM := TRUE;
+    ELSE
+        ALM := FALSE;
+    END_IF;
+    TRACE := U;
+    E_OLD := E;
+END_FUNCTION_BLOCK
+
+(* ---- FBY_FB: 速率限制跟随器（First Order Rate Limiter）---- *)
+(* 用于保护信号变化率监测，限制信号每周期最大变化量 *)
+FUNCTION_BLOCK FBY_FB
+VAR_INPUT
+    IN : DINT;   (* 输入信号 *)
+    DR : DINT;   (* 最大允许变化率（每周期） *)
+END_VAR
+VAR_OUTPUT
+    Y : DINT;   (* 速率限制后的输出 *)
+END_VAR
+VAR
+    V : DINT;   (* 临时值 *)
+END_VAR
+    V := IN;
+    IF V > Y + DR THEN
+        V := Y + DR;
+    ELSIF V < Y - DR THEN
+        V := Y - DR;
+    END_IF;
+    Y := V;
+END_FUNCTION_BLOCK
+
+(* ---- FILTER_FB: 一阶低通滤波器 ---- *)
+(* 用于模拟量输入信号平滑处理
+   算法：Y_new = Y_old + (IN - Y_old) / ALPHA
+   ALPHA 为滤波系数（越大越平滑）
+*)
+FUNCTION_BLOCK FILTER_FB
+VAR_INPUT
+    IN    : DINT;   (* 原始输入信号 *)
+    ALPHA : DINT;   (* 滤波系数（建议 2-10） *)
+END_VAR
+VAR_OUTPUT
+    Y     : DINT;   (* 滤波后输出 *)
+END_VAR
+VAR
+    DIFF  : DINT;   (* 差值 *)
+END_VAR
+    DIFF := IN - Y;
+    Y := Y + (DIFF / ALPHA);
+END_FUNCTION_BLOCK
 
 FUNCTION LimitHigh : BOOL
 VAR_INPUT

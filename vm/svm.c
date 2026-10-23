@@ -6,6 +6,7 @@
  * Modes:
  *   default: execute scan cycles every 1000 ms
  *   -d:      dump the module and exit
+ *   -i:      show module info and exit
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -20,6 +21,7 @@
 
 #include "vm.h"
 #include "sasm_dump.h"
+#include "sasm_info.h"
 
 #define SVM_MAX_FILE_SIZE (2U * 1024U * 1024U)
 
@@ -48,6 +50,7 @@ static void usage(const char *prog)
             "usage: %s [options] <file.sasm> [expected] [local_index]\n"
             "options:\n"
             "  -d           dump module and exit\n"
+            "  -i           show module info and exit\n"
             "  -n CYCLES    execute CYCLES cycles (0 = continuous, default 0)\n"
             "  -p MS        cycle period in milliseconds (default 1000)\n"
             "  -h           show this help\n",
@@ -138,6 +141,7 @@ static void advance_deadline(struct timespec *deadline, uint32_t period_ms)
 int main(int argc, char **argv)
 {
     int dump_mode = 0;
+    int info_mode = 0;
     uint32_t cycles = 0;
     uint32_t period_ms = 1000;
     const char *path = NULL;
@@ -147,6 +151,8 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0) {
             dump_mode = 1;
+        } else if (strcmp(argv[i], "-i") == 0) {
+            info_mode = 1;
         } else if (strcmp(argv[i], "-n") == 0) {
             if ((++i >= argc) || (parse_u32(argv[i], &cycles) != 0)) {
                 usage(argv[0]);
@@ -182,6 +188,10 @@ int main(int argc, char **argv)
 
     if (dump_mode != 0) {
         return sasm_dump_file(path);
+    }
+
+    if (info_mode != 0) {
+        return sasm_info_file(path);
     }
 
     uint32_t local_index = 0;

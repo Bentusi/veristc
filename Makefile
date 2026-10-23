@@ -132,8 +132,9 @@ $(HS_TEST_BIN): $(HS_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h vm/hotstandby/hotstandby
 svm: $(SVM_BIN)
 
 $(SVM_BIN): $(SVM_SRC) vm/sasm_dump.c vm/sasm_dump.h \
+		vm/sasm_info.c vm/sasm_info.h \
 		vm/loader.c vm/safeasm_interp.c vm/vm.h
-	$(CC) $(CFLAGS) -o $@ vm/svm.c vm/sasm_dump.c \
+	$(CC) $(CFLAGS) -o $@ vm/svm.c vm/sasm_dump.c vm/sasm_info.c \
 		vm/loader.c vm/safeasm_interp.c -lm
 
 E2E_OUT_DIR = tests/veristc-tests/out
@@ -319,10 +320,10 @@ SANITIZE_TEST_VM_BIN = $(VM_TEST_DIR)/test_vm-asan
 SANITIZE_FUZZER_BIN = tests/fuzz/sasm_fuzzer
 
 # 使用 sanitizer 标志编译 SVM
-sanitize-svm: vm/svm.c vm/sasm_dump.c vm/loader.c vm/safeasm_interp.c vm/vm.h
+sanitize-svm: vm/svm.c vm/sasm_dump.c vm/sasm_info.c vm/loader.c vm/safeasm_interp.c vm/vm.h
 	@echo "  [SANITIZE] Building SVM with ASan/UBSan..."
 	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -o $(SANITIZE_SVM_BIN) \
-		vm/svm.c vm/sasm_dump.c vm/loader.c vm/safeasm_interp.c \
+		vm/svm.c vm/sasm_dump.c vm/sasm_info.c vm/loader.c vm/safeasm_interp.c \
 		$(SANITIZE_LDFLAGS) -lm
 	@echo "  [SANITIZE] SVM (ASan/UBSan) built: $(SANITIZE_SVM_BIN)"
 
