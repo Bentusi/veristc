@@ -14,9 +14,9 @@ cd "$ROOT"
 test_begin "Nuclear RPS Channel E2E"
 
 ST=tests/st-examples/nuclear_rps_channel.st
-OUT=tests/veristc-tests/out/nuclear_rps_channel.sasm
+OUT=build/sasm/nuclear_rps_channel.sasm
 GOLDEN=tests/st-examples/nuclear_rps_channel.golden.out
-V=veristc/extraction/veristc
+V=build/bin/veristc
 
 step "1/4" "compile ${ST}"
 mkdir -p "$(dirname "$OUT")"
@@ -24,7 +24,7 @@ mkdir -p "$(dirname "$OUT")"
 assert_ok "compile nuclear RPS channel" "$V" -c "$ST" -o "$OUT"
 
 step "2/4" "run 38 cycles, diff against golden"
-vm/svm -n 38 -p 0 "$OUT" > /tmp/chan.raw 2>&1
+build/bin/svm -n 38 -p 0 "$OUT" > /tmp/chan.raw 2>&1
 grep "^CHAN " /tmp/chan.raw > /tmp/chan.actual
 if diff -u "$GOLDEN" /tmp/chan.actual > /tmp/chan.diff 2>&1; then
     echo "  golden diff ... OK"
@@ -44,7 +44,7 @@ assert_ok "first pair byte-identical" cmp /tmp/chan-a.sasm /tmp/chan-b.sasm
 assert_ok "matches production output" cmp /tmp/chan-a.sasm "$OUT"
 
 step "4/4" "svm dump (SIL3 / 结构校验)"
-vm/svm -d "$OUT" > /tmp/chan-dump.out
+build/bin/svm -d "$OUT" > /tmp/chan-dump.out
 assert_contains "/tmp/chan-dump.out" "安全等级: SIL3" "SIL3 level in dump"
 
 check_failures "Nuclear RPS Channel E2E"

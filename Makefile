@@ -6,6 +6,12 @@ CFLAGS = -Wall -Wextra -std=c11 -g -O0 -I.
 AR = ar
 ARFLAGS = rcs
 
+# ── 构建输出目录 ──
+BUILD_DIR = build
+BUILD_BIN = $(BUILD_DIR)/bin
+BUILD_LIB = $(BUILD_DIR)/lib
+BUILD_SASM = $(BUILD_DIR)/sasm
+
 # ── Sanitizer 变体 (P2: ASan/UBSan) ──
 # 用法: make sanitize-test   (构建 ASan/UBSan 测试二进制)
 #        make run-sanitize   (构建并运行 sanitizer 测试)
@@ -18,12 +24,12 @@ SANITIZE_LDFLAGS = -fsanitize=address,undefined
 
 VM_CORE_SRCS = vm/safeasm_interp.c vm/loader.c
 VM_CORE_OBJS = $(VM_CORE_SRCS:.c=.o)
-VM_CORE_LIB  = vm/libvm_core.a
+VM_CORE_LIB  = $(BUILD_LIB)/libvm_core.a
 
 # VM I/O 映射层
 VM_IO_SRCS   = vm/io/io_mapping.c
 VM_IO_OBJS   = $(VM_IO_SRCS:.c=.o)
-VM_IO_LIB    = vm/io/libvm_io.a
+VM_IO_LIB    = $(BUILD_LIB)/libvm_io.a
 
 # VM 热备模块
 VM_HS_SRCS   = vm/hotstandby/snapshot.c \
@@ -31,39 +37,39 @@ VM_HS_SRCS   = vm/hotstandby/snapshot.c \
                vm/hotstandby/state_machine.c \
                vm/hotstandby/download.c
 VM_HS_OBJS   = $(VM_HS_SRCS:.c=.o)
-VM_HS_LIB    = vm/hotstandby/libvm_hs.a
+VM_HS_LIB    = $(BUILD_LIB)/libvm_hs.a
 
 # VM 测试
 VM_TEST_DIR  = tests/vm-tests
 VM_TEST_SRCS = $(VM_TEST_DIR)/test_vm.c
-VM_TEST_BIN  = $(VM_TEST_DIR)/test_vm
+VM_TEST_BIN  = $(BUILD_BIN)/test_vm
 IO_TEST_SRCS = $(VM_TEST_DIR)/test_io_mapping.c
-IO_TEST_BIN  = $(VM_TEST_DIR)/test_io_mapping
+IO_TEST_BIN  = $(BUILD_BIN)/test_io_mapping
 HS_TEST_SRCS = $(VM_TEST_DIR)/test_hotstandby.c
-HS_TEST_BIN  = $(VM_TEST_DIR)/test_hotstandby
+HS_TEST_BIN  = $(BUILD_BIN)/test_hotstandby
 SMOKE_ST = tests/st-examples/core_assign.st
-SMOKE_SASM = tests/veristc-tests/out/core_assign.sasm
+SMOKE_SASM = $(BUILD_SASM)/core_assign.sasm
 FUNCTION_ST = tests/st-examples/function_control_flow.st
-FUNCTION_SASM = tests/veristc-tests/out/function_control_flow.sasm
+FUNCTION_SASM = $(BUILD_SASM)/function_control_flow.sasm
 FUNCTION_NEGATIVE_STS = tests/st-examples/function_impure.st \
                         tests/st-examples/function_recursive.st
 NUCLEAR_FULL_ST = tests/st-examples/nuclear_rps_esfas_full.st
-NUCLEAR_FULL_SASM = tests/veristc-tests/out/nuclear_rps_esfas_full.sasm
+NUCLEAR_FULL_SASM = $(BUILD_SASM)/nuclear_rps_esfas_full.sasm
 NUCLEAR_FULL_TEST_SRC = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e.c
-NUCLEAR_FULL_TEST_BIN = $(VM_TEST_DIR)/test_nuclear_protection_full_e2e
+NUCLEAR_FULL_TEST_BIN = $(BUILD_BIN)/test_nuclear_protection_full_e2e
 CHANNEL_ST = tests/st-examples/nuclear_rps_channel.st
-CHANNEL_SASM = tests/veristc-tests/out/nuclear_rps_channel.sasm
+CHANNEL_SASM = $(BUILD_SASM)/nuclear_rps_channel.sasm
 HS_SNAPSHOT_SRC = vm/hotstandby/snapshot.c
 
-# 统一 SVM: 默认周期运行，-d 输出 dump
+# 统一 SVM: 默认周期运行，-d 输出 dump，-i 显示信息
 SVM_SRC = vm/svm.c
-SVM_BIN = vm/svm
+SVM_BIN = $(BUILD_BIN)/svm
 
 # RT-Thread 适配层 (需要 RT-Thread SDK)
 RTTHREAD_DIR  = rtos/rtthread
 RTTHREAD_SRCS = $(RTTHREAD_DIR)/vm_rtthread.c
 RTTHREAD_OBJS = $(RTTHREAD_SRCS:.c=.o)
-RTTHREAD_BIN  = $(RTTHREAD_DIR)/vm_rtthread.elf
+RTTHREAD_BIN  = $(BUILD_BIN)/vm_rtthread.elf
 
 .PHONY: all build-tests build-vm-test build-io-test build-hs-test build-smoke build-nuclear-e2e build-channel-e2e
 .PHONY: coq vm-lib vm-io vm-hs svm veristc rtthread clean misra-check dune-build
@@ -80,6 +86,7 @@ build-tests: build-vm-test build-io-test build-hs-test build-smoke build-functio
 vm-lib: $(VM_CORE_LIB)
 
 $(VM_CORE_LIB): $(VM_CORE_OBJS)
+	@mkdir -p $(BUILD_LIB)
 	$(AR) $(ARFLAGS) $@ $^
 
 vm/%.o: vm/%.c vm/vm.h
@@ -92,6 +99,7 @@ vm/%.o: vm/%.c vm/vm.h
 vm-io: vm-lib $(VM_IO_LIB)
 
 $(VM_IO_LIB): $(VM_IO_OBJS)
+	@mkdir -p $(BUILD_LIB)
 	$(AR) $(ARFLAGS) $@ $^
 
 vm/io/%.o: vm/io/%.c vm/io/io_mapping.h vm/vm.h rtos/abstract.h
@@ -104,6 +112,7 @@ vm/io/%.o: vm/io/%.c vm/io/io_mapping.h vm/vm.h rtos/abstract.h
 vm-hs: vm-lib $(VM_HS_LIB)
 
 $(VM_HS_LIB): $(VM_HS_OBJS)
+	@mkdir -p $(BUILD_LIB)
 	$(AR) $(ARFLAGS) $@ $^
 
 vm/hotstandby/%.o: vm/hotstandby/%.c vm/hotstandby/hotstandby.h vm/vm.h
@@ -116,61 +125,66 @@ vm/hotstandby/%.o: vm/hotstandby/%.c vm/hotstandby/hotstandby.h vm/vm.h
 build-vm-test: $(VM_TEST_BIN)
 
 $(VM_TEST_BIN): $(VM_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h $(VM_CORE_LIB) $(VM_IO_LIB) -lm
-	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+	@mkdir -p $(BUILD_BIN)
+	$(CC) $(CFLAGS) -o $@ $< -L$(BUILD_LIB) -Lvm/io -lvm_io -lvm_core -lm
 
 build-io-test: $(IO_TEST_BIN)
 
 $(IO_TEST_BIN): $(IO_TEST_SRCS) vm/io/io_mapping.h vm/vm.h $(VM_CORE_LIB) $(VM_IO_LIB)
-	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+	@mkdir -p $(BUILD_BIN)
+	$(CC) $(CFLAGS) -o $@ $< -L$(BUILD_LIB) -Lvm/io -lvm_io -lvm_core -lm
 
 build-hs-test: $(HS_TEST_BIN)
 
 $(HS_TEST_BIN): $(HS_TEST_SRCS) $(VM_CORE_SRCS) vm/vm.h vm/hotstandby/hotstandby.h
+	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) -o $@ $< -lm
 
-# 统一 VM 可执行程序: 默认周期运行; -d 为 dump 模式
+# 统一 VM 可执行程序: 默认周期运行; -d 为 dump 模式; -i 为 info 模式
 svm: $(SVM_BIN)
 
 $(SVM_BIN): $(SVM_SRC) vm/sasm_dump.c vm/sasm_dump.h \
 		vm/sasm_info.c vm/sasm_info.h \
 		vm/loader.c vm/safeasm_interp.c vm/vm.h
+	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) -o $@ vm/svm.c vm/sasm_dump.c vm/sasm_info.c \
 		vm/loader.c vm/safeasm_interp.c -lm
 
-E2E_OUT_DIR = tests/veristc-tests/out
+E2E_OUT_DIR = $(BUILD_SASM)
 
-$(SMOKE_SASM): veristc/extraction/veristc $(SMOKE_ST)
-	@mkdir -p $(dir $@)
-	./veristc/extraction/veristc -c $(SMOKE_ST) -o $@
+$(SMOKE_SASM): $(VERISTC_BIN) $(SMOKE_ST)
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -c $(SMOKE_ST) -o $@
 
 build-smoke: $(SMOKE_SASM)
 
-$(FUNCTION_SASM): veristc/extraction/veristc $(FUNCTION_ST)
-	@mkdir -p $(dir $@)
-	./veristc/extraction/veristc -c $(FUNCTION_ST) -o $@
+$(FUNCTION_SASM): $(VERISTC_BIN) $(FUNCTION_ST)
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -c $(FUNCTION_ST) -o $@
 
 build-function-tests: $(FUNCTION_SASM)
 
 # 复杂核电模型构建: ST -> VeriSTC -> SASM -> VM 测试程序
 build-nuclear-e2e: $(NUCLEAR_FULL_SASM) $(NUCLEAR_FULL_TEST_BIN)
 
-$(NUCLEAR_FULL_SASM): veristc/extraction/veristc $(NUCLEAR_FULL_ST)
-	@mkdir -p $(dir $@)
-	./veristc/extraction/veristc -a $(NUCLEAR_FULL_ST)
-	./veristc/extraction/veristc -c $(NUCLEAR_FULL_ST) -o $@
+$(NUCLEAR_FULL_SASM): $(VERISTC_BIN) $(NUCLEAR_FULL_ST)
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -a $(NUCLEAR_FULL_ST)
+	$(VERISTC_BIN) -c $(NUCLEAR_FULL_ST) -o $@
 
 # 单组 RPS 4 通道保护 + ESFAS 顺序器（状态密集中型用例，golden 由
 # run_channel_e2e.sh 比对；SASM 构建在此收敛）
 build-channel-e2e: $(CHANNEL_SASM)
 
-$(CHANNEL_SASM): veristc/extraction/veristc $(CHANNEL_ST)
-	@mkdir -p $(dir $@)
-	./veristc/extraction/veristc -c $(CHANNEL_ST) -o $@
+$(CHANNEL_SASM): $(VERISTC_BIN) $(CHANNEL_ST)
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -c $(CHANNEL_ST) -o $@
 
 $(NUCLEAR_FULL_TEST_BIN): $(NUCLEAR_FULL_TEST_SRC) $(NUCLEAR_FULL_SASM) \
 		$(HS_SNAPSHOT_SRC) \
 		vm/hotstandby/hotstandby.h $(VM_CORE_LIB) $(VM_IO_LIB) -lm
-	$(CC) $(CFLAGS) -o $@ $< -Lvm -Lvm/io -lvm_io -lvm_core -lm
+	@mkdir -p $(BUILD_BIN)
+	$(CC) $(CFLAGS) -o $@ $< -L$(BUILD_LIB) -Lvm/io -lvm_io -lvm_core -lm
 
 # ================================================================
 # RT-Thread 适配层 (需要 RT-Thread SDK)
@@ -277,10 +291,11 @@ $(EXTRACT_STAMP): $(EXTR_VO)
 extract: $(EXTRACT_STAMP)
 
 # 编译提取后的 OCaml 可执行程序
-VERISTC_BIN = veristc/extraction/veristc
+VERISTC_SRC_BIN = veristc/extraction/veristc
+VERISTC_BIN = $(BUILD_BIN)/veristc
 
 # veristc_main.ml 为手写源（不参与提取），须显式列为依赖，否则改动不重链接
-$(VERISTC_BIN): $(EXTRACT_STAMP) $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc_main.ml
+$(VERISTC_SRC_BIN): $(EXTRACT_STAMP) $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc_main.ml
 	@echo "  [OCAML] Compiling veristc executable..."
 	@cd $(VERISTC_DIR)/$(EXTRACTION_DIR) && \
 		ocamlfind ocamlopt -package str -linkpkg -c $$(ocamldep -sort *.mli 2>/dev/null) && \
@@ -288,7 +303,11 @@ $(VERISTC_BIN): $(EXTRACT_STAMP) $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc_main.m
 		ocamlfind ocamlopt -o veristc -package str -linkpkg $$OCAML_FILES 2>&1 || \
 		(ocamlopt -c $$(ocamldep -sort *.mli 2>/dev/null) && \
 		 ocamlopt -o veristc str.cmxa $$OCAML_FILES) 2>&1
-	@echo "  [OCAML] veristc executable built: $(VERISTC_DIR)/$(EXTRACTION_DIR)/veristc"
+	@echo "  [OCAML] veristc executable built: $(VERISTC_SRC_BIN)"
+
+$(VERISTC_BIN): $(VERISTC_SRC_BIN)
+	@mkdir -p $(BUILD_BIN)
+	cp $(VERISTC_SRC_BIN) $(VERISTC_BIN)
 
 veristc: $(VERISTC_BIN)
 
@@ -309,19 +328,22 @@ dune-extract: dune-build
 dune-veristc: dune-extract
 	@echo "  [DUNE] Building veristc executable..."
 	cd veristc && dune build extraction/veristc.exe
-	@echo "  [DUNE] veristc executable built"
+	@mkdir -p $(BUILD_BIN)
+	cp veristc/_build/default/extraction/veristc.exe $(VERISTC_BIN)
+	@echo "  [DUNE] veristc executable built: $(VERISTC_BIN)"
 
 # ================================================================
 # Sanitizer 变体 (P2: ASan/UBSan 内存安全检测)
 # ================================================================
 
-SANITIZE_SVM_BIN = vm/svm-asan
-SANITIZE_TEST_VM_BIN = $(VM_TEST_DIR)/test_vm-asan
-SANITIZE_FUZZER_BIN = tests/fuzz/sasm_fuzzer
+SANITIZE_SVM_BIN = $(BUILD_BIN)/svm-asan
+SANITIZE_TEST_VM_BIN = $(BUILD_BIN)/test_vm-asan
+SANITIZE_FUZZER_BIN = $(BUILD_BIN)/sasm_fuzzer
 
 # 使用 sanitizer 标志编译 SVM
 sanitize-svm: vm/svm.c vm/sasm_dump.c vm/sasm_info.c vm/loader.c vm/safeasm_interp.c vm/vm.h
 	@echo "  [SANITIZE] Building SVM with ASan/UBSan..."
+	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -o $(SANITIZE_SVM_BIN) \
 		vm/svm.c vm/sasm_dump.c vm/sasm_info.c vm/loader.c vm/safeasm_interp.c \
 		$(SANITIZE_LDFLAGS) -lm
@@ -333,8 +355,9 @@ sanitize-test: $(SANITIZE_TEST_VM_BIN)
 $(SANITIZE_TEST_VM_BIN): $(VM_TEST_DIR)/test_vm.c $(VM_CORE_SRCS) vm/vm.h \
 		$(VM_CORE_LIB) $(VM_IO_LIB)
 	@echo "  [SANITIZE] Building test_vm with ASan/UBSan..."
+	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -o $@ $< \
-		-Lvm -Lvm/io -lvm_io -lvm_core $(SANITIZE_LDFLAGS) -lm
+		-L$(BUILD_LIB) -Lvm/io -lvm_io -lvm_core $(SANITIZE_LDFLAGS) -lm
 	@echo "  [SANITIZE] test_vm (ASan/UBSan) built: $@"
 
 # 构建并运行 sanitizer 测试（需要先正常构建 .sasm 测试文件）
@@ -342,8 +365,8 @@ run-sanitize: sanitize-svm sanitize-test build-smoke build-function-tests
 	@echo "  [SANITIZE] Running test_vm under ASan/UBSan..."
 	@$(SANITIZE_TEST_VM_BIN)
 	@echo "  [SANITIZE] Running SVM under ASan/UBSan..."
-	@$(SANITIZE_SVM_BIN) -n 1 -p 0 tests/veristc-tests/out/core_assign.sasm 42 > /dev/null
-	@$(SANITIZE_SVM_BIN) -n 6 -p 0 tests/veristc-tests/out/function_control_flow.sasm > /dev/null
+	@$(SANITIZE_SVM_BIN) -n 1 -p 0 $(BUILD_SASM)/core_assign.sasm 42 > /dev/null
+	@$(SANITIZE_SVM_BIN) -n 6 -p 0 $(BUILD_SASM)/function_control_flow.sasm > /dev/null
 	@echo "  [SANITIZE] All sanitizer checks passed"
 
 # ================================================================
@@ -358,6 +381,7 @@ build-fuzzer: $(SANITIZE_FUZZER_BIN)
 $(SANITIZE_FUZZER_BIN): $(FUZZ_SRC) vm/loader.c vm/vm.h vm/crc32_table.inc
 	@echo "  [FUZZ] Building .sasm fuzzer..."
 	@mkdir -p $(FUZZ_DIR)/corpus
+	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) $(SANITIZE_FLAGS) -I. \
 		-o $@ $< $(SANITIZE_LDFLAGS) -lm
 	@echo "  [FUZZ] Fuzzer built: $@"
@@ -378,31 +402,27 @@ misra-check:
 # ================================================================
 
 clean:
-	rm -f $(VM_TEST_BIN) $(IO_TEST_BIN) $(HS_TEST_BIN) $(NUCLEAR_FULL_TEST_BIN) $(SANITIZE_TEST_VM_BIN) $(SANITIZE_SVM_BIN) $(SANITIZE_FUZZER_BIN)
-	rm -f $(SVM_BIN) $(SMOKE_SASM) $(NUCLEAR_FULL_SASM)
-	rm -f veristc/extraction/veristc veristc/extraction/.extract_stamp
+	@echo "  [CLEAN] Removing build directory..."
+	rm -rf $(BUILD_DIR)
+	@echo "  [CLEAN] Removing object files..."
+	rm -f $(VM_CORE_OBJS) $(VM_IO_OBJS) $(VM_HS_OBJS) $(RTTHREAD_OBJS)
+	@echo "  [CLEAN] Removing temporary files..."
 	rm -f output.sasm output.txt .lia.cache .test_fix.aux
-	rm -rf tests/veristc-tests/out
-	rm -f $(VM_CORE_LIB) $(VM_CORE_OBJS)
-	rm -f $(VM_IO_LIB) $(VM_IO_OBJS)
-	rm -f $(VM_HS_LIB) $(VM_HS_OBJS)
-	rm -f $(RTTHREAD_OBJS) $(RTTHREAD_BIN)
+	rm -f .misra_report.txt
+	rm -rf .misra_reports
+	@echo "  [CLEAN] Removing Coq build artifacts..."
 	find . -type f ! -path './.git/*' ! -path './.venv/*' \( \
 			-name '*.vo' -o -name '*.vos' -o -name '*.vok' -o \
 			-name '*.vio' -o -name '*.glob' -o -name '*.aux' -o \
 			-name '*.cache' -o -name '*.cmi' -o -name '*.cmx' -o \
 			-name '*.cmo' -o -name '*.cma' -o -name '*.cmxa' -o \
-			-name '*.cmxs' -o -name '*.o' -o -name '*.obj' -o \
-			-name '*.a' -o -name '*.lib' -o -name '*.so' -o \
-			-name '*.dll' -o -name '*.dylib' -o -name '*.d' -o \
-			-name '*.dep' -o -name '*.pyc' -o -name '*.pyo' -o \
-			-name '*.annot' -o -name '*.merlin' \) -delete
-	find veristc/extraction vstac/extraction -type f \
+			-name '*.cmxs' -o -name '*.d' -o -name '*.dep' -o \
+			-name '*.annot' -o -name '*.merlin' \) -delete 2>/dev/null || true
+	find veristc/extraction -type f \
 		\( -name '*.ml' -o -name '*.mli' \) \
 		! -name 'veristc_main.ml' -delete 2>/dev/null || true
 	find . -type d ! -path './.git*' ! -path './.venv*' \( \
 		-name '__pycache__' -o -name '.coq-native' -o \
 		-name '_build' \) -exec rm -rf {} + 2>/dev/null || true
 	cd veristc && dune clean 2>/dev/null || true
-	rm -f .misra_report.txt
-	rm -rf .misra_reports
+	@echo "  [CLEAN] Clean complete"

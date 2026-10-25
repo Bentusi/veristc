@@ -23,7 +23,7 @@ fi
 step "2/2" "run nuclear protection e2e test"
 echo "Running nuclear ST end-to-end (${line_count} ST lines)"
 assert_ok "nuclear protection e2e" \
-    tests/vm-tests/test_nuclear_protection_full_e2e \
-    tests/veristc-tests/out/nuclear_rps_esfas_full.sasm
+    build/bin/test_nuclear_protection_full_e2e \
+    build/sasm/nuclear_rps_esfas_full.sasm
 
 check_failures "Nuclear ST -> VeriSTC -> SASM -> VM"

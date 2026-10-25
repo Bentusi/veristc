@@ -2,24 +2,13 @@
 # 忽略编译中间文件和生成产物
 
 # ================================================================
-# C 编译产物
+# 构建输出目录（所有 C 编译产物）
 # ================================================================
-# 可执行文件
-vm/svm
-vm/svm-asan
+build/
+
+# 临时输出文件
 output.sasm
 output.txt
-tests/veristc-tests/out/
-
-# VM 测试可执行文件（tests/vm-tests/ 下的编译产物，源码 .c 保留跟踪）
-tests/vm-tests/test_vm
-tests/vm-tests/test_io_mapping
-tests/vm-tests/test_hotstandby
-tests/vm-tests/test_nuclear_protection_full_e2e
-
-# ASan/UBSan 与模糊测试构建产物
-tests/vm-tests/test_vm-asan
-tests/fuzz/sasm_fuzzer
 
 # RT-Thread 移植构建产物
 *.elf
@@ -69,9 +58,6 @@ tests/fuzz/sasm_fuzzer
 veristc/extraction/*.ml
 veristc/extraction/*.mli
 !veristc/extraction/veristc_main.ml
-
-# 编译后的可执行文件
-veristc/extraction/veristc
 
 # Dune 构建缓存
 _build/

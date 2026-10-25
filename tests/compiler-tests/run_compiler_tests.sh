@@ -6,7 +6,7 @@ cd "$ROOT/../.."
 
 . "$ROOT/../test_framework.sh"
 
-V=veristc/extraction/veristc
+V=build/bin/veristc
 
 test_begin "Compiler Tests"
 

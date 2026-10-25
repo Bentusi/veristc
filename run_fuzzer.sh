@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-FUZZER_BIN="tests/fuzz/sasm_fuzzer"
+FUZZER_BIN="build/bin/sasm_fuzzer"
 CORPUS_DIR="tests/fuzz/corpus"
 ITERATIONS="${1:-100000}"
 
@@ -23,11 +23,11 @@ fi
 mkdir -p "$CORPUS_DIR"
 
 # ── 复制种子文件到语料目录 ──
-if [ -f tests/veristc-tests/out/core_assign.sasm ]; then
-    cp tests/veristc-tests/out/core_assign.sasm "$CORPUS_DIR/"
+if [ -f build/sasm/core_assign.sasm ]; then
+    cp build/sasm/core_assign.sasm "$CORPUS_DIR/"
 fi
-if [ -f tests/veristc-tests/out/function_control_flow.sasm ]; then
-    cp tests/veristc-tests/out/function_control_flow.sasm "$CORPUS_DIR/"
+if [ -f build/sasm/function_control_flow.sasm ]; then
+    cp build/sasm/function_control_flow.sasm "$CORPUS_DIR/"
 fi
 
 # ── 运行 fuzzer ──

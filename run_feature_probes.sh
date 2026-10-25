@@ -13,8 +13,8 @@ cd "$ROOT"
 
 test_begin "SafeST Feature Probes"
 
-V=veristc/extraction/veristc
-SVM=vm/svm
+V=build/bin/veristc
+SVM=build/bin/svm
 SRC=tests/st-examples/feature-probes
 S=tests/veristc-tests/out/probes
 G=$SRC/golden

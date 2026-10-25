@@ -14,9 +14,9 @@ cd "$ROOT"
 test_begin "Algorithm Blocks Multi-Instance E2E"
 
 ST=tests/st-examples/algo_blocks_multi_instance.st
-OUT=tests/veristc-tests/out/algo_blocks_multi_instance.sasm
+OUT=build/sasm/algo_blocks_multi_instance.sasm
 GOLDEN=tests/st-examples/algo_blocks_multi_instance.golden.out
-V=veristc/extraction/veristc
+V=build/bin/veristc
 
 step "1/4" "compile ${ST}"
 mkdir -p "$(dirname "$OUT")"
@@ -24,7 +24,7 @@ mkdir -p "$(dirname "$OUT")"
 assert_ok "compile algo blocks" "$V" -c "$ST" -o "$OUT"
 
 step "2/4" "run 12 cycles, diff against golden"
-vm/svm -n 12 -p 0 "$OUT" > /tmp/algo.raw 2>&1
+build/bin/svm -n 12 -p 0 "$OUT" > /tmp/algo.raw 2>&1
 grep "^ALG " /tmp/algo.raw > /tmp/algo.actual
 if diff -u "$GOLDEN" /tmp/algo.actual > /tmp/algo.diff 2>&1; then
     echo "  golden diff ... OK"
@@ -44,7 +44,7 @@ assert_ok "first pair byte-identical" cmp /tmp/algo-a.sasm /tmp/algo-b.sasm
 assert_ok "matches production output" cmp /tmp/algo-a.sasm "$OUT"
 
 step "4/4" "svm dump (SIL3 / 结构校验)"
-vm/svm -d "$OUT" > /tmp/algo-dump.out
+build/bin/svm -d "$OUT" > /tmp/algo-dump.out
 assert_contains "/tmp/algo-dump.out" "安全等级: SIL3" "SIL3 level in dump"
 
 check_failures "Algorithm Blocks Multi-Instance E2E"

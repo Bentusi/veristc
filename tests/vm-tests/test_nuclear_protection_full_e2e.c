@@ -586,7 +586,7 @@ int main(int argc, char **argv)
 {
     const char *path = argc > 1
         ? argv[1]
-        : "tests/veristc-tests/out/nuclear_rps_esfas_full.sasm";
+        : "build/sasm/nuclear_rps_esfas_full.sasm";
 
     load_compiled_module(path);
 

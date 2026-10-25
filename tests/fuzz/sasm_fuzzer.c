@@ -143,8 +143,8 @@ static int scan_corpus_dir(const char *dir, uint8_t **seeds, uint32_t *sizes,
     
     /* 扫描常见测试文件 */
     const char *test_files[] = {
-        "tests/veristc-tests/out/core_assign.sasm",
-        "tests/veristc-tests/out/function_control_flow.sasm",
+        "build/sasm/core_assign.sasm",
+        "build/sasm/function_control_flow.sasm",
         NULL
     };
 
