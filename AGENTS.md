@@ -24,7 +24,8 @@ veristc/
 │   ├── phase2-io-rtos.prompt.md
 │   ├── phase3-hotstandby.prompt.md
 │   ├── phase4-engineering.prompt.md
-│   └── phase5-function-semantics.prompt.md
+│   ├── phase5-function-semantics.prompt.md
+│   └── phase6-veriide.prompt.md
 ├── spec/                         ← 顶层 Spec 文档（开发可读）
 │   ├── safest-spec.md              SafeST 语言规范（BNF + 类型系统）
 │   ├── safeasm-spec.md             SafeASM 指令集 + 二进制格式
@@ -93,6 +94,10 @@ veristc/
   - 加载 `.sasm` → CRC32 校验 → 周期解释执行
   - I/O 映射层驱动 AI/AO/DI/DO（缩放/偏置/安全限值）
   - 双机热备（状态快照 + 脏页同步 + 无扰切换 + 增量下装）
+- **工程站（Phase 6 规划）**：VeriIDE —— 前后端分离的浏览器 IDE，覆盖「图形组态 → 编译 → 仿真验证 → 下装运行」闭环与自定义算法块库
+  - 它**调用** `veristc` 而非替代：图形层只做「图 JSON → 文本 ST」源生成，编译器唯一入口仍是文本 ST（语义证明边界，不得绕过）
+  - 命名体系：编译器 `veristc` / 工程站 `VeriIDE`（规划目录 `veriide/`）/ 无 UI 命令行 `veride` / 目标端 `veristc-agent`
+  - 详细设计、前置差距与阶段验收见 `plan/phase6-veriide.prompt.md`
 
 **数据流**：
 ```
@@ -122,6 +127,7 @@ veristc/
 | 3 | 第 21-25 周 | 双机热备 + 增量下装 | Phase 1 | ✅ 完成 |
 | 4 | 第 26-29 周 | 工程化完善（测试+文档） | Phase 1-3 | ✅ 完成 |
 | 5 | 第 30 周起 | 恢复 IEC 风格无状态 FUNCTION + CALL/RETURN + 后续证明 | Phase 1 | 🚧 进行中 |
+| 6 | 待定（估 28-32 周） | VeriIDE Web 工程站：图形组态→编译→仿真→下装闭环 + 算法块库 | Phase 1-3 | 📝 规划中 |
 
 每个 Phase 的详细实现指引见 `plan/` 下对应文件。
 
