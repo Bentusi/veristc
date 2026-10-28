@@ -4,9 +4,88 @@ VeriIDE = **Veri**fied **I**ntegrated **D**evelopment **E**nvironment。
 前后端分离的 Web 工程站：图形组态 → 代码编译 → 仿真验证 → 下装运行，
 并提供自定义算法块与算法库扩展。
 
-**当前状态：规划中（Phase 6）。** 本目录暂不含代码；目录骨架先行，
-是为了固定三组件边界与依赖规则。实现排期见
-[plan/phase6-veriide.prompt.md](../plan/phase6-veriide.prompt.md)。
+**当前状态：G2 W1-W2 完成（2026-10-29）。** 功能图 Schema + 图→ST 生成器已交付，72 项协议测试全绿（G1: 45 + G2: 27）。
+G0 前置能力已补齐（提交 `0155343`），G1 工程站骨架已完成，G2 图形组态方案见 [plan/phase6-g2-technical-plan.md](../plan/phase6-g2-technical-plan.md)。
+
+## 快速开始
+
+### 使用 CLI
+
+```bash
+# 安装
+cd veri-ide
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# 创建工程
+veride create myproj
+cd myproj
+
+# 编辑 logic/main.st 和 project.yaml
+cat > logic/main.st << 'EOF'
+PROGRAM main
+VAR
+    counter : DINT;
+END_VAR
+counter := counter + 1;
+END_PROGRAM
+EOF
+
+# 编译
+veride build .
+# 输出：build/output.sasm
+```
+
+### 使用 Web 编辑器
+
+```bash
+# 启动后端 API 服务
+veride watch --host 127.0.0.1 --port 8000
+
+# 另开终端，启动前端静态服务
+cd frontend/public
+python3 -m http.server 8080
+
+# 浏览器打开 http://localhost:8080
+```
+
+## G2 W1-W2 交付物
+
+- **FC JSON Schema**（`src/veri_ide/schema/fc.schema.json`）：功能图协议定义（块/连线/接口）
+- **图校验模块**（`src/veri_ide/backend/gen/validator.py`）：`validate_fc_json` / `check_no_cycles` / `topological_sort`
+- **图→ST 生成器**（`src/veri_ide/backend/gen/graph_to_st.py`）：`generate_st_from_fc`（拓扑排序 + 代码生成）
+- **示例功能图**（`examples/pid_control.fc.json`）：PID 控制器互联示例
+- **协议测试门禁**（`tests/test_fc_validator.py` + `tests/test_graph_to_st.py`）：27 项 pytest 用例
+
+## W4 交付物
+
+- **FastAPI 后端**（`src/veri_ide/api/server.py`）：`/health` / `/build` / `/` 端点 + CORS 中间件
+- **CLI 服务命令**（`src/veri_ide/cli.py`）：`veride watch` 启动 API 服务器
+- **前端 API 集成**（`frontend/public/editor.js`）：编译按钮调用后端 + 诊断展示 + 降级策略
+- **协议测试门禁**（`tests/test_api.py`）：10 项 pytest 用例，覆盖端点/请求/响应/CORS/清理
+
+## W3 交付物
+
+- **Monaco Editor 集成**（`frontend/public/`）：ST 语法高亮 + 深色主题 + 行号 + 小地图
+- **TextMate 语法**（`frontend/src/st-language.tmLanguage.json`）：ST 关键字/类型/运算符/注释/字符串
+- **诊断面板**：实时错误标记 + 颜色编码 + 清除按钮
+- **LSP 服务端骨架**（`src/veri_ide/lsp/`）：pygls 框架（完整集成推后续迭代）
+
+## W2 交付物
+
+- **工程服务**（`src/veri_ide/backend/project/service.py`）：`create_project` / `open_project` / `list_projects` / `commit_project` / `diff_project` / `delete_project`
+- **构建服务**（`src/veri_ide/backend/build/service.py`）：`build_project` / `parse_ndjson_diagnostics` / `find_veristc_binary`
+- **CLI 命令行**（`src/veri_ide/cli.py`）：`veride create` / `info` / `ls` / `build` / `commit`
+- **协议测试门禁**（`tests/`）：45 项 pytest 用例，覆盖工程 CRUD + Git 集成 + 编译诊断解析 + API 端点 + 端到端流程
+
+## W1 交付物
+
+- **JSON Schema 协议**（`src/veri_ide/schema/`）：`project.schema.json` / `iomap.schema.json` / `lib.lock.schema.json`
+- **Schema 校验模块**（`src/veri_ide/backend/project/schema.py`）：`validate_project_yaml` / `validate_iomap_toml` / `validate_lib_lock_yaml` / `validate_project`
+- **PRE 合并内核**（`src/veri_ide/backend/pre/merge.py`）：首期只拼接（PRE-1），不做命名空间 mangle（PRE-4 推 G5）
+- **协议测试门禁**（`tests/`）：11 项 pytest 用例，覆盖 schema 合法/非法 + PRE 合并顺序/缺失文件
+- **测试样本工程**（`tests/fixtures/valid-project/`）：`project.yaml` + `logic/MAIN.st` + `logic/pid.st` + `iomap/ai.toml`
 
 ## 信任级别
 

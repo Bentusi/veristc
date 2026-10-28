@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://veristc.dev/schema/fc.schema.json",
+  "title": "Function Chart (FC)",
+  "description": "Graphical representation of algorithm block interconnections",
+  "type": "object",
+  "required": ["version", "type", "name", "blocks", "connections"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Schema version"
+    },
+    "type": {
+      "type": "string",
+      "const": "FC",
+      "description": "Chart type (FC = Function Chart)"
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[A-Z_][A-Z0-9_]*$",
+      "description": "Program name (uppercase identifier)"
+    },
+    "interface": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/port"},
+          "default": []
+        },
+        "output": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/port"},
+          "default": []
+        },
+        "in_out": {
+          "type": "array",
+          "items": {"$ref": "#/definitions/port"},
+          "default": []
+        }
+      },
+      "default": {}
+    },
+    "blocks": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/block"},
+      "minItems": 0
+    },
+    "connections": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/connection"},
+      "minItems": 0
+    }
+  },
+  "definitions": {
+    "port": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["BOOL", "DINT", "REAL", "STRING"]
+        },
+        "default": {
+          "type": ["string", "number", "boolean"]
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": ["id", "type", "position"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]*$",
+          "description": "Block instance name"
+        },
+        "type": {
+          "type": "string",
+          "description": "Block type (e.g., PID, LIMITER, RS, SR)"
+        },
+        "position": {
+          "type": "object",
+          "required": ["x", "y"],
+          "properties": {
+            "x": {"type": "number"},
+            "y": {"type": "number"}
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "number", "boolean"]
+          },
+          "default": {}
+        }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "type": "object",
+          "required": ["block", "port"],
+          "properties": {
+            "block": {
+              "type": "string",
+              "description": "Source block ID or '__interface__' for input ports"
+            },
+            "port": {
+              "type": "string",
+              "description": "Source port name"
+            }
+          }
+        },
+        "to": {
+          "type": "object",
+          "required": ["block", "port"],
+          "properties": {
+            "block": {
+              "type": "string",
+              "description": "Target block ID or '__interface__' for output ports"
+            },
+            "port": {
+              "type": "string",
+              "description": "Target port name"
+            }
+          }
+        }
+      }
+    }
+  }
+}

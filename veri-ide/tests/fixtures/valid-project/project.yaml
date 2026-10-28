@@ -1,0 +1,7 @@
+name: test_project
+safety_level: SIL2
+svm_version: 1.0.0
+description: Test project for schema validation
+logic_files:
+  - MAIN.st
+  - pid.st

@@ -1,0 +1,5 @@
+name: invalid_project
+safety_level: SIL4
+svm_version: 1.0
+logic_files:
+  - main.st

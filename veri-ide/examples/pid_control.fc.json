@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "type": "FC",
+  "name": "PID_CONTROL",
+  "interface": {
+    "input": [
+      {"name": "setpoint", "type": "DINT"},
+      {"name": "measurement", "type": "DINT"}
+    ],
+    "output": [
+      {"name": "control_output", "type": "DINT"}
+    ]
+  },
+  "blocks": [
+    {
+      "id": "pid1",
+      "type": "PID",
+      "position": {"x": 200, "y": 100},
+      "parameters": {"kp": 10, "ki": 1, "kd": 0}
+    },
+    {
+      "id": "limiter1",
+      "type": "LIMITER",
+      "position": {"x": 400, "y": 100},
+      "parameters": {"min": 0, "max": 100}
+    }
+  ],
+  "connections": [
+    {
+      "from": {"block": "__interface__", "port": "setpoint"},
+      "to": {"block": "pid1", "port": "SP"}
+    },
+    {
+      "from": {"block": "__interface__", "port": "measurement"},
+      "to": {"block": "pid1", "port": "PV"}
+    },
+    {
+      "from": {"block": "pid1", "port": "OUT"},
+      "to": {"block": "limiter1", "port": "IN"}
+    },
+    {
+      "from": {"block": "limiter1", "port": "OUT"},
+      "to": {"block": "__interface__", "port": "control_output"}
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[temperature_sensor]
+channel = 0
+scale = 0.1
+bias = -40.0
+
+[pressure_sensor]
+channel = 1
+scale = 0.01
+bias = 0.0
+safety_limit = {min = 0, max = 100}

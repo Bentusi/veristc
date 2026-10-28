@@ -178,7 +178,10 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | 3 | 第 21-25 周 | 双机热备 + 增量下装 | Phase 1 | ✅ 完成 |
 | 4 | 第 26-29 周 | 工程化完善（测试+文档） | Phase 1-3 | ✅ 完成 |
 | 5 | 第 30 周起 | 恢复 IEC 风格无状态 FUNCTION + CALL/RETURN + 后续证明 | Phase 1 | 🚧 进行中 |
-| 6 | 待定（估 28-32 周） | VeriIDE Web 工程站：图形组态→编译→仿真→下装闭环 + 算法块库 | Phase 1-3 | 📝 规划中 |
+| 6 | 待定（估 28-32 周） | VeriIDE Web 工程站：图形组态→编译→仿真→下装闭环 + 算法块库 | Phase 1-3 | 🚧 G0 完成 / G1 规划中 |
+
+Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨架，📝 方案已写）→ G2（图形组态）→ G3（仿真验证）→ G4（下装运行）→ G5（库与扩展）。
+详细实现指引：`plan/phase6-veriide.prompt.md`（总览）、`plan/phase6-g0-technical-plan.md`（G0）、`plan/phase6-g1-technical-plan.md`（G1）。
 
 每个 Phase 的详细实现指引见 `plan/` 下对应文件。
 

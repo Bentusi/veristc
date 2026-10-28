@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeriIDE ST Editor</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #header {
+            background: #1e1e1e;
+            color: #cccccc;
+            padding: 8px 16px;
+            border-bottom: 1px solid #333;
+        }
+        #header h1 {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        #toolbar {
+            background: #252526;
+            padding: 8px 16px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            gap: 8px;
+        }
+        #toolbar button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #toolbar button:hover {
+            background: #1177bb;
+        }
+        #toolbar button:disabled {
+            background: #3c3c3c;
+            cursor: not-allowed;
+        }
+        #editor-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        #editor {
+            flex: 1;
+        }
+        #status-bar {
+            background: #007acc;
+            color: white;
+            padding: 4px 16px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+        #diagnostics {
+            background: #1e1e1e;
+            border-top: 1px solid #333;
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 8px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+        }
+        .diagnostic-error {
+            color: #f48771;
+        }
+        .diagnostic-warning {
+            color: #cca700;
+        }
+        .diagnostic-info {
+            color: #75beff;
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>VeriIDE — ST Editor</h1>
+    </div>
+    <div id="toolbar">
+        <button id="btn-build">Build</button>
+        <button id="btn-clear">Clear Diagnostics</button>
+        <span id="build-status" style="color: #cccccc; line-height: 28px; margin-left: 16px;"></span>
+    </div>
+    <div id="editor-container">
+        <div id="editor"></div>
+        <div id="diagnostics"></div>
+    </div>
+    <div id="status-bar">
+        <span id="status-left">Ready</span>
+        <span id="status-right">ST | UTF-8</span>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js" 
+            integrity="sha384-SF/kPhqG3NMxqsYAbQqHkdF53WQx8yTkY0Ys+M+ayeC20QNujPyyxIuUEdEf0eG/" 
+            crossorigin="anonymous"></script>
+    <script src="editor.js"></script>
+</body>
+</html>

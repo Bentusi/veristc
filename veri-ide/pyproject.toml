@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veri-ide"
+version = "0.1.0"
+authors = [
+    {name = "VeriSTC Team"}
+]
+description = "VeriIDE — Verified Integrated Development Environment"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "jsonschema>=4.17",
+    "gitpython>=3.1",
+    "click>=8.0",
+    "pygls>=1.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.23",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+veride = "veri_ide.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["veri_ide*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

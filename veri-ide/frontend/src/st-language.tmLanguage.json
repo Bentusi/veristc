@@ -1,0 +1,101 @@
+{
+  "name": "Structured Text (ST)",
+  "scopeName": "source.st",
+  "fileTypes": ["st"],
+  "patterns": [
+    {
+      "name": "comment.block.st",
+      "begin": "\\(\\*",
+      "end": "\\*\\)",
+      "captures": {
+        "0": {"name": "punctuation.definition.comment.st"}
+      }
+    },
+    {
+      "name": "comment.line.double-slash.st",
+      "match": "//.*$",
+      "captures": {
+        "0": {"name": "punctuation.definition.comment.st"}
+      }
+    },
+    {
+      "name": "string.quoted.double.st",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.st",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "string.quoted.single.st",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.st",
+          "match": "\\\\."
+        }
+      ]
+    },
+    {
+      "name": "constant.numeric.integer.st",
+      "match": "\\b[0-9]+\\b"
+    },
+    {
+      "name": "constant.numeric.hex.st",
+      "match": "\\b16#[0-9A-Fa-f]+\\b"
+    },
+    {
+      "name": "constant.numeric.binary.st",
+      "match": "\\b2#[01]+\\b"
+    },
+    {
+      "name": "constant.language.boolean.st",
+      "match": "\\b(TRUE|FALSE)\\b"
+    },
+    {
+      "name": "keyword.control.st",
+      "match": "\\b(IF|THEN|ELSIF|ELSE|END_IF|CASE|OF|END_CASE|FOR|TO|BY|DO|END_FOR|WHILE|END_WHILE|REPEAT|UNTIL|END_REPEAT|RETURN|EXIT)\\b"
+    },
+    {
+      "name": "keyword.declaration.st",
+      "match": "\\b(PROGRAM|END_PROGRAM|FUNCTION|END_FUNCTION|FUNCTION_BLOCK|END_FUNCTION_BLOCK|VAR|VAR_INPUT|VAR_OUTPUT|VAR_IN_OUT|VAR_TEMP|VAR_GLOBAL|END_VAR|TYPE|END_TYPE|STRUCT|END_STRUCT)\\b"
+    },
+    {
+      "name": "storage.type.st",
+      "match": "\\b(BOOL|BYTE|WORD|DWORD|LWORD|SINT|INT|DINT|LINT|USINT|UINT|UDINT|ULINT|REAL|LREAL|TIME|DATE|TIME_OF_DAY|TOD|DATE_AND_TIME|DT|STRING|WSTRING)\\b"
+    },
+    {
+      "name": "keyword.operator.assignment.st",
+      "match": ":="
+    },
+    {
+      "name": "keyword.operator.comparison.st",
+      "match": "(=|<>|<|>|<=|>=)"
+    },
+    {
+      "name": "keyword.operator.arithmetic.st",
+      "match": "(\\+|-|\\*|/|MOD)"
+    },
+    {
+      "name": "keyword.operator.logical.st",
+      "match": "\\b(AND|OR|XOR|NOT)\\b"
+    },
+    {
+      "name": "punctuation.separator.st",
+      "match": "[;,]"
+    },
+    {
+      "name": "punctuation.bracket.st",
+      "match": "[()\\[\\]]"
+    },
+    {
+      "name": "variable.other.st",
+      "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+    }
+  ],
+  "repository": {}
+}

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VeriIDE I/O Mapping Configuration",
+  "description": "Schema for iomap/*.toml — channel mapping with scale/bias/safety limits",
+  "type": "object",
+  "patternProperties": {
+    "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+      "type": "object",
+      "required": ["channel", "scale", "bias"],
+      "properties": {
+        "channel": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Physical I/O channel number"
+        },
+        "scale": {
+          "type": "number",
+          "description": "Scaling factor (raw * scale + bias = engineering value)"
+        },
+        "bias": {
+          "type": "number",
+          "description": "Offset value"
+        },
+        "safety_limit": {
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "number",
+              "description": "Minimum safe value"
+            },
+            "max": {
+              "type": "number",
+              "description": "Maximum safe value"
+            }
+          },
+          "required": ["min", "max"],
+          "additionalProperties": false
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["input", "output"],
+          "description": "I/O direction (default: input for ai.toml, output for ao.toml)"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
