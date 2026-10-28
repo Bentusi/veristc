@@ -2,7 +2,7 @@
  * sim/watch.h
  * watch 帧 —— G0 产出物 4：把「某个变量此刻是多少」送到 stdout
  *
- * 帧契约（唯一源 spec/simulation-spec.md §4；决策 D4：stdout JSONL，不上 socket）：
+ * 帧协议（唯一源 spec/simulation-spec.md §4；决策 D4：stdout JSONL，不上 socket）：
  *
  *   周期帧（一周期一行）：
  *     {"frame":"cycle","cycle":12,"t_ms":1100,"status":0,"violations":0,
@@ -29,7 +29,7 @@
  *
  *   stdout 在 watch 模式下是复用的：程序自身的 PRINT 端口输出也会落在 stdout。
  *   帧行一律以 {"frame": 起始 ⇒ 消费者按该前缀过滤，非帧行属于被编译程序的跟踪输出，
- *   不在帧契约之内。
+ *   不在帧协议之内。
  *
  * 顶层键 cycle/t_ms/status/violations：
  *   status     : 本周期 io_mapping_cycle() 返回值（0 = 成功）

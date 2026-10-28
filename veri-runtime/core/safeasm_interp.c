@@ -1131,7 +1131,7 @@ int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
 }
 
 /**
- * vm_rebind - 周期边界把 VM 重指到新镜像（见 vm.h 的契约说明）
+ * vm_rebind - 周期边界把 VM 重指到新镜像（见 vm.h 的协议说明）
  */
 int vm_rebind(VM *vm, const SasmModule *module) {
     if ((!vm) || (!module)) { return -1; }

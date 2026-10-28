@@ -73,7 +73,7 @@ rc_text=$?
 "$V" --json -c "$CLI" -o /tmp/veristc-cli-json.sasm > "$ACT_JSON" 2>&1
 rc_json=$?
 
-# 文本契约冻结：POU=/VAR=/KIND=/LOC=-/MSG= 整行逐字不变；--json 是同一
+# 文本协议冻结：POU=/VAR=/KIND=/LOC=-/MSG= 整行逐字不变；--json 是同一
 # 诊断的另一份可机读副本，不是替代。
 cli_eq "text diagnostic line is byte-identical" \
     "POU=MAIN VAR=a1#C KIND=access LOC=- MSG=instance internal state (VAR) is not visible outside its FUNCTION_BLOCK" \

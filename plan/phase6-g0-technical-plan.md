@@ -1,6 +1,6 @@
 ---
 name: phase6-g0-technical-plan
-description: 'Phase 6 G0 前置能力补齐的详细技术方案（五个产出物）。当实现 veristc CLI 机器可读接口、.sasm 符号名段、仿真后端、watch 通道、下装帧协议时必读。含 5 项已定决策与契约定义。'
+description: 'Phase 6 G0 前置能力补齐的详细技术方案（五个产出物）。当实现 veristc CLI 机器可读接口、.sasm 符号名段、仿真后端、watch 通道、下装帧协议时必读。含 5 项已定决策与协议定义。'
 ---
 
 # Phase 6 G0 — 五个产出物详细技术方案
@@ -108,7 +108,7 @@ description: 'Phase 6 G0 前置能力补齐的详细技术方案（五个产出�
 {"pou":"MAIN","var":"pid1#OUT","kind":"access","loc":"POU=MAIN VAR=pid1#OUT","msg":"..."}
 ```
 注意 `var` 是**派生名**（`实例#字段`，`derived_field_sep`）。IDE 侧需据此反查画布上的块/连线，
-故派生名到「块实例 + 端口」的拆分契约必须在 `veri-ide/schema/` 里固化，不可让前端各自猜 `#`。
+故派生名到「块实例 + 端口」的拆分协议必须在 `veri-ide/schema/` 里固化，不可让前端各自猜 `#`。
 
 **多条诊断**：新增 `check_program_full_diags : st_program -> list diagnostic`（返回**全部**而非首条），
 **保留**现有单条函数与渲染器不动，只为兼容既有断言。
@@ -136,7 +136,7 @@ description: 'Phase 6 G0 前置能力补齐的详细技术方案（五个产出�
 
 ## 3. 产出物 2 — `.sasm` 符号名段（section 7）
 
-### 3.1 契约（需先写入规范）
+### 3.1 协议（需先写入规范）
 
 `spec/safeasm-spec.md` 两处修订：
 
@@ -242,7 +242,7 @@ FB 实例字段此时已被 `expand_instances` 扁平成派生名全局（`实�
 工程源用 `sim/plant.yaml`，但 **C 侧不解析 YAML**（无解析器、禁 malloc、MISRA 21.x 顾虑）。
 两层：
 
-- **运行契约**：`.plant` 定宽行式表，`fgets` + 定长缓冲读入静态数组，字段
+- **运行协议**：`.plant` 定宽行式表，`fgets` + 定长缓冲读入静态数组，字段
   `channel, dir, kind, gain, offset, min, max, init`。
 - **工程源**：`sim/plant.yaml` 由上位工具（G1 的 project-svc）编译成 `.plant`。G0 阶段用一个几百行的
   参考转换器脚本顶上，位置 `veri-runtime/sim/plant_gen.py` 或 `veri-stc/tools/`，二选一后写进 AGENTS.md。
@@ -250,7 +250,7 @@ FB 实例字段此时已被 `expand_instances` 扁平成派生名全局（`实�
 plant 动态模型首期只需三类原语（够 PID 闭环）：**常量 / 一阶惯性 / 斜坡**；通道数上限与
 `IO_MAX_CHANNELS 64`（`io_mapping.h:31`）对齐。仿真必须**逐周期确定**，否则黄金时间线无法比对。
 
-> **W3 落地时的偏差（已确认）**：`.plant` 运行契约已冻结进 `spec/simulation-spec.md` §1
+> **W3 落地时的偏差（已确认）**：`.plant` 运行协议已冻结进 `spec/simulation-spec.md` §1
 > （9 列、四种 kind、raw 单位、九类拒绝、确定性论证）。`plant.yaml` 与 YAML→`.plant`
 > 参考转换器**不在 G0 交付**，改由 G1 的 project-svc 承担 —— C 侧不该解析 YAML，
 > 而转换器的天然归属就是上位工具；G0 阶段 IDE 侧还没有工程文件概念，先造转换器只会
@@ -276,7 +276,7 @@ plant 动态模型首期只需三类原语（够 PID 闭环）：**常量 / 一�
 
 `sim` 增加 `--watch <name>[,<name>...]`，每扫描周期把一帧写 stdout，IDE 后端作为子进程管道消费。
 
-> **实现与原 sketch 有四处偏差**（键名、拒绝策略、64 位与 `t_ms`/帧格式），冻结后的契约以
+> **实现与原 sketch 有四处偏差**（键名、拒绝策略、64 位与 `t_ms`/帧格式），冻结后的协议以
 > `spec/simulation-spec.md` §4 为准，偏差理由见本文 §7 的「W4 落地补充」。下面的 sketch 保留作设计现场。
 
 ```
@@ -313,7 +313,7 @@ G0 不做（D4）。
 
 > 上表是 **W5 开工前**的核查记录。这些缺口已在 W5 全部闭合（`dl_stage_image` /
 > `dl_apply_switch` / `dl_rollback` / `vm_rebind` / agent 主循环 / 帧 CRC+HMAC），
-> 差异与落地位置见 §6.6；契约本体见 `spec/download-spec.md`。
+> 差异与落地位置见 §6.6；协议本体见 `spec/download-spec.md`。
 
 ### 6.2 传输抽象
 
@@ -370,7 +370,7 @@ G0 只对接进程内 `pair`（socketpair/pipe）后端，在测试里验证状�
 | （未规划） | 回滚只有一级深度（两槽 ⇒ `previous_slot` 是唯一落点，第二次返回 `NULL`）；版本号单调不回退 | 与 §6.1 的两槽现实一致，不假装有历史栈 |
 
 验收锚点：`run_vm_checks.sh` 第 9/10 步（协议 + 切换单测，共 11 项）、
-`integration/run_download_e2e.sh`（34 项：正向切换 / 六类拒绝 / 健康回滚 / CLI 契约）、
+`integration/run_download_e2e.sh`（34 项：正向切换 / 六类拒绝 / 健康回滚 / CLI 协议）、
 `run_sanitizer.sh` 第 5 步（两组单测的 ASan/UBSan 变体）。
 §6.4 的 CRC 严格化已落地并新增「全零校验和被拒」用例，规范 V3 同步改写。
 
@@ -380,9 +380,9 @@ G0 只对接进程内 `pair`（socketpair/pipe）后端，在测试里验证状�
 
 ```
 W1  ✅ 产出物1 API 包装（function_check 全量诊断 + veristc_main CLI）
-W1' ✅ 契约冻结：已落 spec/safeasm-spec.md §4.4/§4.8/V12b + spec/safest-spec.md 附录 D
+W1' ✅ 协议冻结：已落 spec/safeasm-spec.md §4.4/§4.8/V12b + spec/safest-spec.md 附录 D
         （退出码 + --json + 不写 CWD）+ spec/simulation-spec.md（**.plant 随 W3、watch 帧随 W4**）。
-        下装帧 + HMAC 契约已随 W5 冻结进 spec/download-spec.md ⇒ **W1' 完结**。
+        下装帧 + HMAC 协议已随 W5 冻结进 spec/download-spec.md ⇒ **W1' 完结**。
 W2  ✅ 产出物2 符号段（Coq 取行 + OCaml 编码 + 主机侧解析；**不改 loader**，见下）
 W2' ✅ 产出物3 前置修复：loader scale/bias 真读 + svm 链归档 + 删 stub        独立可并行
 W3  ✅ 产出物3 仿真后端 + plant 表（sim/plant.c + sim_io.c + sim_main.c + 闭环黄金；
@@ -390,7 +390,7 @@ W3  ✅ 产出物3 仿真后端 + plant 表（sim/plant.c + sim_io.c + sim_main.
 W4  ✅ 产出物4 watch stdout 帧（sim/watch.c + 段 7 地址解析复用 + 派生名语料；
         G0 总验收在此：帧的 addr/type/size 对 `svm -l`、value 对黄金时间线，26 项门禁）
 W5  ✅ 产出物5：CRC 严格化 → 分帧/HMAC（自持实现 + 公开向量）→ 切换接线（vm_rebind +
-        dl_stage_image/dl_apply_switch/dl_rollback）→ veristc-agent → 契约冻结进
+        dl_stage_image/dl_apply_switch/dl_rollback）→ veristc-agent → 协议冻结进
         spec/download-spec.md（差异见 §6.6）
 W6  门禁扩展：run_vm_checks.sh 加符号/watch/下装帧 3 组用例
 ```
@@ -401,7 +401,7 @@ W1 落地补充（与本方案原写的两处差异，已按实现回填文档�
   （`function_check.v` 尾部），不改动单条版；三趟检查（逐 POU / 别名 / 封装）各自由
   `first_*` 改为等价的 `_all` 收集版，收集顺序与旧版逐字一致 ⇒ JSON 首行恒等于文本行。
 - 新增夹具 `veri-stc/tests/compiler-tests/cli/two_access_violations.st`：一处读内部 VAR、
-  一处写 VAR_OUTPUT，用来钉住「一次编译报多条」与「文本只报首条」这两条相反方向的契约。
+  一处写 VAR_OUTPUT，用来钉住「一次编译报多条」与「文本只报首条」这两条相反方向的协议。
   它**不放进 `negative/`**，以免改变既有 `accepted=` 计数（现为 38）。
 - 退出码断言全部落在 `run_compiler_tests.sh` 第 3 步，计入该脚本自身的 accepted/failed 汇总。
 - 实测本机无 `jq`，NDJSON 校验用 `python3 -c 'json.loads'` 并带缺工具时的 SKIP 分支。
@@ -465,12 +465,12 @@ W3 落地补充（§4.2 表第 1/6 项已清；第 5 项的 `safety_violations` 
   不触碰已证明路径。名字解析不到 ⇒ 编译拒绝（GATE-7，复用既有 `KIND=declaration`，
   不扩九词汇表）。可机检：`svm -m` 的每个 `mem=` 必须出现在 `svm -l` 的地址列
   （`run_vm_checks.sh` 第 8 步新增该项，总数 **83→84**）。
-- **`.plant` 契约落在 `spec/simulation-spec.md`**（新建）：9 列定宽行式表、四种模型
+- **`.plant` 协议落在 `spec/simulation-spec.md`**（新建）：9 列定宽行式表、四种模型
   （CONST/LAG/RAMP/ACTUATOR）、raw 单位约定（缩放仍归 IOMAP，两侧不重复换算）、
   确定性论证（输入步进只读执行器与自身，行序无关）、九类解析即拒绝。
   **与原方案的偏差**：`sim/plant.yaml` + YAML→`.plant` 参考转换器**不在 G0 交付**，
   推到 G1 的 project-svc —— C 侧不解析 YAML（无解析器、禁 malloc），而转换器的真正归属
-  本就是上位工具；G0 只冻结运行契约那一份。
+  本就是上位工具；G0 只冻结运行协议那一份。
 - **后端只实现 8 个接口**（§4.1 的砍范围决定照原样执行）：`sim_io.c` 定义 `g_vm_interface`
   并填 `io_read/io_write/get_ticks/sleep/ms_to_ticks/ticks_to_ms/init/deinit`，其余留 NULL；
   `sleep` 空操作 + tick 由主程序按周期推进 ⇒ 时间线不依赖墙钟。虚拟时钟取 1 tick = 1 ms。
@@ -508,7 +508,7 @@ W4 落地补充（§5.2 的原设计有四处按实现回填，其余照原样�
   字段派生名 `cnt#N` 才有）；D1 只收 DINT 与此一致。
 - **stdout 是复用的，帧按 `{"frame":` 前缀过滤**：被编译程序的 `PRINT` 端口直接
   `printf` 到 stdout（`safeasm_interp.c:541-617`）。没有用 `dup2`/`freopen` 在安全相关工具里
-  动 fd，而是让 `sim --watch` 把自己的配置回显改道 stderr，并在契约里写明前缀过滤规则
+  动 fd，而是让 `sim --watch` 把自己的配置回显改道 stderr，并在协议里写明前缀过滤规则
   （非帧行属于被编译程序的跟踪输出）。
 - **新增 done 帧**（§4.4）：`{"frame":"done",…}` 流末恰好一行，消费者据此区分
   「正常结束」与「子进程断了」——这是 stdout 管道方案必须补上的一环。

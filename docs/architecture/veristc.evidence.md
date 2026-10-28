@@ -18,12 +18,12 @@
 | `rtthread` | `veri-runtime/Makefile:261-270`（需 `RTTHREAD_SDK`，不在 `all`）；`veri-runtime/rtos/rtthread/vm_rtthread.c:30` 引用不存在的 `veri-runtime/core/loader.h` | High（"未构建且不可编译"这一状态） |
 | `qaBin` | `veri-runtime/Makefile:106-143,188-249` | High |
 | `stSrc` / `sasmFile` / `svobjFile` | `veri-stc/tests/st-examples/`；`veristc_main.ml:484-499` / `:574-647`；根 `Makefile:118-136` 产出黄金制品 | High |
-| `plantFile` | `veri-runtime/sim/plant.c:220-345`；`veri-runtime/sim/plants/closed_loop.plant`；契约 `spec/simulation-spec.md` | High |
-| `watchFrames` | `veri-runtime/sim/watch.c:264-290`；契约 `spec/simulation-spec.md` §4 | High |
-| `dlStream` | `veri-runtime/hotstandby/download_wire.c:226,267`；契约 `spec/download-spec.md` | High（文件传输）/ socket 属 Target |
+| `plantFile` | `veri-runtime/sim/plant.c:220-345`；`veri-runtime/sim/plants/closed_loop.plant`；协议 `spec/simulation-spec.md` | High |
+| `watchFrames` | `veri-runtime/sim/watch.c:264-290`；协议 `spec/simulation-spec.md` §4 | High |
+| `dlStream` | `veri-runtime/hotstandby/download_wire.c:226,267`；协议 `spec/download-spec.md` | High（文件传输）/ socket 属 Target |
 | `coqToolchain` | `veri-stc/Makefile:35-82`（coqc → extraction）；`veri-stc/dune-project:1-19` | High |
 | `rtosSdk` | `veri-runtime/Makefile:261-270`（`RTTHREAD_SDK` 判定） | High |
-| `ioHardware` | `veri-runtime/rtos/abstract.h:41-52,77-288,294`；软件后端 `veri-runtime/sim/sim_io.c:17-60` | High（契约存在）/ 生产后端未接入 |
+| `ioHardware` | `veri-runtime/rtos/abstract.h:41-52,77-288,294`；软件后端 `veri-runtime/sim/sim_io.c:17-60` | High（协议存在）/ 生产后端未接入 |
 | `qaTools` | `veri-runtime/Makefile:252`；`veri-runtime/run_misra_check.sh` | High |
 | `futureLinker` | `AGENTS.md` .svobj 约定（P3 计划）；仓库内 `grep veristc-ld` 无实现 | Target |
 

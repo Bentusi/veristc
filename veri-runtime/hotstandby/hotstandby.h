@@ -240,7 +240,7 @@ void hs_chan_shmem_deinit(SyncChannel *chan);
 
 /* ---------- 下装：全量镜像 + 周期边界切换 + 一级回滚 ----------
  *
- * 契约唯一源见 spec/download-spec.md。链路：
+ * 协议唯一源见 spec/download-spec.md。链路：
  *   dl_manager_load_image (首装) → 周期运行
  *   → dl_stage_image (收下完整镜像，进待切换槽)
  *   → dl_apply_switch   (周期边界提交 + vm_rebind)

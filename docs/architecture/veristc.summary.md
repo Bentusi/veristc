@@ -8,7 +8,7 @@
 ## 系统边界
 
 VeriSTC 是**一套独立工具链**，由一个编译器与**三个互不通信的运行站程序**组成，
-中间只靠文件/字节契约连接：
+中间只靠文件/字节协议连接：
 
 ```
 ST 工程师 ──> veristc (上位机, OCaml 原生) ──写──> .sasm ──┬──读──> svm   (纯执行器：测试/黄金时间线)
@@ -18,7 +18,7 @@ ST 工程师 ──> veristc (上位机, OCaml 原生) ──写──> .sasm �
 
 `veri-ide/`（工程站）目前只有 README，属 Phase 6 目标态；它对上述程序的消费方式已由
 `spec/safest-spec.md` 附录 D（编译 CLI）、`spec/simulation-spec.md`（仿真数据面）、
-`spec/download-spec.md`（下装帧与 agent CLI/状态帧）三份契约冻结。
+`spec/download-spec.md`（下装帧与 agent CLI/状态帧）三份协议冻结。
 
 程序之间没有进程通信、没有共享库依赖（agent 链接 `libvm_hs`+`libvm_core`，`sim` 链接
 `libvm_io`+`libvm_core`，`svm` 只链 `libvm_core`），`.sasm` 是唯一接口，
@@ -144,7 +144,7 @@ read_file → Lexer.lex → Parser.parse → 重名门禁 → Function_check.pre
 | `.sasm` → `svm` / `sim` | 文件读（fread 进 2MB 静态缓冲，同一条装载路径） | `veri-runtime/core/svm.c:73-96`、`sim/sim_main.c:90` |
 | `.sasm` → `veristc-agent` | 经下装帧（HMAC+CRC32）而非直接读盘 | `hotstandby/download_wire.c:226` → `download.c:482` |
 | `svm` → 物理 I/O | **按设计不接**；带 I/O 的周期在 `sim` | `veri-runtime/core/svm.c:257-277` vs `sim/sim_main.c:273` |
-| `sim` → I/O 硬件 | 软件后端（`.plant` + 虚拟时钟），非真实通道 | `sim/sim_io.c`、契约 `spec/simulation-spec.md` §1 |
+| `sim` → I/O 硬件 | 软件后端（`.plant` + 虚拟时钟），非真实通道 | `sim/sim_io.c`、协议 `spec/simulation-spec.md` §1 |
 | 生产 `VM_Interface` 后端 | **缺失**：只有 `sim_io.c`（软件）与不可构建的 RT-Thread 层 | `veri-runtime/rtos/abstract.h:77-288` |
 | `libvm_hs` → `veristc-agent` | 库内函数调用，**已链接** | `download.c:543` + `veri-runtime/Makefile:182` |
 | 热备周期封装 → 任何主程序 | **无调用者**（Phase 3 遗留，传输层为共享内存） | `state_machine.c:371`、`sync.c:253` |

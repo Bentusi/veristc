@@ -34,7 +34,7 @@ description: >-
 | 13 | `veri-stc/tests/st-examples/algo_blocks*.st` | `./integration/run_algo_e2e.sh` 或 `run_algo_fb_e2e.sh` | 算法块用例：黄金时间线比对 |
 | 14 | `veri-stc/tests/compiler-tests/**/*.st` | `./veri-stc/tests/compiler-tests/run_compiler_tests.sh && ./veri-runtime/run_vm_checks.sh` | 正/负编译用例（负例须在 run_vm_checks 有诊断断言） |
 | 15 | `Makefile`、`Makefile.common`、`veri-*/Makefile`、`run_*.sh`、`integration/*.sh` | `./integration/run_tests.sh` | 构建/测试基础设施变更：全量回归 |
-| 16 | `veri-ide/**` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入契约测试门禁） |
+| 16 | `veri-ide/**` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入协议测试门禁） |
 | 17 | `spec/*.md`（顶层规范文档）、其他 `.md`、`.json`、`.yml` | 无需验证 | 纯文档/配置，不影响编译与运行 |
 
 ## 补充规则（可叠加）

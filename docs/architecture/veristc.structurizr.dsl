@@ -6,7 +6,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
     model {
 
         // ---------- Actors ----------
-        stEngineer = person "ST 应用工程师" "在上位机侧编写 .st 并调用 veristc 命令行做编译/分析/生成可重定位对象。证据: AGENTS.md 架构概览、veri-stc/extraction/veristc_main.ml:808+ 命令行分支。无图形界面代码，人机交互仅证据到 CLI 层（工程站 VeriIDE 属 Phase 6 目标态，见 spec/ 三份契约）。" {
+        stEngineer = person "ST 应用工程师" "在上位机侧编写 .st 并调用 veristc 命令行做编译/分析/生成可重定位对象。证据: AGENTS.md 架构概览、veri-stc/extraction/veristc_main.ml:808+ 命令行分支。无图形界面代码，人机交互仅证据到 CLI 层（工程站 VeriIDE 属 Phase 6 目标态，见 spec/ 三份协议）。" {
             tags "Person", "Conf-Medium"
         }
 
@@ -17,7 +17,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
         rtosSdk = softwareSystem "RT-Thread SDK" "目标平台 OS API；仅在 RTTHREAD_SDK 变量非空时参与语法编译，不链接。" {
             tags "ExternalSystem", "NotWired", "Conf-High"
         }
-        ioHardware = softwareSystem "物理 I/O 通道 (AI/AO/DI/DO)" "由 VM_Interface 的 io_read/io_write/io_group_* 函数指针契约描述。" {
+        ioHardware = softwareSystem "物理 I/O 通道 (AI/AO/DI/DO)" "由 VM_Interface 的 io_read/io_write/io_group_* 函数指针协议描述。" {
             tags "ExternalSystem", "Conf-Medium"
         }
         qaTools = softwareSystem "QA 工具链 (cppcheck / Unity-CMock / ASan-UBSan)" "MISRA 静态检查、单元测试框架、sanitizer 与 .sasm 加载器 fuzzing。" {
@@ -31,7 +31,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
         veristc = softwareSystem "VeriSTC" "ST -> SafeASM 字节码编译器 + SafeASM 虚拟机，用于安全级仪控设备。" {
 
             // ----- 上位机: 编译器可执行 -----
-            compiler = container "veristc (编译器可执行)" "单入口 OCaml 原生程序，按 -c/-a/-g/-x 四种模式驱动 Coq 提取出来的计算函数；机器可读接口 --json(NDJSON) + 退出码 0/11/21/22/23/24/25，契约见 spec/safest-spec.md 附录 D。" "OCaml native (ocamlopt) + Coq-extracted modules" {
+            compiler = container "veristc (编译器可执行)" "单入口 OCaml 原生程序，按 -c/-a/-g/-x 四种模式驱动 Coq 提取出来的计算函数；机器可读接口 --json(NDJSON) + 退出码 0/11/21/22/23/24/25，协议见 spec/safest-spec.md 附录 D。" "OCaml native (ocamlopt) + Coq-extracted modules" {
                 tags "Conf-High", "HostTool", "Deploy-上位机"
 
                 cli = component "CLI 入口 (手写)" "veristc_main.ml 为手写源，不参与提取；负责参数解析、读写文件、CRC32、段 7 编码、.svobj 字节编码。模式分派 parse_args :808-841（默认 -a :840），-c/-g 缺 -o 判 exit_usage 且绝不写 CWD :843-846。" "OCaml" {
@@ -73,7 +73,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
                 iomapPatch = component "patch_iomap_cal (OCaml 侧量程真值覆盖)" "按 compile_module_io_cal_info 的 IR 值把 IOMAP 条目 [18-33] 的 float64 覆盖为真值；条目数/段长/通道号三重核对不符即 die exit_internal，绝不产出半成品。证据 veristc_main.ml:375-421,488。" "OCaml" {
                     tags "Conf-High"
                 }
-                debugEmit = component "emit_debug_section (段 7 STRPOOL+SYMTAB)" "把 Coq 出的符号行排序/去重后编码为 name→addr→type 子块，插在尾部 CRC 占位之前，因此 CRC 自动覆盖段 7。运行核整段跳过，解析归 svm -s/-l 与 sim --watch。布局契约 spec/safeasm-spec.md §4.8。证据 veristc_main.ml:293,337,493-499。" "OCaml" {
+                debugEmit = component "emit_debug_section (段 7 STRPOOL+SYMTAB)" "把 Coq 出的符号行排序/去重后编码为 name→addr→type 子块，插在尾部 CRC 占位之前，因此 CRC 自动覆盖段 7。运行核整段跳过，解析归 svm -s/-l 与 sim --watch。布局协议 spec/safeasm-spec.md §4.8。证据 veristc_main.ml:293,337,493-499。" "OCaml" {
                     tags "Conf-High"
                 }
                 crcHost = component "attach_crc32 (OCaml 侧)" "对第 6 字节起的有效载荷计算 CRC32 并回填尾部 4 字节。证据 veristc_main.ml:255-267,499。" "OCaml" {
@@ -133,7 +133,7 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
                 simIo = component "sim_io.c 软件 VM_Interface" "实现 abstract.h 的 VM_Interface：io_read/io_write 落到 plant 通道，sleep 走虚拟时钟 -> 无实时依赖、可复现。这是仓库内唯一可用的 VM_Interface 后端。证据 veri-runtime/sim/sim_io.c:17-60。" "C11" {
                     tags "Conf-High"
                 }
-                watch = component "watch.c 帧发射" "名字表启动即解析(段 7 名字 -> 地址 -> 数值)，未知名字直接拒绝启动；逐周期 cycle 帧 + 收尾 done 帧。契约见 spec/simulation-spec.md §4。证据 veri-runtime/sim/watch.c:82-135,177-207,264-290; veri-runtime/sim/sim_main.c:251-254,275-276,287-289。" "C11" {
+                watch = component "watch.c 帧发射" "名字表启动即解析(段 7 名字 -> 地址 -> 数值)，未知名字直接拒绝启动；逐周期 cycle 帧 + 收尾 done 帧。协议见 spec/simulation-spec.md §4。证据 veri-runtime/sim/watch.c:82-135,177-207,264-290; veri-runtime/sim/sim_main.c:251-254,275-276,287-289。" "C11" {
                     tags "Conf-High"
                 }
             }
@@ -201,13 +201,13 @@ workspace "VeriSTC current-state architecture" "VeriSTC = SafeST(ST) -> SafeASM 
             svobjFile = container ".svobj 可重定位对象" "SYMTAB/RELOC/BLOCKS/IMAGE + CRC32。三类重定位行(CALL_IDX/INST_BASE_IMM/GLOBAL_OFF)现已全部产出，但仓库内无消费者(链接器 veristc-ld 属 P3 计划)。" "自定义二进制" {
                 tags "Conf-High", "ArtifactFile", "TargetState"
             }
-            plantFile = container "被控对象表 (.plant)" "仿真侧的工程量程与被控动力学真值源；定宽文本表，逐行契约校验。契约唯一源 spec/simulation-spec.md。" "文本表格" {
+            plantFile = container "被控对象表 (.plant)" "仿真侧的工程量程与被控动力学真值源；定宽文本表，逐行协议校验。协议唯一源 spec/simulation-spec.md。" "文本表格" {
                 tags "Conf-High", "ArtifactFile"
             }
             watchFrames = container "watch 帧流 (stdout JSONL)" "sim --watch 逐周期发出的「符号名 -> 段 7 地址 -> 数值」帧，工程站仿真按钮的数据面。" "JSONL" {
                 tags "Conf-High", "ArtifactFile"
             }
-            dlStream = container "下装帧流 (DLF1)" "24B 头 + 载荷 + 32B HMAC-SHA256 的帧序列；当前经文件传输，socket 传输推到 G1+。契约唯一源 spec/download-spec.md。" "自定义二进制帧" {
+            dlStream = container "下装帧流 (DLF1)" "24B 头 + 载荷 + 32B HMAC-SHA256 的帧序列；当前经文件传输，socket 传输推到 G1+。协议唯一源 spec/download-spec.md。" "自定义二进制帧" {
                 tags "Conf-High", "ArtifactFile", "TargetState"
             }
 

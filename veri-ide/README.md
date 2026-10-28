@@ -14,14 +14,14 @@ VeriIDE = **Veri**fied **I**ntegrated **D**evelopment **E**nvironment。
 |------|---------|------|
 | `veri-stc/` | 形式化核 | `make coq` 全绿、无新增 `Admitted` |
 | `veri-runtime/` | 执行核 | MISRA-C + ASan/UBSan + fuzzer |
-| `veri-ide/`（本组件） | 非安全侧工程工具 | 契约测试 + 图↔文本往返恒等测试 |
+| `veri-ide/`（本组件） | 非安全侧工程工具 | 协议测试 + 图↔文本往返恒等测试 |
 
 工程站自身不进入安全核交付物：它只生成文本 ST 与消费制品，
 所有安全性质由 `veri-stc` 的证明与 `veri-runtime` 的校验承担。
 
 ## 依赖规则
 
-- **R1** 跨组件耦合只能经由 `spec/` 契约（文本格式、二进制布局、JSON Schema）。
+- **R1** 跨组件耦合只能经由 `spec/` 协议（文本格式、二进制布局、JSON Schema）。
   禁止 `veri-ide` 直接 include `veri-stc/` 或 `veri-runtime/` 的源文件。
 - **R2** `veri-ide` 仅可消费 `veri-runtime` 的公共头文件与 `build/lib/libvm_*.a`
   （仿真服务 sim-svc 需要），不得修改运行站源码。
@@ -34,7 +34,7 @@ VeriIDE = **Veri**fied **I**ntegrated **D**evelopment **E**nvironment。
 
 ```
 veri-ide/
-├── schema/          块 manifest、图 JSON、工程/lock 的 JSON Schema（契约唯一源）
+├── schema/          块 manifest、图 JSON、工程/lock 的 JSON Schema（协议唯一源）
 ├── backend/
 │   ├── project/     project-svc：文本化工程 + Git + diff/merge
 │   ├── lang/        lang-svc：LSP（补全 / 悬停 / 诊断）
@@ -44,7 +44,7 @@ veri-ide/
 │   └── registry/    registry-svc：算法块与库制品仓（sha256 + semver + lock）
 ├── frontend/        项目树 · ST 编辑器 · 组态画布 · 监视表 / 时间线 · 下装向导
 ├── cli/             veride：无 UI 命令行入口，与 build-svc 共用内核（CI 用）
-└── tests/           契约测试 + 往返恒等测试
+└── tests/           协议测试 + 往返恒等测试
 ```
 
 ## 不可妥协的设计约束

@@ -33,12 +33,12 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   ├── phase4-engineering.prompt.md
 │   ├── phase5-function-semantics.prompt.md
 │   ├── phase6-veriide.prompt.md
-│   └── phase6-g0-technical-plan.md   G0 五产出物实施级方案（CLI 契约/符号段/仿真/watch/下装）
-├── spec/                           ← 顶层 Spec 文档（开发可读，跨组件契约唯一源）
+│   └── phase6-g0-technical-plan.md   G0 五产出物实施级方案（CLI 协议/符号段/仿真/watch/下装）
+├── spec/                           ← 顶层 Spec 文档（开发可读，跨组件协议唯一源）
 │   ├── safest-spec.md                SafeST 语言规范（BNF + 类型系统）
 │   ├── safeasm-spec.md               SafeASM 指令集 + 二进制格式
-│   ├── simulation-spec.md            仿真契约：`.plant` 被控对象表 + `sim` 命令行 + watch 帧
-│   ├── download-spec.md              下装帧契约：帧字节布局 + 两道校验 + 拒绝码 + agent 命令行
+│   ├── simulation-spec.md            仿真协议：`.plant` 被控对象表 + `sim` 命令行 + watch 帧
+│   ├── download-spec.md              下装帧协议：帧字节布局 + 两道校验 + 拒绝码 + agent 命令行
 │   └── semantics-preservation.md     ST→ASM 映射 + 正确性定理说明
 ├── veri-stc/                       ← 编译器组件（形式化核，Coq 实现+证明 → OCaml）
 │   ├── Makefile                      组件自持构建：make -C veri-stc [coq|extract|veristc]
@@ -99,7 +99,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   ├── sim/                          仿真后端（G0/W3+W4：软件 I/O + 被控对象 + watch 帧）
 │   │   ├── plant.c/.h                        `.plant` 解析 + 确定性步进（CONST/LAG/RAMP/ACTUATOR）
 │   │   ├── sim_io.c/.h                       VM_Interface 软件实现 + 虚拟时钟
-│   │   ├── watch.c/.h                        `--watch` JSONL 帧：段 7 名字 → 地址 → 数值（契约 §4）
+│   │   ├── watch.c/.h                        `--watch` JSONL 帧：段 7 名字 → 地址 → 数值（协议 §4）
 │   │   ├── sim_main.c                        `sim` 主程序：走 io_mapping_cycle 全路径
 │   │   └── plants/closed_loop.plant          演示对象表（一阶惯性 + 恒值设定 + 执行器）
 │   ├── tests/
@@ -114,7 +114,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 
 三组件的依赖规则（不可违反）：
 
-- **R1** 跨组件耦合只能经由 `spec/` 契约（文本格式、二进制布局、JSON Schema），
+- **R1** 跨组件耦合只能经由 `spec/` 协议（文本格式、二进制布局、JSON Schema），
   禁止跨组件 include 源文件。
 - **R2** `veri-ide` 仅可消费 `veri-runtime` 的公共头文件与 `build/lib/libvm_*.a`。
 - **R3** `veri-stc` 不依赖任何组件；`veri-runtime` 不依赖 `veri-stc` 源码，
@@ -130,24 +130,24 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   - 命令行：`veristc -c input.st -o output.sasm`（编译）/ `veristc -a input.st`（分析）/ `veristc -g input.st -o output.svobj`（可重定位对象）/ `veristc -x output.svobj`（校验 .svobj 结构+CRC）
   - 机器可读接口：`--json` 输出 NDJSON（一行一条诊断，字段 `pou/var/kind/loc/msg`）；
     退出码 `0/11/21/22/23/24/25`；`-c`/`-g` 缺 `-o` 即判 11，**绝不写当前工作目录**。
-    契约唯一源见 `spec/safest-spec.md` 附录 D（文本诊断行格式冻结，`--json` 是附加副本）
+    协议唯一源见 `spec/safest-spec.md` 附录 D（文本诊断行格式冻结，`--json` 是附加副本）
 - **下位机（运行站）**：C 语言 SafeASM 虚拟机
   - 加载 `.sasm` → CRC32 校验 → 周期解释执行
   - I/O 映射层驱动 AI/AO/DI/DO（缩放/偏置/安全限值）
   - 双机热备（状态快照 + 脏页同步 + 无扰切换 + 增量下装）
   - 两个主程序分工：`svm` 只跑 VM（不建映射表），`sim` 走 `io_mapping_cycle` 全路径并
     用 `.plant` 被控对象表充当软件 I/O 硬件；`sim --watch 名字表` 逐周期把「符号名 → 段 7
-    地址 → 数值」以 stdout JSONL 帧发出，这就是工程站仿真按钮要消费的数据面 —— 契约见
+    地址 → 数值」以 stdout JSONL 帧发出，这就是工程站仿真按钮要消费的数据面 —— 协议见
     `spec/simulation-spec.md`（`.plant` 格式 + `sim` 命令行 + watch 帧）
   - 第三个主程序 `veristc-agent`（G0/W5）＝ 目标端常驻服务：装载 `.sasm` → 逐周期执行 →
     从文件/管道吸收**下装帧**（HMAC-SHA256 先验、CRC32 后验，两道独立闸）→ 在周期边界把整个 VM
     重绑到新镜像（冷启动语义：栈与线性内存清零）→ 健康检查不过即回切上一个版本槽；状态以
-    `{"frame":"status",...}` JSONL 帧上报 —— 契约见 `spec/download-spec.md`
+    `{"frame":"status",...}` JSONL 帧上报 —— 协议见 `spec/download-spec.md`
 - **工程站（Phase 6 规划）**：VeriIDE —— 前后端分离的浏览器 IDE，覆盖「图形组态 → 编译 → 仿真验证 → 下装运行」闭环与自定义算法块库
   - 它**调用** `veristc` 而非替代：图形层只做「图 JSON → 文本 ST」源生成，编译器唯一入口仍是文本 ST（语义证明边界，不得绕过）
   - 命名体系：编译器 `veristc` / 工程站 `VeriIDE`（组件目录 `veri-ide/`）/ 无 UI 命令行 `veride` / 目标端 `veristc-agent`
   - 详细设计、前置差距与阶段验收见 `plan/phase6-veriide.prompt.md`；
-    G0 五产出物的实施级方案（含 5 项已定决策与字节契约）见 `plan/phase6-g0-technical-plan.md`
+    G0 五产出物的实施级方案（含 5 项已定决策与字节协议）见 `plan/phase6-g0-technical-plan.md`
 
 **数据流**：
 ```
@@ -232,7 +232,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   由 OCaml `patch_iomap_cal` 按 `compile_module_io_cal_info` 的 IR 值覆盖（条目数/段长/通道号三重核对，不符即拒绝产出）；
   `loader.c` 的 `read_f64` **逐条采信文件值**并拒绝非有限值（NaN/±Inf → 加载失败）。
   当前 SafeST 无量程语法，发射值恒为 `1.0 / 0.0`；工程量程属 G0/W3 仿真侧 `.plant` 表
-  （契约见 `spec/safeasm-spec.md` §4.4 与验证规则 V10b）
+  （协议见 `spec/safeasm-spec.md` §4.4 与验证规则 V10b）
 - **IOMAP（段 3）地址单一真值**：`[4-7]` `mem_offset` 由 Coq `global_codegen.v` 的
   `resolve_io_map` **按名**向 `build_global_env`（段 7 用的同一张表）取该全局变量的槽位地址。
   此前它按 1024 起步自行编号，而变量在 4096 起步 ⇒ 运行站写入映射的位置与程序读写的变量
@@ -270,8 +270,8 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 - `integration/run_channel_e2e.sh`：单组 RPS 4 通道保护 + ESFAS 顺序器黄金时间线验证
 - `integration/run_algo_e2e.sh`：RS/SR/PID/FBY 算法块多实例 12 周期黄金时间线验证
 - `integration/run_algo_fb_e2e.sh`：原生 FUNCTION_BLOCK 版算法块（VAR_OUTPUT 多输出、VAR 实例持久状态、VAR_IN_OUT 别名、IF 控制流）12 周期黄金时间线验证
-- `integration/run_download_e2e.sh`：下装端到端——Python 发送端经管道送帧 → agent 收帧 → 周期边界切换（判据是**程序输出形状真的换了**，不是状态帧自证）、六类拒绝用例（篡改/CRC/截断/超限/序号缺口/错钥，每条都核对"活动镜像不动"）、健康检查回滚（新镜像超自身周期预算 ⇒ 回切旧槽后继续扫描）、agent 命令行与退出码契约 + 状态帧 JSON 可解析（34 项）
-- `integration/run_sim_e2e.sh`：闭环仿真——积分控制器 + 一阶惯性被控对象 12 周期黄金时间线、两次运行逐字节确定、`.plant` 契约拒绝（重名/方向/越界/非有限/字段数/驱动断链）、程序与对象表一致性拒绝（通道缺失/方向不符/无映射段）、watch 帧与 `svm -l`/黄金时间线逐条交叉核对 + 名字表启动即拒（26 项）
+- `integration/run_download_e2e.sh`：下装端到端——Python 发送端经管道送帧 → agent 收帧 → 周期边界切换（判据是**程序输出形状真的换了**，不是状态帧自证）、六类拒绝用例（篡改/CRC/截断/超限/序号缺口/错钥，每条都核对"活动镜像不动"）、健康检查回滚（新镜像超自身周期预算 ⇒ 回切旧槽后继续扫描）、agent 命令行与退出码协议 + 状态帧 JSON 可解析（34 项）
+- `integration/run_sim_e2e.sh`：闭环仿真——积分控制器 + 一阶惯性被控对象 12 周期黄金时间线、两次运行逐字节确定、`.plant` 协议拒绝（重名/方向/越界/非有限/字段数/驱动断链）、程序与对象表一致性拒绝（通道缺失/方向不符/无映射段）、watch 帧与 `svm -l`/黄金时间线逐条交叉核对 + 名字表启动即拒（26 项）
 
 ### 变更后验证路由（Skill: verify-route）
 
@@ -287,7 +287,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | `veri-runtime/io/*.c` 或 `*.h` | `make vm-io && ./veri-runtime/run_vm_checks.sh` | I/O 映射层 → 构建+VM 检查 |
 | `veri-runtime/hotstandby/*.c` 或 `*.h` | `make all && ./integration/run_tests.sh` | 热备模块 → 全量测试 |
 | `veri-runtime/rtos/**` | `make all` | RTOS 适配 → 编译通过即可 |
-| `veri-runtime/sim/**` | `make build-sim && ./integration/run_sim_e2e.sh` | 仿真后端 → 构建+闭环/契约回归 |
+| `veri-runtime/sim/**` | `make build-sim && ./integration/run_sim_e2e.sh` | 仿真后端 → 构建+闭环/协议回归 |
 | `veri-runtime/agent/**` | `make agent && ./integration/run_download_e2e.sh` | 目标端 agent → 构建+下装 e2e |
 | `veri-runtime/hotstandby/download*.c` 或 `hmac_sha256.c` | `make build-dlwire-test build-dlswitch-test && ./veri-runtime/run_vm_checks.sh && ./integration/run_download_e2e.sh` | 下装帧/版本槽 → 协议单测+切换单测+e2e |
 | `veri-runtime/tests/**/*.c` | `make build-tests && ./veri-runtime/run_vm_checks.sh` | VM 测试代码 → 重建+运行 |
@@ -301,9 +301,9 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | `veri-stc/tests/st-examples/sim_closed_loop.st` 或 `*.golden.timeline` | `./integration/run_sim_e2e.sh` | 闭环黄金时间线变更 |
 | `veri-runtime/sim/plants/*.plant` | `./integration/run_sim_e2e.sh` | 被控对象表变更（黄金时间线随之变） |
 | `veri-stc/tests/compiler-tests/**/*.st` | `./veri-stc/tests/compiler-tests/run_compiler_tests.sh && ./veri-runtime/run_vm_checks.sh` | 正/负编译用例变更（负例还需 run_vm_checks 校验诊断内容） |
-| `spec/download-spec.md`、`integration/dl_frames.py` | `./integration/run_download_e2e.sh` | 下装契约或其参考实现变更 |
+| `spec/download-spec.md`、`integration/dl_frames.py` | `./integration/run_download_e2e.sh` | 下装协议或其参考实现变更 |
 | `Makefile`、`Makefile.common`、`veri-*/Makefile`、`run_*.sh`、`integration/*.sh` | `./integration/run_tests.sh` | 构建/验证基础设施变更 → 全量回归 |
-| `veri-ide/**`、`*.md`、`*.json`、`*.yml` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入契约测试门禁）；文档/配置 |
+| `veri-ide/**`、`*.md`、`*.json`、`*.yml` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入协议测试门禁）；文档/配置 |
 
 **补充规则**（C 源文件变更时可叠加）：
 - 任何 `veri-runtime/**/*.c` 变更 → 建议追加 `./veri-runtime/run_misra_check.sh`

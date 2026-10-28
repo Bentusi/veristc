@@ -20,10 +20,10 @@
 | **v1.1** | **2026-06-30** | **新增影子质量内存段 (SEG_QUALITY)；IOMap 扩展 quality_offset 字段；新增质量传播指令模板；新增 LOAD8_U / STORE8 指令** | JIANG Wei |
 | **v1.2** | **2026-10-28** | **IOMap 条目字节布局按实现统一为 42 字节（原 §4.4 记 46 字节，编码器与加载器各自实现均为 42）；`st_var_name_offset` 降级为 reserved(必须为 0)；`quality_offset` 明确为悬空项、不在字节流内；§4.8 Debug 段追加符号表子块（name→addr→type）并**已由编译器发射**（G0/W2，`svm -s/-l` 解析，V12b 归属主机侧）；§5.0 补全 `svm -i/-s/-l`** | JIANG Wei |
 | **v1.3** | **2026-10-28** | **G0/W2'：IOMap `[18-33]` 的 scale/bias 改为真值链路——编译器主机侧覆盖写 IR 里的 float64，加载器逐条采信并拒绝非有限值（§4.4）；删除 `vm_scan_cycle` 与 `svm` 内的 `io_mapping_cycle` stub，`svm` 改链 `build/lib/libvm_core.a`；§5.0 新增 `svm -m`（打印加载后的 I/O 映射）** | JIANG Wei |
-| **v1.4** | **2026-10-28** | **G0/W3：IOMap `mem_offset` 语义收紧为「该全局变量的真实槽位地址」——由编译器按名向 `build_global_env` 解析，不再自行编号；解析不到即编译拒绝（`KIND=declaration`，见 `spec/safest-spec.md` 附录 D）；新增被控对象 `.plant` 契约指针（`spec/simulation-spec.md` §1）与仿真主程序 `sim`（§5.0 三主程序分工）** | JIANG Wei |
+| **v1.4** | **2026-10-28** | **G0/W3：IOMap `mem_offset` 语义收紧为「该全局变量的真实槽位地址」——由编译器按名向 `build_global_env` 解析，不再自行编号；解析不到即编译拒绝（`KIND=declaration`，见 `spec/safest-spec.md` 附录 D）；新增被控对象 `.plant` 协议指针（`spec/simulation-spec.md` §1）与仿真主程序 `sim`（§5.0 三主程序分工）** | JIANG Wei |
 | **v1.5** | **2026-10-28** | **原生 `FUNCTION_BLOCK` + `VAR_IN_OUT` 逐引用别名：新增 `I32_LOAD_PTR` / `I32_STORE_PTR`（0x30 / 0x31，地址来自值栈而非静态 `mem_offset`）；`.svobj` 侧新增 `GLOBAL_OFF` 重定位类型与 `kind=2 GLOBAL_EXT` 符号（附录 D.3/D.4）** | JIANG Wei |
 | **v1.5.1** | **2026-10-28** | **实例字段派生全局名统一为 `实例名#字段名`；`#` 不在标识符文法内 ⇒ 派生名不可书写，源码只能写 IEC 点号；封装检查（GATE-6）与 §4.8 符号表同时覆盖派生名与实例基址** | JIANG Wei |
-| **v1.5.2** | **2026-10-28** | **G0/W5：V3 严格化 —— 尾部 CRC32 为全零一律拒绝，加载器不再放行「未计算」的校验和（此前损坏 CRC 用例只翻载荷字节，stored 恒非零，故此改动不破任何既有制品）；新增镜像交换（下装）协议契约指针 `spec/download-spec.md` 与目标端 `veristc-agent`（§5.0 三主程序分工）** | JIANG Wei |
+| **v1.5.2** | **2026-10-28** | **G0/W5：V3 严格化 —— 尾部 CRC32 为全零一律拒绝，加载器不再放行「未计算」的校验和（此前损坏 CRC 用例只翻载荷字节，stored 恒非零，故此改动不破任何既有制品）；新增镜像交换（下装）协议协议指针 `spec/download-spec.md` 与目标端 `veristc-agent`（§5.0 三主程序分工）** | JIANG Wei |
 
 ### 0.2 术语与约定
 

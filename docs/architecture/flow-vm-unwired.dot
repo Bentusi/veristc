@@ -3,7 +3,7 @@
 // 本图只回答一个问题: 哪些运行期能力在代码里已经实现，但没有进入三个运行站程序（svm / sim / veristc-agent）的可执行路径，断点具体在哪一行。
 // 与 flow-vm-runtime.dot 互补: 那张图是"实际会执行的"，这张图是"存在但不执行的"。
 // 证据: veri-runtime/{core,sim,agent,hotstandby,io,rtos}/*.c, veri-runtime/Makefile
-// 读法: 橙色虚线簇 = 一簇未接入能力；橙色节点 = 已实现代码；红色节点 = 断点；绿色 = 已接入(参照)；灰色 = 契约/测试替身。
+// 读法: 橙色虚线簇 = 一簇未接入能力；橙色节点 = 已实现代码；红色节点 = 断点；绿色 = 已接入(参照)；灰色 = 协议/测试替身。
 // 纵向阅读顺序: ① I/O 扫描(已接入 sim) → ④ RT-Thread → ② 双机热备 → ③ 下装(已接入 agent，余下补丁路径)
 // 重新渲染: dot -Tsvg flow-vm-unwired.dot -o flow-vm-unwired.svg
 // 更新日期 2026-10-28 (Phase 6 G0 / W2'-W5 之后)
@@ -49,12 +49,12 @@ digraph "veristc_unwired_runtime" {
     io_break   -> read_all [label="以上两函数按接口指针取数", color="#cf222e", fontcolor="#cf222e"];
     io_test    -> read_all [color="#8250df"];
 
-    // ================= ④ RT-Thread 移植 (紧接①, 因为共享硬件契约) =================
+    // ================= ④ RT-Thread 移植 (紧接①, 因为共享硬件协议) =================
     hw [shape=hexagon, fillcolor="#f6f8fa", color="#6e7781",
-        label="物理 I/O 通道 AI/AO/DI/DO\nVM_Interface 的 25 个函数指针契约\nveri-runtime/rtos/abstract.h:77-288,294"];
+        label="物理 I/O 通道 AI/AO/DI/DO\nVM_Interface 的 25 个函数指针协议\nveri-runtime/rtos/abstract.h:77-288,294"];
 
     subgraph cluster_rtos {
-        label="④ RT-Thread 移植层 —— 硬件契约的真实使用者，但未被构建"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        label="④ RT-Thread 移植层 —— 硬件协议的真实使用者，但未被构建"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
         rt_main  [label="vm_rtthread.c 三线程架构\nio_drv / vm_main / vm_wdt\n周期取自 config.scan_cycle_ms\nveri-runtime/rtos/rtthread/vm_rtthread.c:483-505,355"];
         rt_wdt   [label="vm_wdt: 运行期唯一的超周期兜底\n检测周期停滞并 vm_init 复位\nveri-runtime/rtos/rtthread/vm_rtthread.c:398-427"];
         rt_iface [label="g_vm_interface 聚合 25 个 OS 回调\nveri-runtime/rtos/rtthread/vm_rtthread.c:269-295"];

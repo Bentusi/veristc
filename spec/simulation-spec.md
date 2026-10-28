@@ -1,11 +1,11 @@
-# 仿真契约（`.plant` 被控对象表 + `sim` 主程序 + watch 帧）
+# 仿真协议（`.plant` 被控对象表 + `sim` 主程序 + watch 帧）
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v0.1 | 2026-10-28 | G0/W3 首版：冻结 `.plant` 运行契约、程序/对象一致性规则、`sim` 命令行与时间线格式 |
-| v0.2 | 2026-10-28 | G0/W4：冻结 watch 帧契约（§4，决策 D4 的 stdout JSONL），`sim` 增 `--watch` |
+| v0.1 | 2026-10-28 | G0/W3 首版：冻结 `.plant` 运行协议、程序/对象一致性规则、`sim` 命令行与时间线格式 |
+| v0.2 | 2026-10-28 | G0/W4：冻结 watch 帧协议（§4，决策 D4 的 stdout JSONL），`sim` 增 `--watch` |
 
-**这份文件是什么**：VeriIDE 仿真按钮背后那台"假控制器硬件"的对外契约。
+**这份文件是什么**：VeriIDE 仿真按钮背后那台"假控制器硬件"的对外协议。
 编译器产出的 `.sasm` 只描述程序逻辑；被控对象（罐温、阀位、水位……）不在编译产物里，
 由一张 `.plant` 表在仿真时提供。上位机（未来的 project-svc）生成这张表，
 运行站（`veri-runtime/sim/`）消费它。两侧唯一的耦合点就是本文。
@@ -138,13 +138,13 @@ done: <cycles> cycles, <virtual ms> virtual ms, violations=<safety_violations>
 | 码 | 含义 |
 |----|------|
 | 0 | 全部周期执行成功 |
-| 2 | 参数错误 / `.plant` 契约不符 / 程序与对象不一致 / 程序无 I/O 映射 / `--watch` 名字表被拒 |
+| 2 | 参数错误 / `.plant` 协议不符 / 程序与对象不一致 / 程序无 I/O 映射 / `--watch` 名字表被拒 |
 | 3 | `.sasm` 加载失败 |
 | 4 | 某周期 `vm_run` 返回非 0（stderr 指出周期号） |
 
 ---
 
-## 4. watch 帧契约
+## 4. watch 帧协议
 
 G0/W4 产出物，决策 **D4**：首期只走 **stdout JSONL**，不引入 socket / 共享内存。
 唯一生产者是 `sim --watch`，G0 的唯一消费者是门禁脚本，G1 起是 `veride` 后端子进程管道。
@@ -160,7 +160,7 @@ G0/W4 产出物，决策 **D4**：首期只走 **stdout JSONL**，不引入 sock
 - `--watch` 生效时，每个扫描周期输出一行 **cycle 帧**，流末输出**恰好一行 done 帧**；
   除此之外 `sim` 自身不向 stdout 写任何行（配置回显改道 stderr）。
 - stdout 是**复用**的：被编译程序的 `PRINT` 端口输出同样落在 stdout 上。帧行一律以
-  `{"frame":` 起始 ⇒ 消费者按该前缀过滤，非帧行属于被编译程序的跟踪输出，不在本契约内。
+  `{"frame":` 起始 ⇒ 消费者按该前缀过滤，非帧行属于被编译程序的跟踪输出，不在本协议内。
 - 键序与列序固定：`values` 的顺序等于命令行 `--watch` 的书写顺序，逐周期一致 ⇒ 前端可按列下标取数。
 
 ### 4.3 cycle 帧
@@ -247,13 +247,13 @@ G0/W4 产出物，决策 **D4**：首期只走 **stdout JSONL**，不引入 sock
 |------|------|
 | `veri-runtime/sim/plant.{c,h}` | `.plant` 解析、校验、步进（无 malloc，静态表） |
 | `veri-runtime/sim/sim_io.{c,h}` | `VM_Interface` 的软件实现：`io_read/io_write/get_ticks/sleep/ms_to_ticks/ticks_to_ms/init/deinit` |
-| `veri-runtime/sim/watch.{c,h}` | 帧契约的实现：名字表校验、按地址解码、JSONL 输出（本文 §4） |
+| `veri-runtime/sim/watch.{c,h}` | 帧协议的实现：名字表校验、按地址解码、JSONL 输出（本文 §4） |
 | `veri-runtime/core/sasm_info.c` | 段 7 解析。`sasm_sym_resolve(buf,len,name,out)` 是 watch 的地址来源，与 `svm -s/-l` 走同一个行读取器 |
 | `veri-runtime/sim/sim_main.c` | `sim` 主程序 |
 | `veri-runtime/sim/plants/closed_loop.plant` | 演示对象表：一阶惯性 + 恒值设定 + 执行器 |
 | `veri-stc/tests/st-examples/sim_closed_loop.st` | 演示控制器（纯 DINT，带抗积分饱和）+ 一个只供 watch 使用的 `COUNTER_FB` 实例 |
 | `veri-stc/tests/st-examples/sim_closed_loop.golden.timeline` | 12 周期黄金时间线 |
-| `integration/run_sim_e2e.sh` | 门禁：黄金比对 + 确定性 + 契约拒绝 + 一致性拒绝 + watch 帧交叉核对（26 项） |
+| `integration/run_sim_e2e.sh` | 门禁：黄金比对 + 确定性 + 协议拒绝 + 一致性拒绝 + watch 帧交叉核对（26 项） |
 
 **G0 范围外的一件事**（记录在 `plan/phase6-g0-technical-plan.md` §7 的 W3 落地补充）：
 工程源 YAML（`plant.yaml`）与其转换器归 G1 的 project-svc —— C 侧不解析 YAML。

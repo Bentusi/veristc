@@ -2,7 +2,7 @@
  * hotstandby/hmac_sha256.h
  * SHA-256 (FIPS 180-4) + HMAC-SHA256 (RFC 2104) —— 下装帧完整性与鉴权的原语
  *
- * 契约见 spec/download-spec.md §3。自含实现：目标机是 RTOS，安全核不链接外部密码库。
+ * 协议见 spec/download-spec.md §3。自含实现：目标机是 RTOS，安全核不链接外部密码库。
  * 无动态内存、无递归、输入长度以 uint32 为界（帧载荷上限远小于 2^32 字节）。
  */
 

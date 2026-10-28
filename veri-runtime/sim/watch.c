@@ -1,6 +1,6 @@
 /**
  * sim/watch.c
- * watch 帧的构造与输出 —— 帧契约见 watch.h 与 spec/simulation-spec.md §4
+ * watch 帧的构造与输出 —— 帧协议见 watch.h 与 spec/simulation-spec.md §4
  *
  * 类型解码按 spec/safeasm-spec.md §4.8 的 type_tag 枚举下标分类；
  * run_sim_e2e.sh 断言帧里的类型名与 `svm -l` 逐字一致，分类表若与段 7 漂移即失败。

@@ -2,7 +2,7 @@
  * sim/plant.h
  * 被控对象（plant）模型 — 仿真后端的物理侧
  *
- * `.plant` 文件契约（G0 产出物 3，唯一运行契约；工程源 YAML 属 G1）：
+ * `.plant` 文件协议（G0 产出物 3，唯一运行协议；工程源 YAML 属 G1）：
  *
  *   一行一个通道，9 个空白分隔字段，字段顺序固定：
  *     channel  dir  kind  gain  offset  min  max  init  drive

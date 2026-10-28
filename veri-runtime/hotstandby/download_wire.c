@@ -1,6 +1,6 @@
 /**
  * hotstandby/download_wire.c
- * 下装帧协议实现 —— 契约见 download_wire.h 与 spec/download-spec.md
+ * 下装帧协议实现 —— 协议见 download_wire.h 与 spec/download-spec.md
  *
  * 发送侧组帧、接收侧状态机都是纯计算 + 一对回调，不含任何 socket 调用：
  * 这样协议逻辑可以在普通主机测试里跑完整状态机，而 MISRA 敏感的链路 API
@@ -197,7 +197,7 @@ static int dl_rx_absorb(DlReceiver *rx, const uint8_t key[SHA256_DIGEST_LEN])
         if (payload_len != 0U) { return (int)DL_E_LEN; }
         return (int)DL_E_STATE;      /* 对端显式作废本次下装 */
     } else {
-        return (int)DL_E_MAGIC;      /* 未知 kind：不在本契约的词汇表里 */
+        return (int)DL_E_MAGIC;      /* 未知 kind：不在本协议的词汇表里 */
     }
 
     rx->next_seq = rx->next_seq + 1U;

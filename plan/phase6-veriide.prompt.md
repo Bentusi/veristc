@@ -42,7 +42,7 @@ VeriIDE = **Veri**fied **I**ntegrated **De**velopment **E**nvironment，与 Veri
 | 4 | ✅ 已清（G0/W2+W2'）| ~~仿真监视 name→addr：`.sasm` DEBUG 段从未发射，IOMAP 条目 `st_var_name_offset` 与 `scale/bias` 写死占位 `0`~~ ⇒ 段 7 符号表已发射并由 `svm -s/-l/-i` 解析；scale/bias 走「文件 ≡ IR」真值链；`mem_offset` 改为按名解析到真实全局槽位（GATE-7） | `spec/safeasm-spec.md` §4.8 / §4.4「地址单一真值」 |
 | 5 | ✅ 已清（G0/W3+W4）| ~~数字孪生闭环：`svm.c` 用 stub 覆盖 `io_mapping_cycle` ⇒ 发布二进制零 I/O；`VM_Interface` 仿真后端无任一实现~~ ⇒ `sim` 主程序实现 8 个被真实调用的接口 + `.plant` 被控对象，`io_mapping_cycle` 端到端跑通并有 12 周期黄金时间线（`integration/run_sim_e2e.sh`）。W4 补上监视数据面：`sim --watch 名字表` 逐周期发 stdout JSONL 帧（名字→段 7 地址→数值，含派生名 `cnt#N`、`status`、累计 `violations`、流末 done 帧），即工程站仿真按钮要消费的那一份。`svm` 仍定位为纯执行、不做 I/O | `veri-runtime/sim/`、`spec/simulation-spec.md` §4 |
 | 6 | 下装传输 | ✅ 已清（G0/W5，决策 D5）：下装帧协议（24B 头 + 载荷 + HMAC-SHA256，CRC32/HMAC 两道独立闸、MAC 先验）、接收状态机与十类拒绝码、全量镜像版本槽 + `vm_rebind` 周期边界原子切换 + 一级回滚、目标端 `veristc-agent`（装载/周期执行/下装服务/状态上报，管道后端）。`crc32==0` 后门已关闭（未计算校验和一律拒）。真签名、UDS/网络、重传与断点续传推到 G4；增量补丁代码保留但不进链路 | `spec/download-spec.md`、`veri-runtime/hotstandby/download_wire.c`、`integration/run_download_e2e.sh`（34 项） |
-| 7 | 版本化库 | 仅 `veri-stc/tools/stpreproc.py` 演示实现，PRE-2/3/5 契约未成体系；无 lock、无内容寻址 | [safest-spec.md:1604-1611](file:///home/wei/veristc/spec/safest-spec.md#L1604) |
+| 7 | 版本化库 | 仅 `veri-stc/tools/stpreproc.py` 演示实现，PRE-2/3/5 协议未成体系；无 lock、无内容寻址 | [safest-spec.md:1604-1611](file:///home/wei/veristc/spec/safest-spec.md#L1604) |
 | 8 | 资源上限强制 | 栈深 > 256 已拒绝，但 `check_all_loops_bounded` / `estimate_wcet` 算了**不接拒绝路径** | [analysis.v:153](file:///home/wei/veristc/veri-stc/src/analysis.v#L153) |
 
 ## 架构分层
@@ -90,7 +90,7 @@ plant-unit/                        <- 全文本，入 Git
 | watch 通道 | `veri-runtime/sim/watch.c`（新增） | 读 `vm->memory` + 符号表解析 name→addr，输出结构化采样帧 |
 | 下装协议 + agent | `veri-runtime/hotstandby/download_wire.c`、`veri-runtime/agent/` | 分帧/重组/签名校验/周期边界提交/回滚；关闭 `CRC==0` 后门并真校验 patch CRC |
 | 图→ST 生成器 | `veri-ide/backend/gen/` | `*.FC.json` / `*.SFC.json` → `merged.st`；确定性 + 往返恒等 |
-| 块 manifest 契约 | `veri-ide/schema/block.schema.json` | 端口方向/类型/默认参数/图标/SIL 属性/semver/实现源哈希 |
+| 块 manifest 协议 | `veri-ide/schema/block.schema.json` | 端口方向/类型/默认参数/图标/SIL 属性/semver/实现源哈希 |
 | 库注册服务 | `veri-ide/backend/registry/` | 内容寻址制品 + `lib.lock.yaml` + 准入门禁（WCET/栈深/纯性/循环上界） |
 | PRE 展开内核 | `veri-ide/backend/pre/`（替换 `veri-stc/tools/stpreproc.py`） | PRE-1..PRE-8 全量落地，尤其 PRE-2 确定性、PRE-3 递归上限、PRE-4 命名空间 mangle、PRE-5 manifest |
 | 前端 | `veri-ide/frontend/` | 编辑器 / 画布 / 监视表 / 时间线 / 下装向导 |
@@ -119,7 +119,7 @@ plant-unit/                        <- 全文本，入 Git
 - 传输 = REST + WebSocket RPC；构建流为拉取式（前端订阅 job 事件）
 - 下装首期只做**全量 + 签名 + 周期边界切换**，增量补丁待结构变更能力补齐后再开放
 - 目标形态先虚拟控制器（容器/Linux x64），真机作为 G4 之后的移植项
-- **G0 五项已定决策（D1–D5）**：验收信号用 DINT ／ IOMAP `st_var_name_offset` 降级 reserved、符号名全放 section 7 ／ LOC 只到 POU+变量名 ／ watch 首期 stdout 帧不上 socket ／ 下装首期 HMAC-SHA256、真签名推 G4。逐条后果与字节契约见 `phase6-g0-technical-plan.md` §0
+- **G0 五项已定决策（D1–D5）**：验收信号用 DINT ／ IOMAP `st_var_name_offset` 降级 reserved、符号名全放 section 7 ／ LOC 只到 POU+变量名 ／ watch 首期 stdout 帧不上 socket ／ 下装首期 HMAC-SHA256、真签名推 G4。逐条后果与字节协议见 `phase6-g0-technical-plan.md` §0
 
 ## 范围外（首期不做）
 

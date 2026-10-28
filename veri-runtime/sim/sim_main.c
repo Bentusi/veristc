@@ -14,7 +14,7 @@
  *   io_mapping_write_all()（VM 内存 -> 执行器）-> plant_step()
  * 这是 svm 从不经过的分支：svm 只执行 VM，I/O 与热备在它那里是缺席的。
  *
- * --watch 时 stdout 只走帧（配置回显改道 stderr），帧契约见 sim/watch.h。
+ * --watch 时 stdout 只走帧（配置回显改道 stderr），帧协议见 sim/watch.h。
  *
  * 退出码：0 成功；2 参数/配置错误；3 加载失败；4 执行期错误。
  */

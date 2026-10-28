@@ -10,9 +10,9 @@
 |------|------|---------|------|
 | [`veri-stc/`](veri-stc/) | 编译器（Coq 实现+证明 → Extraction → OCaml `veristc`） | 形式化核 | `make coq` 全绿、无新增 `Admitted` |
 | [`veri-runtime/`](veri-runtime/) | 运行站（C11 SafeASM VM + I/O 映射 + 双机热备 + 仿真） | 执行核 | MISRA-C + ASan/UBSan + fuzzer |
-| [`veri-ide/`](veri-ide/) | 工程站（VeriIDE：图形组态→编译→仿真→下装闭环 Web IDE） | 非安全侧工程工具 | 契约测试 + 图↔文本往返恒等（Phase 6 起） |
+| [`veri-ide/`](veri-ide/) | 工程站（VeriIDE：图形组态→编译→仿真→下装闭环 Web IDE） | 非安全侧工程工具 | 协议测试 + 图↔文本往返恒等（Phase 6 起） |
 
-跨组件耦合只允许经由 [`spec/`](spec/) 的文本契约与二进制布局定义；
+跨组件耦合只允许经由 [`spec/`](spec/) 的文本协议与二进制布局定义；
 系统级端到端验证脚本集中在 [`integration/`](integration/)。
 项目级指引（目录结构、依赖规则 R1–R3、验证路由表）见 [AGENTS.md](AGENTS.md)。
 
@@ -91,7 +91,7 @@ Coq 库构建 → OCaml 提取 → `veristc` 可执行文件 → 运行站库与
 ## 文档
 
 - [AGENTS.md](AGENTS.md) —— 项目级指引：目录结构、三组件依赖规则、验证路由
-- [spec/](spec/) —— SafeST / SafeASM 语言与二进制规范、语义保持说明（跨组件契约唯一源）
+- [spec/](spec/) —— SafeST / SafeASM 语言与二进制规范、语义保持说明（跨组件协议唯一源）
 - [plan/](plan/) —— Phase 0–6 实现指引，含 [Phase 6 VeriIDE 设计](plan/phase6-veriide.prompt.md)
 - [docs/architecture/](docs/architecture/) —— AS-IS 架构模型与数据流图（含 `文件:行号` 证据）
 - [veri-stc/tests/st-examples/feature-probes/README.md](veri-stc/tests/st-examples/feature-probes/README.md) —— 特性覆盖矩阵

@@ -85,7 +85,7 @@ description: 'Phase 5: restore IEC-style stateless FUNCTION semantics with real 
   `parse_fail_pos`（返回首个无法并入的 token 索引）；`veristc_main.ml` 据此把解析失败定位到
   `line/col`，取代统一 `parser failed`。
 - 检查阶段（类型/纯性）尚无 AST 内源位置，`LOC` 渲染为 `-`；逐表达式的类型错误定位（需改造
-  `type_check_expr_f` 返回契约）留作后续增量。
+  `type_check_expr_f` 返回协议）留作后续增量。
 
 ## 验收标准
 
