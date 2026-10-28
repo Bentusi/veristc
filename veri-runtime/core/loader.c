@@ -15,6 +15,7 @@
 
 #include "vm.h"
 #include <string.h>
+#include <float.h>          /* DBL_MAX：加载期拒绝非有限量程 */
 
 /* ================================================================
    字节读取函数 (固定宽度)
@@ -56,6 +57,25 @@ static inline uint64_t read_u64(const uint8_t **buf, uint32_t *len) {
 
 static inline int32_t read_s32(const uint8_t **buf, uint32_t *len) {
     return (int32_t)read_u32(buf, len);
+}
+
+/* float64：小端 8 字节按位搬进 IEEE-754 double。
+   非有限值（NaN / ±Inf）一律拒绝 —— 量程换算用它做乘法，
+   一旦带进来就会污染整条 I/O 通道且不报错。返回 -1 表示短读或非有限。 */
+static int read_f64(const uint8_t **buf, uint32_t *len, double *out) {
+    if (*len < 8) { return -1; }
+    uint64_t bits = 0ULL;
+    for (uint32_t i = 0U; i < 8U; i++) {
+        bits |= ((uint64_t)(*buf)[i]) << (8ULL * (uint64_t)i);
+    }
+    double val;
+    (void)memcpy(&val, &bits, sizeof val);
+    /* NaN 两个比较都为假，必须用「取非」形式才能拒掉 */
+    if (!((val >= (-DBL_MAX)) && (val <= DBL_MAX))) { return -1; }
+    *buf += 8;
+    *len -= 8;
+    *out = val;
+    return 0;
 }
 
 /* ================================================================
@@ -183,11 +203,13 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
                 module->iomap[i].direction          = read_u8(&p, &remaining);
                 module->iomap[i].io_type            = read_u8(&p, &remaining);
                 module->iomap[i].bit_width          = read_u32(&p, &remaining);
-                /* scale_factor 和 bias 为 8 字节 double */
-                module->iomap[i].scale_factor = 1.0;  /* 简化 */
-                module->iomap[i].bias         = 0.0;
-                if (remaining < 16) { return -1; }
-                p += 16; remaining -= 16;  /* 跳过 float64 × 2 */
+                /* scale_factor / bias：文件里的 float64 逐条采信，不再硬写 1.0/0.0 */
+                if (read_f64(&p, &remaining, &module->iomap[i].scale_factor) != 0) {
+                    return -1;
+                }
+                if (read_f64(&p, &remaining, &module->iomap[i].bias) != 0) {
+                    return -1;
+                }
                 module->iomap[i].safety_limit_low  = read_s32(&p, &remaining);
                 module->iomap[i].safety_limit_high = read_s32(&p, &remaining);
             }
@@ -280,13 +302,16 @@ int sasm_load(const uint8_t *buf, uint32_t len, SasmModule *module) {
         }
     }
     
-    /* 5. 校验 CRC32（非致命：仅警告） */
+    /* 5. 校验 CRC32（强制）
+     *
+     * stored_crc == 0 used to be accepted as a "legacy handcrafted fixture"
+     * escape hatch. It is closed: every producer in this repository (the Coq
+     * encoder and the OCaml emitter) writes a real CRC, so a zero field can only
+     * mean a truncated or deliberately zeroed trailer — and an image that is not
+     * covered by its own checksum must never reach the interpreter. */
     uint32_t stored_crc = read_u32(&p, &remaining);
     uint32_t computed_crc = crc32_compute(crc_start, crc_len);
-    if (stored_crc != computed_crc) {
-        /* Zero is accepted for legacy handcrafted development fixtures. */
-        if (stored_crc != 0) { return -2; }
-    }
+    if ((stored_crc == 0U) || (stored_crc != computed_crc)) { return -2; }
     
     /* 6. 设置入口函数（第一个函数） */
     module->entry_function = 0;

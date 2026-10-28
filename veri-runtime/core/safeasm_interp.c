@@ -1131,6 +1131,32 @@ int vm_init(VM *vm, const SasmModule *module, uint32_t memory_size) {
 }
 
 /**
+ * vm_rebind - 周期边界把 VM 重指到新镜像（见 vm.h 的契约说明）
+ */
+int vm_rebind(VM *vm, const SasmModule *module) {
+    if ((!vm) || (!module)) { return -1; }
+    
+    vm->module = module;
+    if ((module->total_memory_size > 0U) &&
+        (module->total_memory_size <= (uint32_t)MEMORY_SIZE)) {
+        vm->memory_size = module->total_memory_size;
+    }
+    
+    /* 执行状态一律归零：旧镜像的帧里存的是旧 code_pool 的指针，
+       一旦保留就可能出现"新程序 + 旧代码地址"的混叠 */
+    vm->val_stack_ptr = 0;
+    vm->frame_stack_ptr = 0;
+    vm->max_frame_depth = 0;
+    vm->max_value_stack_depth = 0;
+    vm->cycle_count = 0;
+    vm->last_error = VM_OK;
+    
+    (void)memset(vm->memory, 0, vm->memory_size);
+    
+    return 0;
+}
+
+/**
  * vm_run - 运行 VM（执行一个扫描周期）
  * @vm: VM 实例
  * 返回: 0 = 正常结束, 其他 = 错误码
@@ -1153,24 +1179,6 @@ int vm_run(VM *vm) {
     
     /* 入口程序不追加 RETURN；结束时保留入口帧，由 svm 读取 local0 */
     return result;
-}
-
-/* ================================================================
-   I/O 集成扫描周期
-   ================================================================ */
-
-int vm_scan_cycle(VM *vm, void *iomap)
-{
-    if (!vm) { return -1; }
-    if (!iomap) {
-        /* 无 I/O 映射: 仅执行 VM */
-        return vm_run(vm);
-    }
-
-    /* io_mapping_cycle 已在 io_mapping.c 中实现 */
-    /* 此处通过外部链接调用 */
-    extern int io_mapping_cycle(void *table, VM *vm);
-    return io_mapping_cycle(iomap, vm);
 }
 
 /**

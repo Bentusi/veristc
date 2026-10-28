@@ -49,6 +49,26 @@ Definition build_global_env (p : corest_program) : list (ident * Z) :=
 Definition global_memory_size (p : corest_program) : Z :=
   4 * Z.of_nat (List.length p.(cprog_global_vars)).
 
+(* I/O 映射条目的内存偏移 = 该变量在 build_global_env 里的**真实全局槽位地址**。
+
+   旧实现另起一套从 1024 递增的编号（codegen.assign_io_offsets），于是运行站
+   io_mapping_read_all 写进去的位置和程序读写的变量根本不是同一块内存：
+   物理输入进不了程序、程序输出到不了通道，且全程不报错。
+   地址唯一来源与 global_load / debug_rows_of 相同 —— 不做第二份地址真相。
+
+   查不到名字 ⇒ -1（编码为 0xFFFFFFFF）：function_check 已在编译期拒绝该程序，
+   运行期写内存的边界判断也会跳过它，不会踩到别的变量。 *)
+Definition resolve_io_map (globals : list (ident * Z))
+                          (entries : list io_entry) : list io_entry_sasm :=
+  List.map
+    (fun e =>
+       let 'Build_io_entry name_ _ _ _ := e in
+       match lookup_global_offset globals name_ with
+       | Some addr => io_entry_to_sasm addr e
+       | None => io_entry_to_sasm (-1) e
+       end)
+    entries.
+
 Definition global_load
            (env : list (ident * Z)) (x : ident) : list sasm_instr :=
   match lookup_global_offset env x with
@@ -276,9 +296,7 @@ Definition compile_program_g (p : corest_program) : sasm_module :=
     {| seg_type := SEG_GLOBAL;
        seg_start := GLOBAL_BASE;
        seg_size := global_memory_size p |} in
-  let io_offsets := assign_io_offsets p.(cprog_io_mapping) 1024 in
-  let io_map :=
-    List.map (fun e => io_entry_to_sasm (fst e) (snd e)) io_offsets in
+  let io_map := resolve_io_map globals p.(cprog_io_mapping) in
   {| sasm_magic := "SASM";
      sasm_version := 1;
      sasm_flags := 2;  (* bit 1: hot-standby global-state support *)
@@ -792,9 +810,7 @@ Definition compile_program_gc (p : corest_program) : sasm_module :=
     {| seg_type := SEG_GLOBAL;
        seg_start := GLOBAL_BASE;
        seg_size := global_memory_size p |} in
-  let io_offsets := assign_io_offsets p.(cprog_io_mapping) 1024 in
-  let io_map :=
-    List.map (fun e => io_entry_to_sasm (fst e) (snd e)) io_offsets in
+  let io_map := resolve_io_map globals p.(cprog_io_mapping) in
   {| sasm_magic := "SASM";
      sasm_version := 1;
      sasm_flags := 2;
@@ -1076,3 +1092,84 @@ Definition compile_program_sym_info
          match gp with (g, _) => (ident_str g, 2%nat, 0%Z) end)
       (build_alias_table globals funcs csites) in
   exec_rows ++ inst_rows ++ alias_rows.
+
+(* ---------------- Debug 符号表导出（.sasm 段 7，见 safeasm-spec §4.8）--------
+   row = (名字, 绝对内存地址, type_tag)
+
+   地址**只**取自 build_global_env —— 脱糖后 corest_program 上的全局槽位表
+   是地址的唯一权威来源。本函数不重算偏移：在别处另算一套地址会产生第二份
+   "地址真相"，上位工具据此监视错槽位比查不到符号更危险。
+   名字与槽位表一旦对不上即停止发射（宁可少符号，不发错地址）。
+
+   type_tag 是 st_type 的枚举序号（编号表见 spec §4.8），仅供上位工具展示；
+   运行期每个全局槽恒是一个 int32 单字，size/flags 由主机侧编码器补齐。
+   排序、去重与字节编码归 OCaml 侧 emit_debug_section，与 .svobj SYMTAB 同纪律。 *)
+
+Definition debug_row : Type := (String.string * Z * nat).
+
+Definition st_type_tag (t : st_type) : nat :=
+  match t with
+  | T_BOOL    => 0
+  | T_INT     => 1
+  | T_DINT    => 2
+  | T_REAL    => 3
+  | T_LINT    => 4
+  | T_LREAL   => 5
+  | T_TIME    => 6
+  | T_QUALITY => 7
+  | T_BYTE    => 8
+  | T_WORD    => 9
+  | T_DWORD   => 10
+  | T_SINT    => 11
+  | T_QBOOL   => 12
+  | T_QBYTE   => 13
+  | T_QWORD   => 14
+  | T_QDWORD  => 15
+  | T_QSINT   => 16
+  | T_QINT    => 17
+  | T_QDINT   => 18
+  | T_QLINT   => 19
+  | T_QREAL   => 20
+  | T_QLREAL  => 21
+  | T_QTIME   => 22
+  | T_ARRAY _ _ _ => 23
+  | T_FB _        => 24
+  end.
+
+Fixpoint debug_rows_of (decls : list st_var_decl)
+         (env : list (ident * Z)) : list debug_row :=
+  match decls with
+  | nil => nil
+  | d :: rest =>
+      match env with
+      | nil => nil
+      | (g, addr) :: env' =>
+          if ident_eq d.(var_name) g
+          then (ident_str g, addr, st_type_tag d.(var_type)) ::
+                 debug_rows_of rest env'
+          else nil
+      end
+  end.
+
+Definition compile_program_debug_info
+           (p : corest_program) : list debug_row :=
+  debug_rows_of p.(cprog_global_vars) (build_global_env p).
+
+(* ---------------- IOMAP 工程量标尺导出（段 3 的 scale/bias 两个 float64）----
+   `float` 的 IEEE-754 位在 Coq 内拿不到（PrimFloat 靠提取期实现，与 encoder.v
+   里 F32/F64_CONST 立即数编码为全零是同一个缺口），所以本函数只出行、
+   那 16 字节由主机侧 OCaml 覆盖到段 3 的对应槽位（字节编码不进 Coq）。
+
+   行序与编码序**逐条一致**：encode_io_entries 用 fold_right，不重排。
+   主机侧按序写入并在条数不符时拒绝产出，绝不静默错位。
+
+   今天这三列全是 io_entry_to_sasm 里的常量（scale=1.0 / bias=0.0 / 满量程限值）：
+   SafeST 的 IOMAP 语法还没有承载量程/偏置的字段（safest.v 的 io_entry 只有
+   名字/通道/方向/类型）。本导出的意义是让**字节流与 IR 一致**——
+   此前编码器写的是全零占位，加载器又无视字节流硬写 1.0/0.0，两边各自假装。 *)
+Definition io_cal_row : Type := (Z * PrimFloat.float * PrimFloat.float).
+
+Definition compile_module_io_cal_info
+           (m : sasm_module) : list io_cal_row :=
+  List.map (fun e : io_entry_sasm => (e.(io_channel_id), e.(io_scale), e.(io_bias)))
+           m.(sasm_io_map).

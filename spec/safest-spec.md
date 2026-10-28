@@ -22,6 +22,8 @@
 | **v1.4** | **2026-09-28** | **恢复 IEC 风格无状态 `FUNCTION`：支持局部 `VAR`、`IF`/`CASE`、嵌套函数调用和函数名结果变量；函数调用编译为 SafeASM `CALL`/`RETURN`；单表达式 `FUNCTION` 成为可内联优化形态，不再是合法性条件；禁止函数修改全局变量、输入参数和跨周期状态；函数内循环暂不开放，完整 CALL 语义证明列为后续阶段** | JIANG Wei |
 | **v1.5** | **2026-10-14** | **`VAR_IN_OUT` 由「仅解析」升级为逐引用别名语义（新增 6.4 节四条绑定规则，违反即编译拒绝）：端口降级为持有调用方存储地址的形参槽，读写发射 SafeASM `I32_LOAD_PTR`/`I32_STORE_PTR`（0x30/0x31）；实例字段全局可作为实参（跨实例逐引用）；`.svobj` 相应产出 `GLOBAL_OFF` 重定位行与 `GLOBAL_EXT` 符号** | JIANG Wei |
 | **v1.5.1** | **2026-10-22** | **实例字段命名与封装三项修复：(A) GATE-1 重复名检查在 `expand_instances` 之后再跑一次并报出冲突名字（`duplicate_declaration_msg` + 不漏报/不误报两个定理）；(B) 派生名分隔符由 `_` 改为标识符文法外的保留字符 `#`，派生名自此不可书写，用户与派生槽位无法互相冒充名字；(C) 恢复 IEC 点号语法 `inst.field`——解析器就地融合为派生名，不新增 AST 构造、不动形式化核心，并新增 6.5 节方向规则（体外只读 `VAR_OUTPUT`，内部 `VAR` 与体外写输出以 `KIND=access` 拒绝），守门表新增 GATE-6** | JIANG Wei |
+| **v1.5.2** | **2026-10-28** | **语言规则不变；新增附录 D「`veristc` 命令行与诊断契约」：固定退出码（0/11/21/22/23/24/25）、`--json` 的 NDJSON 诊断字段、`-o` 强制（不再向当前工作目录写默认名）。文本诊断行的词汇与格式逐字冻结，既有断言不受影响** | JIANG Wei |
+| **v1.5.3** | **2026-10-28** | **G0/W3：`IOMAP` 条目名改为按名解析到真实全局槽位（`resolve_io_map` 与符号段同源），名字未声明即编译拒绝；守门表新增 GATE-7（`KIND=declaration`，不扩词汇表）。`IF` 是**语句**不是块：§5.3 产生式要求 `END_IF ';'`，缺分号即解析失败（本文第 10 章若干 IEC 风格示例省略了它，属示例笔误，不可照抄）** | JIANG Wei |
 
 ### 0.2 约定
 
@@ -1673,6 +1675,7 @@ q2 := RS(q2, s2, r2);   (* 实体 2：同一份代码，另一组变量 *)
 | GATE-4 | 解析必须消费至 EOF，存在剩余 token 即拒绝（杜绝静默截断产物） | `parse` EOF 安全网 |
 | GATE-5 | 递归调用检测（展开期漏网时的最后防线） | `analysis.v` / 编译管线 |
 | GATE-6 | 实例字段封装（v1.5.1）：体外只允许读 `VAR_OUTPUT`；读写 FB 内部 `VAR`、写 `VAR_OUTPUT` 以 `KIND=access` 拒绝并指认派生名，引用 `VAR_INPUT` / `VAR_IN_OUT` 字段因无派生全局而以 `KIND=type` 拒绝。派生名分隔符 `#` 不在标识符文法内，用户不可书写 ⇒ 不能伪造名字冒充派生槽位 | `function_check.check_program_access`（在 `expand_instances` 之后运行）+ `safest.v` `derived_field_sep` |
+| GATE-7 | `IOMAP` 条目名必须是已声明的全局变量（v1.5.3）：映射靠名字向 `build_global_env` 取槽位，名字解析不到 ⇒ 该通道永远填不进程序内存，产出的制品会"静默无 I/O"。以 `KIND=declaration` 拒绝，`VAR=` 指认未绑定的名字 | `function_check.check_io_mapping_all`（全量收集，逐条目报出）+ `global_codegen.resolve_io_map` |
 
 ---
 
@@ -2312,4 +2315,105 @@ Siemens S7-SCL (Structured Control Language) 是西门子 PLC 的 ST 方言，�
 2. 编译器正确性（ST 语义 → SafeASM 语义）已通过 Coq 证明
 3. 独创的 Q* 质量类型体系填补了 IEC 61131-3 在信号质量语义上的空白
 4. 与 WASM 借鉴关系不同，SafeST 是独立设计的面向安全仪控的最小完备语言，而非从某通用语言剪裁
+
+---
+
+## 附录 D：`veristc` 命令行与诊断契约（v1.5.2 新增）
+
+本附录冻结**编译器作为工具的接口**，供 VeriIDE、CI 脚本与构建系统依赖。
+语言规则本身不变；`veri-stc/extraction/veristc_main.ml` 是本契约的唯一实现处。
+
+### D.1 调用形式
+
 ```
+veristc [-a|-c|-g|-x] [--json] <input> [-o <output>]
+```
+
+| 选项 | 含义 |
+|------|------|
+| `-a` | 静态分析（默认动作）：栈深、递归、WCET、循环有界性 |
+| `-c` | 编译为 `.sasm`，**必须**给 `-o` |
+| `-g` | 编译为可重定位 `.svobj`（见 `safeasm-spec.md` 附录 D），**必须**给 `-o` |
+| `-x` | 校验一个 `.svobj`（结构 + CRC 往返） |
+| `--json` | 输出改为 NDJSON（每行一个 JSON 对象），见 D.4 |
+| `-h` / `--help` | 用法说明，退出码 0 |
+
+规则：
+
+- 动作选项与输入文件的**位置任意**，旧实现只认第一个参数是动作、`-o` 必须紧跟
+  输入文件后的固定槽位，位置不对就静默忽略 —— 该行为已废止。
+- **绝不向当前工作目录写默认名**。`-c`/`-g` 缺 `-o` 即判用法错误（退出码 11）。
+  这是多租户前提：IDE 后端按请求建独立工作目录，编译器进程不落盘。
+- 同一命令行出现两个动作选项 ⇒ 11；`-o` 重复 ⇒ 11；多余的位置参数 ⇒ 11。
+
+### D.2 退出码
+
+| 码 | 类别 | 说明 |
+|----|------|------|
+| 0 | 成功 | |
+| 11 | 用法 | 缺 `-o`、未知/重复选项、无输入文件、输入文件不可读 |
+| 21 | 词法/语法 | `lexer failed`、`parser failed at line L, col C` |
+| 22 | 语义诊断 | `KIND=` 任一（type / purity / declaration / control-flow / for-bound / reserved-name / missing-entry / alias / access）、重名、拒绝递归 |
+| 23 | 资源上限 | 静态栈深超过 `max_call_depth`、WCET/循环上界类拒绝 |
+| 24 | 制品 | 输出文件无法写出、`.svobj` 结构或 CRC 校验失败 |
+| 25 | 内部 | 归一化/脱糖产出空程序等不应发生的情形；出现即编译器缺陷 |
+
+约定：**非 0 即拒绝**，但调用方应按类别分支（例如 21/22 归为"用户代码问题"、
+25 归为"工具问题"）。旧实现无顶层 handler，所有诊断以 OCaml 未捕获异常出栈，
+退出码恒为 2 且把运行时栈打到 stderr —— 该行为已废止。
+
+### D.3 文本诊断格式（冻结）
+
+```
+POU=<pou> VAR=<var|-> KIND=<kind> LOC=- MSG=<message>
+```
+
+- 单行，写 stderr，无 `Fatal error:` 包装。
+- `KIND=` 的九个词汇为**冻结词汇表**，新增类别须走新增而不是改名。
+- 文本模式只渲染**第一条**诊断（历史契约，既有门禁逐字断言其输出）。
+- `LOC` 当前恒为 `-`：语句级行列需要 AST 携带源位置，属证明锥内改动，另立方案。
+
+### D.4 `--json` 契约（NDJSON）
+
+每行一个 JSON 对象，行间无逗号、无数组包裹，可被 `jq -c` 或逐行 `json.loads` 消费。
+
+诊断行（一个错误一行，**全量**输出，不只第一条）：
+
+```json
+{"pou":"MAIN","var":"a1#OUT","kind":"access","loc":"POU=MAIN VAR=a1#OUT","msg":"instance field is read-only (or invisible) outside its FUNCTION_BLOCK"}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pou` | string | 报错 POU 名；无 POU 归属时为空串 |
+| `var` | string 或 null | 相关变量名；无指认变量时为 `null` |
+| `kind` | string | 与文本 `KIND=` 同一词汇表 |
+| `loc` | string | `POU=<pou> VAR=<var|->`，与文本模式同构，前端可直接显示 |
+| `msg` | string | 人读消息，与文本模式 `MSG=` 逐字相同 |
+
+其它帧：
+
+```json
+{"kind":"syntax","msg":"parser failed at line 4, col 1","line":4,"col":1}
+{"kind":"analysis","stack_depth":1,"recursive":false,"wcet":4,"loops_bounded":true}
+{"kind":"output","path":"/abs/out.sasm","bytes":469}
+{"kind":"usage"|"resource"|"artifact"|"internal","msg":"..."}
+```
+
+- 诊断行里的 `var` 是**派生名**（`实例#字段`，分隔符 `derived_field_sep`）。
+  上位工具必须按 `#` 反查画布上的块实例与端口，但**拆分规则由工程站 schema
+  统一定义**，不得让各前端自行猜解。
+- 顺序保证：与内部检查顺序一致（逐 POU → VAR_IN_OUT 别名 → 封装访问），
+  首行恒等于文本模式渲染的那一条。
+- `--json` 时 stdout 只出 JSON；拒绝路径不再出现 OCaml 运行时栈。
+  文本模式的全部输出逐字不变，`--json` 是**附加**副本而非替代。
+
+### D.5 稳定性承诺
+
+| 冻结项 | 变更代价 |
+|--------|---------|
+| 退出码语义（D.2） | 视为 ABI，只增不改 |
+| `KIND=` 九词汇 | 改名即破坏 `run_vm_checks.sh` 与负例基线 |
+| 文本诊断整行格式 | 既有 71 项断言 + 编译器负例逐字依赖 |
+| `--json` 字段名与顺序无关性 | 消费方只按字段名取值，不得依赖键序 |
+| 不写 CWD | 破坏即令并行构建互相覆盖 |

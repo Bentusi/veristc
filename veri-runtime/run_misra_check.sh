@@ -38,6 +38,13 @@ DEFAULT_FILES=(
     veri-runtime/hotstandby/sync.c
     veri-runtime/hotstandby/state_machine.c
     veri-runtime/hotstandby/download.c
+    veri-runtime/hotstandby/hmac_sha256.c
+    veri-runtime/hotstandby/download_wire.c
+    veri-runtime/agent/agent_main.c
+    veri-runtime/sim/plant.c
+    veri-runtime/sim/sim_io.c
+    veri-runtime/sim/watch.c
+    veri-runtime/sim/sim_main.c
 )
 
 if [ "$#" -gt 0 ]; then

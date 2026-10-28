@@ -1,10 +1,12 @@
 // flow-vm-runtime.dot
 // VeriSTC SafeASM VM 运行期主路径数据流 (当前状态 / AS-IS) —— flow-visualizer + graphviz
 // 本图只回答一个问题: .sasm 进入 svm 后，一个扫描周期里真正执行了什么。
-// "已实现但没有接入运行路径"的能力(I/O 扫描、双机热备、增量下装、RT-Thread 移植)见 flow-vm-unwired.dot。
+// svm 是三个运行站程序之一(另两个: sim 走 I/O 闭环, veristc-agent 走下装切换)；
+// "已实现但没有接入运行路径"的能力(双机热备周期封装、增量补丁、RT-Thread 移植)见 flow-vm-unwired.dot。
 // 证据: veri-runtime/core/svm.c, veri-runtime/core/loader.c, veri-runtime/core/safeasm_interp.c, veri-runtime/core/vm.h
 // 读法: 全部实线 = svm 可执行文件里真正会执行的路径；红色虚线 = 拒绝/终止分支；橙色节点 = 语义弱化点。
 // 重新渲染: dot -Tsvg flow-vm-runtime.dot -o flow-vm-runtime.svg
+// 更新日期 2026-10-28 (Phase 6 G0 / W2'-W5 之后, 行号已重导)
 digraph "veristc_vm_runtime_main" {
     graph [
         rankdir=TB,
@@ -21,15 +23,15 @@ digraph "veristc_vm_runtime_main" {
     subgraph cluster_load {
         label="① 装载与校验  ——  svm 内实际执行"; style="rounded"; color="#1a7f37"; fontsize=12;
 
-        fopen_fread [label="load_module: fopen + fread\n进 2MB 静态缓冲\nlen==0 或 len>=缓冲 → 拒绝\nveri-runtime/core/svm.c:70-83,24"];
-        magic_ver   [label="sasm_load: 长度<8 → -1\nmagic(SASM) → version(0x01)\nloader.c:91,99-106"];
-        sections    [label="段循环解析\nTypes/Funcs/Segments/IOMap/Code/Safety\n每处越界或非法 → return -1\nloader.c:111-281"];
-        iomap_note  [label="IOMap 段解析\n取 name/mem_offset/channel/dir/type/width/limit\n但 scale 强制 1.0、bias 强制 0.0\n跳过 16 字节 float64×2\nloader.c:186-190",
-                     fillcolor="#ffe9d5"];
-        crc_check   [label="尾部 CRC32 比对\n不匹配且 stored!=0 → -2\nstored==0 放行 (legacy fixture 约定)\nloader.c:283-289",
-                     fillcolor="#ffe9d5"];
-        validate    [label="sasm_validate (第二道)\ncycle_limit<=1e6 / 栈深 / 内存 /\n入口 / 代码区间\nloader.c:302-342 | 调用 svm.c:90-93"];
-        vm_init     [label="vm_init\nVM{val_stack[1024], frame_stack[256],\nmemory[1MiB], safety, entry}\n无独立 FB 实例区, FB 数据即内存段\nveri-runtime/core/vm.h:309-321,175 | svm.c:94"];
+        fopen_fread [label="load_module: fopen + fread\n进 2MB 静态缓冲 (SVM_MAX_FILE_SIZE)\nlen==0 或 len>=缓冲 → 拒绝\nveri-runtime/core/svm.c:73-81,29"];
+        magic_ver   [label="sasm_load: 长度<8 → -1\nmagic(SASM) → version(0x01)\nloader.c:110,118-127"];
+        sections    [label="段循环解析\nTypes/Funcs/Segments/IOMap/Code/Safety/WCET/Debug\n每处越界或非法 → return -1\nloader.c:135-303 (段 7 整段跳过，运行核不消费)"];
+        iomap_note  [label="IOMap 段解析\n取 name/mem_offset/channel/dir/type/width/limit\nscale/bias 逐条真读 float64 (G0/W2' 起)\n非有限值 (NaN/±Inf) → 加载失败 -1\nloader.c:207,210 + read_f64:65",
+                     fillcolor="#dcf5e3"];
+        crc_check   [label="尾部 CRC32 比对\n不匹配 → -2\nstored==0 也 → -2 (G0/W5 起严格)\nloader.c:305-314",
+                     fillcolor="#dcf5e3"];
+        validate    [label="sasm_validate (第二道)\ncycle_limit∈(0,1e6] / 栈深 / 内存 /\n入口 / 代码区间\nloader.c:327-367 | 调用 svm.c:91"];
+        vm_init     [label="vm_init\nVM{val_stack[1024], frame_stack[256],\nmemory[1MiB], safety, entry}\n无独立 FB 实例区, FB 数据即内存段\nveri-runtime/core/vm.h:311-318 | svm.c:95"];
         reject      [shape=octagon, fillcolor="#ffe2e2", color="#cf222e",
                      label="任一校验不过 → 打印错误并退出\n(尺寸/magic/version/段/CRC/validate)"];
 
@@ -50,16 +52,16 @@ digraph "veristc_vm_runtime_main" {
     subgraph cluster_cycle {
         label="② 扫描周期主循环  ——  周期体内只有 vm_run"; style="rounded"; color="#1a7f37"; fontsize=12;
 
-        loop [shape=diamond, label="while (!stop && (n==0 || executed<n))\nveri-runtime/core/svm.c:204", fillcolor="#dcf5e3"];
-        vmrun [label="vm_run\n重置计数 → 压入口帧 → 执行\nsafeasm_interp.c:1138-1156\n★ 直接调用, 未经任何 I/O 包装\nveri-runtime/core/svm.c:205",
+        loop [shape=diamond, label="while (!stop && (n==0 || executed<n))\nveri-runtime/core/svm.c:257", fillcolor="#dcf5e3"];
+        vmrun [label="vm_run\n重置计数 → 压入口帧 → 执行\nsafeasm_interp.c:1164-1178\n★ 直接调用, 未经任何 I/O 包装\nveri-runtime/core/svm.c:258",
                fillcolor="#dcf5e3"];
-        exec_cycle [label="vm_execute_cycle\nwhile (frame->pc < body_size)\n单一大 opcode switch\nsafeasm_interp.c:259-274,1088",
+        exec_cycle [label="vm_execute_cycle\nwhile (frame->pc < body_size)\n单一大 opcode switch\nsafeasm_interp.c:259-1096",
                     fillcolor="#dcf5e3"];
-        cycle_limit [label="每指令 cycle_count++\n超过 safety.cycle_limit → VM_ERR_CYCLE_LIMIT\n注意 cycle_limit==0 时该检查完全不生效\nsafeasm_interp.c:265-269", fillcolor="#ffe9d5"];
+        cycle_limit [label="每指令 cycle_count++\n超过 safety.cycle_limit → VM_ERR_CYCLE_LIMIT\n周期起始的「有效但过小」由运行期兜住: 返回值 -5\n由上层程序决定停机/回滚\nsafeasm_interp.c:265-268 | vm.h:185", fillcolor="#ffe9d5"];
         ptr_ops [label="指针访存已实现\nOP_I32_LOAD_PTR 0x30 / STORE_PTR 0x31\n(VAR_IN_OUT 逐引用别名, 地址取自值栈)\nsafeasm_interp.c:577,594 | vm.h:147-148"];
-        print_res [label="打印结果到 stdout\n取 frame_stack[0].locals[0] 或 local[i]\nveri-runtime/core/svm.c:211-213"];
-        expected  [label="可选期望值比对\natoi(expected)!=result → return 1\nveri-runtime/core/svm.c:215-218", fillcolor="#f6f8fa"];
-        deadline  [label="advance_deadline + sleep_until\nCLOCK_MONOTONIC 绝对定时\n周期 = -p MS (默认 1000)\nveri-runtime/core/svm.c:119-136,223-224"];
+        print_res [label="打印结果到 stdout\n取 frame_stack[0].locals[0] 或 local[i]\nveri-runtime/core/svm.c:264-266"];
+        expected  [label="可选期望值比对\natoi(expected)!=result → return 1\nveri-runtime/core/svm.c:268-271", fillcolor="#f6f8fa"];
+        deadline  [label="advance_deadline + sleep_until\nCLOCK_MONOTONIC 绝对定时\n周期 = -p MS (默认 1000)\nveri-runtime/core/svm.c:136-152,276-277"];
 
         loop -> vmrun [label="同一 VM 实例反复执行"];
         vmrun -> exec_cycle;
@@ -72,16 +74,16 @@ digraph "veristc_vm_runtime_main" {
     }
     vm_init -> loop [label="默认模式", color="#1a7f37", penwidth=1.8];
 
-    signal [label="SIGINT / SIGTERM → stop_requested\n唯一的外部停止手段\nveri-runtime/core/svm.c:39-43,197-198"];
+    signal [label="SIGINT / SIGTERM → stop_requested\n唯一的外部停止手段\nveri-runtime/core/svm.c:36-40,250-251"];
     signal -> loop [label="退出循环", style=dashed, color="#6e7781"];
 
     // ================= 3. 错误处理语义 =================
     subgraph cluster_err {
         label="③ 错误处理语义  ——  发现即退出，不进安全态"; style="rounded"; color="#cf222e"; fontsize=12;
-        err_codes [label="非法码 / 除零 / 栈溢出 / 越界 → VM_ERR_*\n(vm.h:180-188)\ncheck_mem_bounds: 先 memory_size\n再 safety.mem_access_ranges 白名单\nsafeasm_interp.c:167-181,520,1085"];
-        soft_err  [label="语义弱化点\n· pop_value 下溢: 记 last_error 后返回 0 并继续执行\n· OP_SAFE_ASSERT: 运行时只读不阻断\n· 打印端口魔法地址绕过边界检查\nsafeasm_interp.c:44-50,630-637,541-557",
+        err_codes [label="非法码 / 除零 / 栈溢出 / 越界 → VM_ERR_*\n(vm.h:181-188)\ncheck_mem_bounds: 先 memory_size\n再 safety.mem_access_ranges 白名单\nsafeasm_interp.c:167-181,520,1085"];
+        soft_err  [label="语义弱化点\n· pop_value 下溢: 记 last_error 后返回 0 并继续执行\n· OP_SAFE_ASSERT: 运行时只读不阻断\n· 打印端口魔法地址(0x7FFFFFxx)绕过边界检查\nsafeasm_interp.c:44-50,541-557,630-637",
                    fillcolor="#ffe9d5"];
-        stop_out  [label="vm_run != VM_OK\nfprintf + return 3 停机\nveri-runtime/core/svm.c:206-208", fillcolor="#ffe2e2"];
+        stop_out  [label="vm_run != VM_OK\nfprintf + return 3 停机\nveri-runtime/core/svm.c:258-261", fillcolor="#ffe2e2"];
     }
     cycle_limit -> err_codes [style=dashed, color="#cf222e"];
     exec_cycle  -> soft_err  [style=dashed, color="#cf222e"];
@@ -90,6 +92,6 @@ digraph "veristc_vm_runtime_main" {
 
     // ================= 读图要点 =================
     note2 [shape=note, fillcolor="#fff8c5", color="#9a6b00", fontsize=10,
-           label="主路径结论\n1) 装载有两道关: sasm_load(结构+CRC) 与 sasm_validate(安全参数)；损坏文件确实被拒(veri-runtime/run_vm_checks.sh:209 断言 -2)，\n   但 stored_crc==0 的未签名文件被放行(loader.c:286-288)，改写后清零即可绕过——完整性校验对这类文件不强制。\n2) 周期体内不含 I/O 输入同步也不含输出同步: svm.c:205 直接调 vm_run。\n   装载出的 IOMap 表此后从未被任何代码消费。\n3) 超周期只有指令数上限(cycle_limit)，且 cycle_limit==0 时失效；无看门狗、无安全态迁移。\n4) 失败即进程退出，交由上层重启，VM 自身不实现故障收敛。"];
+           label="主路径结论 (2026-10-28, G0/W5 之后)\n1) 装载有两道关: sasm_load(结构+CRC) 与 sasm_validate(安全参数)。CRC 现在无条件强制——\n   值不符或全零一律 -2 (loader.c:314)，旧的「未计算即放行」后门已关闭；\n   损坏/全零两种情形都由 run_vm_checks.sh 第 6/10 步断言。\n2) 本图只画 svm。周期体内不含 I/O 是**有意的分工**，不再是缺口:\n   带 I/O 的闭环周期在 sim (sim_main.c:273 → io_mapping_cycle)，\n   镜像交换与健康窗回滚在 veristc-agent (agent_main.c:473/490)。\n   svm 保持纯执行器，用于测试与黄金时间线复算。\n3) 段 7 符号表运行核不消费(整段跳过)，解析归主机侧 svm -s/-l 与 sim --watch。\n4) 超周期只有指令数上限(cycle_limit)；无看门狗、无安全态迁移。\n   svm 失败即进程退出；agent 失败则多一层: 健康窗内 vm_run 返回错误 → dl_rollback 回上一版本。"];
     { rank=sink; note2; }
 }

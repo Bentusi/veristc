@@ -1,0 +1,18 @@
+# .plant -- simulated plant for sim_closed_loop.st
+#
+# columns: channel dir kind gain offset min max init drive
+#
+# Values are raw counts on a 0..1000 range; the IOMAP carries identity
+# scale/bias, so raw == engineering value here and every number below is
+# what the ST program sees.
+
+# controlled quantity: first-order lag chasing the actuator, time constant
+# of 8 cycles (gain = 1/8 is exactly representable, so the timeline is
+# bit-for-bit reproducible)
+0 INPUT LAG 0.125 0 0 1000 0 1
+
+# actuator: records whatever the controller writes, no dynamics of its own
+1 OUTPUT ACTUATOR 0 0 0 1000 0 -1
+
+# setpoint: constant source, never driven
+2 INPUT CONST 0 0 0 1000 500 -1

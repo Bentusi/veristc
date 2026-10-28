@@ -1,0 +1,12 @@
+  cycle=1      t=0         ch0=0 ch1=500 ch2=500 status=0
+  cycle=2      t=100       ch0=62 ch1=938 ch2=500 status=0
+  cycle=3      t=200       ch0=171 ch1=1000 ch2=500 status=0
+  cycle=4      t=300       ch0=274 ch1=1000 ch2=500 status=0
+  cycle=5      t=400       ch0=364 ch1=1000 ch2=500 status=0
+  cycle=6      t=500       ch0=443 ch1=1000 ch2=500 status=0
+  cycle=7      t=600       ch0=512 ch1=988 ch2=500 status=0
+  cycle=8      t=700       ch0=571 ch1=917 ch2=500 status=0
+  cycle=9      t=800       ch0=614 ch1=803 ch2=500 status=0
+  cycle=10     t=900       ch0=637 ch1=666 ch2=500 status=0
+  cycle=11     t=1000      ch0=640 ch1=526 ch2=500 status=0
+  cycle=12     t=1100      ch0=625 ch1=401 ch2=500 status=0

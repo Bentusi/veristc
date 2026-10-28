@@ -21,6 +21,9 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   ├── run_channel_e2e.sh            单组 RPS 4 通道保护黄金时间线 e2e
 │   ├── run_algo_e2e.sh               RS/SR/PID/FBY 算法块多实例黄金时间线 e2e
 │   ├── run_algo_fb_e2e.sh            原生 FUNCTION_BLOCK 算法块多实例 e2e
+│   ├── run_sim_e2e.sh                闭环仿真 e2e（.plant 对象 + sim 主程序 + 黄金时间线 + watch 帧）
+│   ├── dl_frames.py                    下装帧参考发送端（Python，与 C 接收端相互独立）
+│   ├── run_download_e2e.sh             下装 e2e（管道送帧 → 周期边界切换 → 拒绝矩阵 → 健康回滚）
 │   └── run_nuclear_e2e.sh            核电 ST→SASM→VM 端到端验证
 ├── plan/                           ← Phase 描述文件（见下方导航）
 │   ├── phase0-spec-skeleton.prompt.md
@@ -29,10 +32,13 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   ├── phase3-hotstandby.prompt.md
 │   ├── phase4-engineering.prompt.md
 │   ├── phase5-function-semantics.prompt.md
-│   └── phase6-veriide.prompt.md
+│   ├── phase6-veriide.prompt.md
+│   └── phase6-g0-technical-plan.md   G0 五产出物实施级方案（CLI 契约/符号段/仿真/watch/下装）
 ├── spec/                           ← 顶层 Spec 文档（开发可读，跨组件契约唯一源）
 │   ├── safest-spec.md                SafeST 语言规范（BNF + 类型系统）
 │   ├── safeasm-spec.md               SafeASM 指令集 + 二进制格式
+│   ├── simulation-spec.md            仿真契约：`.plant` 被控对象表 + `sim` 命令行 + watch 帧
+│   ├── download-spec.md              下装帧契约：帧字节布局 + 两道校验 + 拒绝码 + agent 命令行
 │   └── semantics-preservation.md     ST→ASM 映射 + 正确性定理说明
 ├── veri-stc/                       ← 编译器组件（形式化核，Coq 实现+证明 → OCaml）
 │   ├── Makefile                      组件自持构建：make -C veri-stc [coq|extract|veristc]
@@ -40,18 +46,19 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   │   ├── safeasm.v                   SafeASM 字节码形式化（3086 行）
 │   │   ├── safest.v                    SafeST AST/类型形式化（553 行）
 │   │   ├── st_semantics.v              ST 操作语义（780 行）
-│   │   ├── asm_semantics.v             SafeASM 多步执行语义
-│   │   └── compiler_correctness.v      编译正确性定理（2223 行，4 大定理）
+│   │   ├── function_semantics.v        FUNCTION 调用/返回语义
+│   │   └── asm_semantics.v             SafeASM 多步执行语义
 │   ├── src/                            Coq 实现（每文件含实现+证明）
+│   │   ├── compiler_correctness.v      编译正确性定理（2223 行，4 大定理）
 │   │   ├── lexer.v                       词法分析
 │   │   ├── parser.v                      递归下降解析
 │   │   ├── inline.v                      内联展开
 │   │   ├── desugar.v                     AST → CoreST 脱糖
 │   │   ├── analysis.v                    静态分析（WCET/栈深度/循环上限）
 │   │   ├── typechecker.v                 类型检查器
-│   │   ├── function_check.v              FUNCTION 作用域/纯性检查 + FB 实例展开与字段封装检查
+│   │   ├── function_check.v              FUNCTION 作用域/纯性检查 + FB 实例展开与字段封装检查 + 全量诊断收集（`--json` 数据源）
 │   │   ├── codegen.v                     CoreST → SafeASM 代码生成（8201 行，核心）
-│   │   ├── global_codegen.v              全局编译编排
+│   │   ├── global_codegen.v              全局编排 + CALL/RETURN + 重定位/符号行导出
 │   │   └── encoder.v                     SafeASM IR → .sasm 二进制编码
 │   ├── extraction/                     Coq → OCaml Extraction
 │   │   ├── extraction.v                    提取配置
@@ -70,7 +77,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   │   ├── vm.h                            VM 公共头文件（核心数据结构）
 │   │   ├── loader.c                          .sasm 加载 + CRC32 校验
 │   │   ├── safeasm_interp.c                  SafeASM 指令解释器
-│   │   ├── svm.c                             统一 VM 可执行程序（周期运行/dump/info）
+│   │   ├── svm.c                             统一 VM 可执行程序（周期运行/dump/info/符号查询 -s -l/I/O 映射 -m）
 │   │   ├── sasm_dump.c/.h                    .sasm 反汇编 dump 工具
 │   │   └── sasm_info.c/.h                    .sasm 段信息查看工具
 │   ├── io/                           I/O 映射层
@@ -81,14 +88,24 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   │   ├── snapshot.c                        VM 状态快照（序列化 + CRC32）
 │   │   ├── sync.c                            主备同步（脏页追踪）
 │   │   ├── state_machine.c                   主备状态机（故障检测 + 角色切换）
-│   │   └── download.c                        增量下装（周期边界原子切换）
+│   │   ├── download.c                      下装：全量镜像版本槽 + 周期边界切换 + 一级回滚
+│   │   ├── download_wire.c/.h              下装帧协议：组帧 + 接收状态机 + 拒绝码
+│   │   └── hmac_sha256.c/.h                SHA-256 + HMAC-SHA256（自持，不依赖 OpenSSL）
 │   ├── rtos/                         硬件抽象与 RTOS 适配
 │   │   ├── abstract.h                        VM_Interface 硬件抽象接口定义
 │   │   └── rtthread/                           RT-Thread 移植（需外部 SDK）
+│   ├── agent/                        目标端 agent（G0/W5）
+│   │   └── agent_main.c                  veristc-agent：装载 + 周期执行 + 下装服务 + 状态上报
+│   ├── sim/                          仿真后端（G0/W3+W4：软件 I/O + 被控对象 + watch 帧）
+│   │   ├── plant.c/.h                        `.plant` 解析 + 确定性步进（CONST/LAG/RAMP/ACTUATOR）
+│   │   ├── sim_io.c/.h                       VM_Interface 软件实现 + 虚拟时钟
+│   │   ├── watch.c/.h                        `--watch` JSONL 帧：段 7 名字 → 地址 → 数值（契约 §4）
+│   │   ├── sim_main.c                        `sim` 主程序：走 io_mapping_cycle 全路径
+│   │   └── plants/closed_loop.plant          演示对象表（一阶惯性 + 恒值设定 + 执行器）
 │   ├── tests/
 │   │   ├── vm-tests/                         C VM 单元测试与核电端到端测试
 │   │   └── fuzz/                             .sasm 加载器模糊测试 + corpus
-│   ├── run_vm_checks.sh                VM/SVM 单元+周期+CRC 检查（71 项，最细回归指纹）
+│   ├── run_vm_checks.sh                VM/SVM 单元+周期+CRC+符号表+量程+下装帧检查（97 项，最细回归指纹）
 │   ├── run_misra_check.sh              MISRA-C 静态检查（逐文件用例式输出，可传文件参数）
 │   ├── run_sanitizer.sh                ASan/UBSan 内存安全检测
 │   └── run_fuzzer.sh                   .sasm 加载器模糊测试
@@ -111,14 +128,26 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   - 输入：`.st`（IEC 61131-3 Structured Text）
   - 输出：`.sasm`（SafeASM 二进制，I/O 配置作为内嵌 Section 3 一同编码，无独立 `.iomap` 文件）
   - 命令行：`veristc -c input.st -o output.sasm`（编译）/ `veristc -a input.st`（分析）/ `veristc -g input.st -o output.svobj`（可重定位对象）/ `veristc -x output.svobj`（校验 .svobj 结构+CRC）
+  - 机器可读接口：`--json` 输出 NDJSON（一行一条诊断，字段 `pou/var/kind/loc/msg`）；
+    退出码 `0/11/21/22/23/24/25`；`-c`/`-g` 缺 `-o` 即判 11，**绝不写当前工作目录**。
+    契约唯一源见 `spec/safest-spec.md` 附录 D（文本诊断行格式冻结，`--json` 是附加副本）
 - **下位机（运行站）**：C 语言 SafeASM 虚拟机
   - 加载 `.sasm` → CRC32 校验 → 周期解释执行
   - I/O 映射层驱动 AI/AO/DI/DO（缩放/偏置/安全限值）
   - 双机热备（状态快照 + 脏页同步 + 无扰切换 + 增量下装）
+  - 两个主程序分工：`svm` 只跑 VM（不建映射表），`sim` 走 `io_mapping_cycle` 全路径并
+    用 `.plant` 被控对象表充当软件 I/O 硬件；`sim --watch 名字表` 逐周期把「符号名 → 段 7
+    地址 → 数值」以 stdout JSONL 帧发出，这就是工程站仿真按钮要消费的数据面 —— 契约见
+    `spec/simulation-spec.md`（`.plant` 格式 + `sim` 命令行 + watch 帧）
+  - 第三个主程序 `veristc-agent`（G0/W5）＝ 目标端常驻服务：装载 `.sasm` → 逐周期执行 →
+    从文件/管道吸收**下装帧**（HMAC-SHA256 先验、CRC32 后验，两道独立闸）→ 在周期边界把整个 VM
+    重绑到新镜像（冷启动语义：栈与线性内存清零）→ 健康检查不过即回切上一个版本槽；状态以
+    `{"frame":"status",...}` JSONL 帧上报 —— 契约见 `spec/download-spec.md`
 - **工程站（Phase 6 规划）**：VeriIDE —— 前后端分离的浏览器 IDE，覆盖「图形组态 → 编译 → 仿真验证 → 下装运行」闭环与自定义算法块库
   - 它**调用** `veristc` 而非替代：图形层只做「图 JSON → 文本 ST」源生成，编译器唯一入口仍是文本 ST（语义证明边界，不得绕过）
   - 命名体系：编译器 `veristc` / 工程站 `VeriIDE`（组件目录 `veri-ide/`）/ 无 UI 命令行 `veride` / 目标端 `veristc-agent`
-  - 详细设计、前置差距与阶段验收见 `plan/phase6-veriide.prompt.md`
+  - 详细设计、前置差距与阶段验收见 `plan/phase6-veriide.prompt.md`；
+    G0 五产出物的实施级方案（含 5 项已定决策与字节契约）见 `plan/phase6-g0-technical-plan.md`
 
 **数据流**：
 ```
@@ -134,8 +163,9 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   → encoder.v (SafeASM → .sasm 二进制)
   → [OCaml extraction: veristc 可执行文件]
   → .sasm 文件
-  → [C VM: svm]
+  → [C VM: svm 纯执行 / sim 闭环仿真（.plant 被控对象）/ veristc-agent 目标端服务]
   → 周期执行 + I/O 映射 + 热备同步
+  → [工程站送下装帧（HMAC+CRC 全量镜像）] → agent 周期边界重绑 + 健康检查回滚
 ```
 
 ## Phase 导航与完成状态
@@ -190,6 +220,24 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   - i64 立即数：固定 8 字节小端序
   - 指令操作码：1 字节
 - 尾部 CRC32 校验，SVM 加载时拒绝损坏文件
+- Debug Section（段 7，可选但恒发射）：`STRPOOL + SYMTAB` 的
+  `名字 → 地址 → 类型` 符号表，字节布局与 `type_tag` 枚举见 `spec/safeasm-spec.md` §4.8
+- **段 7 分层**：Coq `global_codegen.v` 的 `compile_program_debug_info` 出行
+  （地址唯一来源 `build_global_env`，含 `expand_instances` 派生的 `实例#字段` 与实例基址）；
+  OCaml `veristc_main.ml` 的 `emit_debug_section` 做排序/去重/编码
+- **运行核不消费段 7**：`loader.c` 按未知段整段跳过，`SasmModule` 无符号数组；
+  解析归主机侧 `svm -s NAME`（查一个）/ `svm -l`（全列）/ `svm -i`（条数）
+- **IOMAP（段 3）量程真值链**：条目 42 字节，`[18-25]` scale、`[26-33]` bias 为 float64。
+  Coq 侧 `PrimFloat.float` 无 IEEE-754 位 ⇒ `encoder.v` 只写占位零，
+  由 OCaml `patch_iomap_cal` 按 `compile_module_io_cal_info` 的 IR 值覆盖（条目数/段长/通道号三重核对，不符即拒绝产出）；
+  `loader.c` 的 `read_f64` **逐条采信文件值**并拒绝非有限值（NaN/±Inf → 加载失败）。
+  当前 SafeST 无量程语法，发射值恒为 `1.0 / 0.0`；工程量程属 G0/W3 仿真侧 `.plant` 表
+  （契约见 `spec/safeasm-spec.md` §4.4 与验证规则 V10b）
+- **IOMAP（段 3）地址单一真值**：`[4-7]` `mem_offset` 由 Coq `global_codegen.v` 的
+  `resolve_io_map` **按名**向 `build_global_env`（段 7 用的同一张表）取该全局变量的槽位地址。
+  此前它按 1024 起步自行编号，而变量在 4096 起步 ⇒ 运行站写入映射的位置与程序读写的变量
+  不是同一块内存，I/O 数据永远进不了程序。名字未声明即编译拒绝（GATE-7，`KIND=declaration`）；
+  可机检不变量：`svm -m` 的每个 `mem=` 必出现在 `svm -l` 的地址列（`run_vm_checks.sh` 第 8 步）
 
 ### `.svobj` 格式（P2 可重定位对象）
 
@@ -206,10 +254,12 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 
 **组件内测试**（改动只落在一个组件时，跑这些最快）：
 
-- `veri-runtime/run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、原生 FB 多实例/VAR_IN_OUT 别名/svobj 元数据、实例字段封装与派生名拒绝（KIND=access / 展开后重名 / 字面 `#` 不可书写）、dump/SIL3/CRC、1000ms 周期+损坏 CRC 拒绝 —— **71 项，最细的回归指纹**
-- `veri-stc/tests/compiler-tests/run_compiler_tests.sh`：编译器正/负用例（基线 accepted=20, failed=0）
+- `veri-runtime/run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、原生 FB 多实例/VAR_IN_OUT 别名/svobj 元数据、实例字段封装与派生名拒绝（KIND=access / 展开后重名 / 字面 `#` 不可书写）、dump/SIL3/CRC、1000ms 周期+损坏 CRC 与全零 CRC 拒绝（G0/W5 起 stored_crc==0 也判 -2）、Debug 段符号表（派生名字→地址解析、地址落在全局槽区间、`-l`/`-i` 条数一致、字节级确定性）、IOMAP 量程（编译器发射的 scale/bias 经加载器逐条采信、非有限值拒绝、`svm -m` 的地址必出现在 `svm -l`）、
+  下装帧协议（SHA-256/HMAC 对公开测试向量、多帧重组、逐类畸形帧拒绝）、全量镜像下装链路
+  （收帧→装槽→周期边界重绑→回滚，用真实 `.sasm` 制品）—— **97 项，最细的回归指纹**
+- `veri-stc/tests/compiler-tests/run_compiler_tests.sh`：编译器正/负用例 + 机器可读 CLI 断言（基线 accepted=42, failed=0；第 3 步覆盖退出码、`--json` 与 IOMAP 未绑定名拒绝）
 - `veri-runtime/run_misra_check.sh`：MISRA-C 静态合规检查（cppcheck；缺失即判 FAIL，不静默跳过）
-- `veri-runtime/run_sanitizer.sh`：ASan/UBSan 内存安全检测
+- `veri-runtime/run_sanitizer.sh`：ASan/UBSan 内存安全检测（含下装帧与镜像切换的 ASan 变体）
 - `veri-runtime/run_fuzzer.sh`：`.sasm` 加载器模糊测试
 
 **跨组件系统级 e2e**（`integration/`；语料在 `veri-stc/tests/st-examples`，被测制品在 `build/`）：
@@ -220,6 +270,8 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 - `integration/run_channel_e2e.sh`：单组 RPS 4 通道保护 + ESFAS 顺序器黄金时间线验证
 - `integration/run_algo_e2e.sh`：RS/SR/PID/FBY 算法块多实例 12 周期黄金时间线验证
 - `integration/run_algo_fb_e2e.sh`：原生 FUNCTION_BLOCK 版算法块（VAR_OUTPUT 多输出、VAR 实例持久状态、VAR_IN_OUT 别名、IF 控制流）12 周期黄金时间线验证
+- `integration/run_download_e2e.sh`：下装端到端——Python 发送端经管道送帧 → agent 收帧 → 周期边界切换（判据是**程序输出形状真的换了**，不是状态帧自证）、六类拒绝用例（篡改/CRC/截断/超限/序号缺口/错钥，每条都核对"活动镜像不动"）、健康检查回滚（新镜像超自身周期预算 ⇒ 回切旧槽后继续扫描）、agent 命令行与退出码契约 + 状态帧 JSON 可解析（34 项）
+- `integration/run_sim_e2e.sh`：闭环仿真——积分控制器 + 一阶惯性被控对象 12 周期黄金时间线、两次运行逐字节确定、`.plant` 契约拒绝（重名/方向/越界/非有限/字段数/驱动断链）、程序与对象表一致性拒绝（通道缺失/方向不符/无映射段）、watch 帧与 `svm -l`/黄金时间线逐条交叉核对 + 名字表启动即拒（26 项）
 
 ### 变更后验证路由（Skill: verify-route）
 
@@ -235,6 +287,9 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | `veri-runtime/io/*.c` 或 `*.h` | `make vm-io && ./veri-runtime/run_vm_checks.sh` | I/O 映射层 → 构建+VM 检查 |
 | `veri-runtime/hotstandby/*.c` 或 `*.h` | `make all && ./integration/run_tests.sh` | 热备模块 → 全量测试 |
 | `veri-runtime/rtos/**` | `make all` | RTOS 适配 → 编译通过即可 |
+| `veri-runtime/sim/**` | `make build-sim && ./integration/run_sim_e2e.sh` | 仿真后端 → 构建+闭环/契约回归 |
+| `veri-runtime/agent/**` | `make agent && ./integration/run_download_e2e.sh` | 目标端 agent → 构建+下装 e2e |
+| `veri-runtime/hotstandby/download*.c` 或 `hmac_sha256.c` | `make build-dlwire-test build-dlswitch-test && ./veri-runtime/run_vm_checks.sh && ./integration/run_download_e2e.sh` | 下装帧/版本槽 → 协议单测+切换单测+e2e |
 | `veri-runtime/tests/**/*.c` | `make build-tests && ./veri-runtime/run_vm_checks.sh` | VM 测试代码 → 重建+运行 |
 | `veri-stc/tests/st-examples/feature-probes/*.st` | `./integration/run_feature_probes.sh` | 特性探针变更 |
 | `veri-stc/tests/st-examples/nuclear*.st` | `./integration/run_nuclear_e2e.sh` | 核电用例变更 |
@@ -242,7 +297,11 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | `veri-stc/tests/st-examples/algo_blocks*.st` | `./integration/run_algo_e2e.sh` | 算法块库/多实例用例变更 |
 | `veri-stc/tests/st-examples/algo_blocks_fb.st` | `./integration/run_algo_fb_e2e.sh` | FB 版算法块用例变更 |
 | `veri-stc/tests/st-examples/qualified_access_field.st` | `./veri-runtime/run_vm_checks.sh` | 点号访问/名字分离用例变更 |
+| `veri-stc/tests/st-examples/io_cal.st` | `./veri-runtime/run_vm_checks.sh` | IOMAP 量程黄金制品（`svm -m` 断言）变更 |
+| `veri-stc/tests/st-examples/sim_closed_loop.st` 或 `*.golden.timeline` | `./integration/run_sim_e2e.sh` | 闭环黄金时间线变更 |
+| `veri-runtime/sim/plants/*.plant` | `./integration/run_sim_e2e.sh` | 被控对象表变更（黄金时间线随之变） |
 | `veri-stc/tests/compiler-tests/**/*.st` | `./veri-stc/tests/compiler-tests/run_compiler_tests.sh && ./veri-runtime/run_vm_checks.sh` | 正/负编译用例变更（负例还需 run_vm_checks 校验诊断内容） |
+| `spec/download-spec.md`、`integration/dl_frames.py` | `./integration/run_download_e2e.sh` | 下装契约或其参考实现变更 |
 | `Makefile`、`Makefile.common`、`veri-*/Makefile`、`run_*.sh`、`integration/*.sh` | `./integration/run_tests.sh` | 构建/验证基础设施变更 → 全量回归 |
 | `veri-ide/**`、`*.md`、`*.json`、`*.yml` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入契约测试门禁）；文档/配置 |
 
@@ -257,7 +316,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 需要单独构建某一个组件时用 `make -C <组件> <目标>`。
 
 ```bash
-# 全量构建（编译器 veristc + 运行站 libvm_*/svm + 测试二进制 + .sasm 制品）
+# 全量构建（编译器 veristc + 运行站 libvm_*/svm/sim + 测试二进制 + .sasm 制品）
 make all
 make build-tests            # 追加测试二进制与 .sasm 黄金用例
 
@@ -266,11 +325,15 @@ make coq                    # 仅编译 .vo（= 证明检查门禁）
 make veristc                # 提取 + 链接可执行文件
 make extract                # 仅重跑 Extraction
 
-# 运行站组件（C11 → build/lib/libvm_{core,io,hs}.a + build/bin/svm）
+# 运行站组件（C11 → build/lib/libvm_{core,io,hs}.a + build/bin/{svm,sim}）
 make vm-lib vm-io vm-hs
 make svm
 make build-vm-test build-io-test build-hs-test
 make build-smoke build-function-tests build-channel-e2e build-nuclear-e2e
+make build-io-cal                # → build/sasm/io_cal.sasm（带 IOMAP 段的黄金制品）
+make build-sim                   # → build/bin/sim（软件 I/O + 被控对象仿真后端）
+make sim-demo                    # 一眼可看：积分控制器 + 一阶惯性对象闭环 12 周期
+make sim-watch                   # 仿真数据面：12 行 cycle 帧 + 1 行 done 帧（JSONL）
 
 # 组件内自持构建（不经过根 Makefile）
 make -C veri-stc coq veristc
@@ -286,8 +349,10 @@ make run-sanitize           # ASan/UBSan 构建 + 回归
 make build-fuzzer           # .sasm 加载器模糊测试二进制
 
 # 测试
-./integration/run_tests.sh              # 全量（9 组）
-./veri-runtime/run_vm_checks.sh         # 仅 VM/SVM（71 项）
+./integration/run_tests.sh              # 全量（10 组）
+./veri-runtime/run_vm_checks.sh         # 仅 VM/SVM（97 项）
+./integration/run_sim_e2e.sh            # 仅闭环仿真（26 项）/ 也可 make sim-demo 肉眼看
+./integration/run_download_e2e.sh       # 仅下装 e2e（34 项）
 ./integration/run_nuclear_e2e.sh        # 仅核电端到端
 ./veri-runtime/run_fuzzer.sh 100000      # 模糊测试（默认 100000 次）
 

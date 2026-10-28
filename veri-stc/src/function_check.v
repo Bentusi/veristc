@@ -1155,6 +1155,38 @@ Definition uses_reserved_cycle_counter (globals : list st_var_decl) : bool :=
     (fun d => ident_eq d.(var_name) (ID "__veristc_cycle_counter"))
     globals.
 
+(* ------------------------------------------------------------
+   IOMAP 条目必须绑定到已声明的全局变量
+   ------------------------------------------------------------
+   映射条目的内存偏移按名字从 build_global_env 解析
+   （global_codegen.resolve_io_map）。名字不在全局声明里 ⇒ 地址无处可取，
+   物理通道和程序变量各走各的，运行期表现为「输入读不到、输出写不出」
+   且全程不报错，因此在编译期就拒绝。 *)
+Fixpoint check_io_mapping_all (globals : type_env)
+                              (entries : list io_entry) : list diagnostic :=
+  match entries with
+  | nil => nil
+  | e :: rest =>
+      let bad :=
+        match lookup globals e.(io_var_name) with
+        | None =>
+            [ {| dg_pou := ID "";
+                 dg_var := Some e.(io_var_name);
+                 dg_kind := DK_DECLARATIONS;
+                 dg_msg :=
+                   "IOMAP entry binds an undeclared global variable" |} ]
+        | Some _ => nil
+        end in
+      List.app bad (check_io_mapping_all globals rest)
+  end.
+
+Definition check_io_mapping (globals : type_env)
+                             (entries : list io_entry) : option diagnostic :=
+  match check_io_mapping_all globals entries with
+  | nil => None
+  | d :: _ => Some d
+  end.
+
 Definition check_program_full_diag_struct (p : st_program) : option diagnostic :=
   if uses_reserved_cycle_counter p.(global_vars) then
     Some {| dg_pou := ID ""; dg_var := None; dg_kind := DK_RESERVED;
@@ -1173,7 +1205,11 @@ Definition check_program_full_diag_struct (p : st_program) : option diagnostic :
         | None =>
             match check_program_aliases p.(pou_list) globals with
             | Some d => Some d
-            | None => check_program_access p.(pou_list) p.(global_vars)
+            | None =>
+                match check_program_access p.(pou_list) p.(global_vars) with
+                | Some d => Some d
+                | None => check_io_mapping globals p.(io_mapping)
+                end
             end
         end
     end.
@@ -1196,3 +1232,378 @@ Definition check_program_full (p : st_program) : bool :=
   | None => true
   | Some _ => false
   end.
+
+(* ================================================================
+   Phase 6 / G0 产出物 1 —— 全量诊断与机器可读行投影
+   ------------------------------------------------------------
+   既有 API（check_program_full_diag 及其渲染器）只返回**第一条**诊断，
+   并把 dg_pou/dg_var 压进一行文本；IDE 需要「一次编译看到全部错误」和
+   结构化字段。本层是纯新增的并行实现：
+     * 收集顺序与单条版逐字一致 ⇒ 结果表首项恒等于旧版那条诊断；
+     * 不修改任何既有定义，文本输出与 KIND= 词汇不受影响。
+   本文件在证明锥之外（compiler_correctness.v 不依赖它），无定理影响。
+   语句级/端口级 LOC 仍为 "-"（D3：推到 G2，届时需给 st_stmt/st_expr
+   加位置字段，那属锥内改动）。 *)
+
+Fixpoint cat_diags (ds : list (option diagnostic)) : list diagnostic :=
+  match ds with
+  | nil => nil
+  | Some d :: rest => d :: cat_diags rest
+  | None :: rest => cat_diags rest
+  end.
+
+(* ---- VAR_IN_OUT 别名检查的全量版 ---- *)
+
+Definition check_one_alias_port_all
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (globals : type_env) (ports : list ident)
+           (d : st_var_decl)
+           (params : list (ident * st_expr)) : list diagnostic :=
+  let nm := d.(var_name) in
+  if negb (List.existsb (ident_eq nm) ports) then
+    [make_alias_diag pou_name nm
+       "VAR_IN_OUT port is not declared by the callee"]
+  else
+    match lookup_bound_expr params nm with
+    | None =>
+        [make_alias_diag pou_name nm
+           "VAR_IN_OUT port must be bound to a global variable"]
+    | Some (E_VAR g) =>
+        match lookup (build_env_from_decls (in_out_port_decls caller_decls)) g with
+        | Some chain_ty =>
+            if alias_type_match d.(var_type) chain_ty then
+              nil
+            else
+              [make_alias_diag pou_name g
+                 "VAR_IN_OUT forwarding needs identical 32-bit type"]
+        | None =>
+            if List.existsb (fun dd => ident_eq dd.(var_name) g) caller_decls then
+              [make_alias_diag pou_name g
+                 "VAR_IN_OUT alias target must be global, not a local of the caller"]
+            else
+              match lookup globals g with
+              | None =>
+                  [make_alias_diag pou_name g
+                     "VAR_IN_OUT alias target is not a global variable"]
+              | Some actual_ty =>
+                  if alias_type_match d.(var_type) actual_ty then
+                    nil
+                  else
+                    [make_alias_diag pou_name g
+                       "VAR_IN_OUT alias target needs identical 32-bit type"]
+              end
+        end
+    | Some _ =>
+        [make_alias_diag pou_name nm
+           "VAR_IN_OUT actual must be a simple global variable name"]
+    end.
+
+Fixpoint check_alias_ports_all
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (globals : type_env) (ports : list ident)
+           (iodecls : list st_var_decl)
+           (params : list (ident * st_expr)) : list diagnostic :=
+  match iodecls with
+  | nil => nil
+  | d :: rest =>
+      List.app
+        (check_one_alias_port_all pou_name caller_decls globals ports d params)
+        (check_alias_ports_all pou_name caller_decls globals ports rest params)
+  end.
+
+Definition check_fb_call_aliases_all
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (pous : list st_pou) (globals : type_env)
+           (inst : ident) (params : list (ident * st_expr))
+           : list diagnostic :=
+  match lookup (List.app (build_env_from_decls caller_decls) globals) inst with
+  | Some (T_FB fbname) =>
+      match find_fb_decls fbname pous with
+      | None => nil (* FB 定义缺失由既有类型检查报错，不在此重复 *)
+      | Some fdecls =>
+          let ports := port_names fdecls in
+          List.app
+            (cat_diags
+               (List.map
+                  (fun pe =>
+                     if List.existsb (ident_eq (fst pe)) ports then
+                       None
+                     else
+                       Some (make_alias_diag pou_name (fst pe)
+                               "call binds a name that is not a declared port"))
+                  params))
+            (check_alias_ports_all pou_name caller_decls globals ports
+               (in_out_port_decls fdecls) params)
+      end
+  | _ => nil
+  end.
+
+Fixpoint check_alias_in_stmt_all
+           (pou_name : ident) (caller_decls : list st_var_decl)
+           (pous : list st_pou) (globals : type_env)
+           (s : st_stmt) : list diagnostic :=
+  match s with
+  | S_FB_CALL inst params =>
+      if ident_eq inst (ID "PRINT") then
+        nil
+      else
+        check_fb_call_aliases_all pou_name caller_decls pous globals inst params
+  | S_IF _ then_body else_body =>
+      List.concat
+        (List.map (check_alias_in_stmt_all pou_name caller_decls pous globals)
+                  then_body ++
+         match else_body with
+         | Some b => List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) b
+         | None => nil
+         end)
+  | S_CASE _ branches default =>
+      List.concat
+        (List.concat
+           (List.map
+              (fun ce =>
+                 match ce with
+                 | CASE_ELEM _ body =>
+                     List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) body
+                 end) branches) ++
+         match default with
+         | Some b => List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) b
+         | None => nil
+         end)
+  | S_FOR _ _ _ _ body =>
+      List.concat
+        (List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) body)
+  | S_WHILE _ body =>
+      List.concat
+        (List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) body)
+  | S_REPEAT body _ =>
+      List.concat
+        (List.map (check_alias_in_stmt_all pou_name caller_decls pous globals) body)
+  | _ => nil
+  end.
+
+Definition check_pou_aliases_all
+           (pous : list st_pou) (globals : type_env)
+           (pou : st_pou) : list diagnostic :=
+  let name := match pou with
+              | P_PROGRAM n _ _ => n
+              | P_FUNCTION n _ _ _ => n
+              | P_FUNCTION_BLOCK n _ _ => n
+              end in
+  let decls := pou_var_decls pou in
+  let body := match pou with
+              | P_PROGRAM _ _ b => b
+              | P_FUNCTION _ _ _ b => b
+              | P_FUNCTION_BLOCK _ _ b => b
+              end in
+  List.concat (List.map (check_alias_in_stmt_all name decls pous globals) body).
+
+Definition check_program_aliases_all
+           (pous : list st_pou) (globals : type_env) : list diagnostic :=
+  List.concat (List.map (check_pou_aliases_all pous globals) pous).
+
+(* ---- 限定访问封装检查的全量版 ---- *)
+
+Fixpoint expr_access_all (pou_name : ident)
+           (m : list (ident * var_direction)) (e : st_expr) : list diagnostic :=
+  match e with
+  | E_VAR n =>
+      match lookup_field_dir m n with
+      | Some dir =>
+          if field_read_forbidden dir then
+            [make_access_diag pou_name n
+               "instance internal state (VAR) is not visible outside its FUNCTION_BLOCK"]
+          else nil
+      | None => nil
+      end
+  | E_ARRAY_ACCESS a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_UNARY_OP _ a => expr_access_all pou_name m a
+  | E_BIN_OP _ a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_COMP _ a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_AND a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_OR a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_XOR a b =>
+      List.app (expr_access_all pou_name m a) (expr_access_all pou_name m b)
+  | E_FUNC_CALL _ args =>
+      List.concat (List.map (expr_access_all pou_name m) args)
+  | E_QUALITY_OP _ args =>
+      List.concat (List.map (expr_access_all pou_name m) args)
+  | _ => nil
+  end.
+
+Fixpoint stmt_access_all (pou_name : ident)
+           (m : list (ident * var_direction)) (s : st_stmt) : list diagnostic :=
+  match s with
+  | S_ASSIGN tgt rhs =>
+      match lookup_field_dir m tgt with
+      | Some dir =>
+          if field_write_forbidden dir then
+            [make_access_diag pou_name tgt
+               "instance field is read-only (or invisible) outside its FUNCTION_BLOCK"]
+          else expr_access_all pou_name m rhs
+      | None => expr_access_all pou_name m rhs
+      end
+  | S_ARRAY_ASSIGN _ idx rhs =>
+      List.app (expr_access_all pou_name m idx) (expr_access_all pou_name m rhs)
+  | S_IF cond then_body else_body =>
+      List.app (expr_access_all pou_name m cond)
+        (List.app
+           (List.concat (List.map (stmt_access_all pou_name m) then_body))
+           (match else_body with
+            | Some b => List.concat (List.map (stmt_access_all pou_name m) b)
+            | None => nil
+            end))
+  | S_CASE cond branches default =>
+      List.app (expr_access_all pou_name m cond)
+        (List.app
+           (List.concat
+              (List.map
+                 (fun ce =>
+                    match ce with
+                    | CASE_ELEM _ body =>
+                        List.concat (List.map (stmt_access_all pou_name m) body)
+                    end)
+                 branches))
+           (match default with
+            | Some b => List.concat (List.map (stmt_access_all pou_name m) b)
+            | None => nil
+            end))
+  | S_FOR _ from to step body =>
+      List.app (expr_access_all pou_name m from)
+        (List.app (expr_access_all pou_name m to)
+           (List.app
+              (match step with
+               | Some se => expr_access_all pou_name m se
+               | None => nil
+               end)
+              (List.concat (List.map (stmt_access_all pou_name m) body))))
+  | S_WHILE cond body =>
+      List.app (expr_access_all pou_name m cond)
+        (List.concat (List.map (stmt_access_all pou_name m) body))
+  | S_REPEAT body cond =>
+      List.app (List.concat (List.map (stmt_access_all pou_name m) body))
+        (expr_access_all pou_name m cond)
+  | S_FB_CALL _ params =>
+      List.concat (List.map (fun p => expr_access_all pou_name m (snd p)) params)
+  | _ => nil
+  end.
+
+Definition check_pou_access_all
+           (pous : list st_pou) (dir_map : list (ident * var_direction))
+           (pou : st_pou) : list diagnostic :=
+  let name := match pou with
+              | P_PROGRAM n _ _ => n
+              | P_FUNCTION n _ _ _ => n
+              | P_FUNCTION_BLOCK n _ _ => n
+              end in
+  let body := match pou with
+              | P_PROGRAM _ _ b => b
+              | P_FUNCTION _ _ _ b => b
+              | P_FUNCTION_BLOCK _ _ b => b
+              end in
+  List.concat (List.map (stmt_access_all name dir_map) body).
+
+Definition check_program_access_all
+           (pous : list st_pou) (gdecls : list st_var_decl) : list diagnostic :=
+  let dir_map := build_field_dir_map pous gdecls in
+  List.concat (List.map (check_pou_access_all pous dir_map) pous).
+
+(* ---- 逐 POU 检查的全量版 ---- *)
+
+Definition check_pou_full_all
+           (globals : type_env) (fenv : type_env_func)
+           (pou : st_pou) : list diagnostic :=
+  let decls := pou_var_decls pou in
+  let env := List.app (build_env_from_decls decls) globals in
+  match pou with
+  | P_PROGRAM name _ body =>
+      if type_check_stmts_f true fenv env body then
+        nil
+      else
+        [ {| dg_pou := name; dg_var := None;
+             dg_kind := DK_TYPE; dg_msg := "type error" |} ]
+  | P_FUNCTION name _ fdecls body =>
+      (if negb (function_decls_ok fdecls) then
+         [ {| dg_pou := name; dg_var := None; dg_kind := DK_DECLARATIONS;
+              dg_msg :=
+                "declarations may only use VAR_INPUT and local VAR" |} ]
+       else nil) ++
+      (if negb (function_control_stmts_ok body) then
+         [ {| dg_pou := name; dg_var := None; dg_kind := DK_CONTROL;
+              dg_msg :=
+                "unsupported control flow (WHILE/REPEAT/EXIT/FB calls are not allowed in FUNCTION yet)" |} ]
+       else nil) ++
+      (if negb (function_for_bounds_stmts_ok body) then
+         [ {| dg_pou := name; dg_var := None; dg_kind := DK_FOR_BOUND;
+              dg_msg :=
+                "FOR inside FUNCTION currently requires constant INT bounds and positive constant step" |} ]
+       else nil) ++
+      (if negb (function_writable_stmts_ok
+                   (name :: local_writable_names fdecls) body) then
+         [ {| dg_pou := name; dg_var := None; dg_kind := DK_PURITY;
+              dg_msg :=
+                "purity violation (only local VAR and function result may be assigned)" |} ]
+       else nil) ++
+      (if negb (type_check_stmts_f false fenv env body) then
+         [ {| dg_pou := name; dg_var := None; dg_kind := DK_TYPE;
+              dg_msg := "type error" |} ]
+       else nil)
+  | P_FUNCTION_BLOCK name _ body =>
+      if type_check_stmts_f true fenv env body then
+        nil
+      else
+        [ {| dg_pou := name; dg_var := None;
+             dg_kind := DK_TYPE; dg_msg := "type error" |} ]
+  end.
+
+Fixpoint check_pous_full_all
+           (globals : type_env) (fenv : type_env_func)
+           (pous : list st_pou) : list diagnostic :=
+  match pous with
+  | nil => nil
+  | pou :: rest =>
+      List.app (check_pou_full_all globals fenv pou)
+               (check_pous_full_all globals fenv rest)
+  end.
+
+(* 两道前置闸保持短路：用到保留名或缺少 PROGRAM 入口时，变量环境本身
+   不成立，后续检查的结果没有意义。其余三趟全量收集。 *)
+Definition check_program_full_diags (p : st_program) : list diagnostic :=
+  if uses_reserved_cycle_counter p.(global_vars) then
+    [ {| dg_pou := ID ""; dg_var := None; dg_kind := DK_RESERVED;
+         dg_msg :=
+           "global variable uses reserved name __veristc_cycle_counter" |} ]
+  else
+    match find_program_entry p.(pou_list) with
+    | None =>
+        [ {| dg_pou := ID ""; dg_var := None; dg_kind := DK_MISSING_ENTRY;
+             dg_msg := "missing PROGRAM entry point" |} ]
+    | Some _ =>
+        let globals := build_env_from_decls p.(global_vars) in
+        let fenv := build_fenv_from_pous p.(pou_list) in
+        List.app
+          (check_pous_full_all globals fenv p.(pou_list))
+          (List.app
+             (check_program_aliases_all p.(pou_list) globals)
+             (List.app
+                (check_program_access_all p.(pou_list) p.(global_vars))
+                (check_io_mapping_all globals p.(io_mapping))))
+    end.
+
+(* 机器可读行：(POU 名, 变量名, KIND, MSG)。变量名保留派生形式
+   （实例#字段），IDE 侧据此反查画布上的块与端口。 *)
+Definition diag_row : Type :=
+  (string * option string * string * string).
+
+Definition diagnostic_row (d : diagnostic) : diag_row :=
+  (ident_to_string d.(dg_pou),
+   option_map ident_to_string d.(dg_var),
+   diag_kind_to_string d.(dg_kind),
+   d.(dg_msg)).
+
+Definition check_program_full_diag_rows (p : st_program) : list diag_row :=
+  List.map diagnostic_row (check_program_full_diags p).

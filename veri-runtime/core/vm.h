@@ -330,23 +330,19 @@ bool sasm_validate(const SasmModule *module);
 
 /* safeasm_interp.c */
 int  vm_init(VM *vm, const SasmModule *module, uint32_t memory_size);
+/*
+ * vm_rebind - 在周期边界把已运行的 VM 重指到另一份模块镜像（下装切换用）
+ * @vm:      已 vm_init 过的实例
+ * @module:  新镜像，调用方保证其生命周期（下装侧是版本槽）
+ * 返回: 0 = 成功, -1 = 参数无效
+ *
+ * 与 vm_init 的区别只有一条：不重分配 VM 本身。执行状态（栈指针、帧、周期计数）
+ * 与线性内存一律清零 —— 全量下装换的是整个程序，保留旧全局字节会让新镜像读到
+ * 上一版本布局下的残留值。带状态的无缝切换属增量下装，不在 G0 范围。
+ */
+int  vm_rebind(VM *vm, const SasmModule *module);
 int  vm_run(VM *vm);
 int  vm_execute_cycle(VM *vm);
-
-/* ================================================================
-   I/O 映射层集成接口
-   ================================================================ */
-
-/**
- * vm_scan_cycle - 执行完整 I/O + VM 扫描周期
- * @param vm    VM 实例
- * @param iomap I/O 映射表 (可为 NULL, 此时仅执行 vm_run)
- * @return 0 = 成功, 负值 = 错误码
- *
- * 此函数供 RTOS 适配层或裸机主循环调用。
- * 执行顺序: 读输入 → VM执行 → 写输出
- */
-int vm_scan_cycle(VM *vm, void *iomap);
 sasm_value vm_get_result(const VM *vm);
 
 #ifdef __cplusplus

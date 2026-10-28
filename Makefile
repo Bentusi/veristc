@@ -24,20 +24,27 @@ NUCLEAR_FULL_ST  = $(STC_DIR)/tests/st-examples/nuclear_rps_esfas_full.st
 NUCLEAR_FULL_SASM = $(BUILD_SASM)/nuclear_rps_esfas_full.sasm
 CHANNEL_ST       = $(STC_DIR)/tests/st-examples/nuclear_rps_channel.st
 CHANNEL_SASM     = $(BUILD_SASM)/nuclear_rps_channel.sasm
+IO_CAL_ST        = $(STC_DIR)/tests/st-examples/io_cal.st
+IO_CAL_SASM      = $(BUILD_SASM)/io_cal.sasm
+SIM_LOOP_ST      = $(STC_DIR)/tests/st-examples/sim_closed_loop.st
+SIM_LOOP_SASM    = $(BUILD_SASM)/sim_closed_loop.sasm
 NUCLEAR_TEST_SRC = $(RUNTIME_DIR)/tests/vm-tests/test_nuclear_protection_full_e2e.c
 
 .PHONY: all build-tests coq extract veristc dune-build dune-extract dune-veristc
-.PHONY: vm-lib vm-io vm-hs svm build-vm-test build-io-test build-hs-test rtthread
+.PHONY: vm-lib vm-io vm-hs svm build-vm-test build-io-test build-hs-test \
+        build-dlwire-test build-dlswitch-test agent rtthread
 .PHONY: build-smoke build-function-tests build-nuclear-e2e build-channel-e2e
-.PHONY: sanitize-svm sanitize-test run-sanitize build-fuzzer misra-check clean
+.PHONY: build-io-cal build-sim sim-demo sim-watch
+.PHONY: sanitize-svm sanitize-test sanitize-dl run-sanitize build-fuzzer misra-check clean
 .PHONY: stc-libs runtime-libs
 
 all:
 	@$(STC_MAKE) all
 	@$(RUNTIME_MAKE) all
 
-build-tests: build-vm-test build-io-test build-hs-test build-smoke \
-             build-function-tests build-nuclear-e2e
+build-tests: build-vm-test build-io-test build-hs-test \
+             build-dlwire-test build-dlswitch-test build-smoke \
+             build-function-tests build-io-cal build-sim build-nuclear-e2e
 
 # ================================================================
 # 组件转发（编译器侧）
@@ -64,9 +71,14 @@ svm:             ; @$(RUNTIME_MAKE) svm
 build-vm-test:   ; @$(RUNTIME_MAKE) build-vm-test
 build-io-test:   ; @$(RUNTIME_MAKE) build-io-test
 build-hs-test:   ; @$(RUNTIME_MAKE) build-hs-test
+agent:             ; @$(RUNTIME_MAKE) agent
+build-dlwire-test:   ; @$(RUNTIME_MAKE) build-dlwire-test
+build-dlswitch-test: ; @$(RUNTIME_MAKE) build-dlswitch-test
 sanitize-svm:    ; @$(RUNTIME_MAKE) sanitize-svm
 sanitize-test:   ; @$(RUNTIME_MAKE) sanitize-test
+sanitize-dl:     ; @$(RUNTIME_MAKE) sanitize-dl
 build-fuzzer:    ; @$(RUNTIME_MAKE) build-fuzzer
+build-sim:       ; @$(RUNTIME_MAKE) build-sim
 rtthread:        ; @$(RUNTIME_MAKE) rtthread
 misra-check:     ; @$(RUNTIME_MAKE) misra-check
 
@@ -96,6 +108,28 @@ $(CHANNEL_SASM): $(CHANNEL_ST) | stc-libs
 
 build-channel-e2e: $(CHANNEL_SASM)
 
+# IOMAP 标定用例：唯一带 I/O 映射段的黄金制品（veri-runtime 的 -m 门禁消费它）
+$(IO_CAL_SASM): $(IO_CAL_ST) | stc-libs
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -c $< -o $@
+
+build-io-cal: $(IO_CAL_SASM)
+
+# 闭环仿真制品：sim 门禁与 sim-demo 都用它
+$(SIM_LOOP_SASM): $(SIM_LOOP_ST) | stc-libs
+	@mkdir -p $(BUILD_SASM)
+	$(VERISTC_BIN) -c $< -o $@
+
+# 一眼可看的演示：控制器在合成被控对象里追设定值
+sim-demo: $(SIM_LOOP_SASM) build-sim
+	@$(BUILD_BIN)/sim -n 12 -t 100 $(SIM_LOOP_SASM) $(RUNTIME_DIR)/sim/plants/closed_loop.plant
+
+# 同一闭环的机器可读侧：每周期一行 watch 帧（名字 -> 段 7 地址 -> 数值）
+sim-watch: $(SIM_LOOP_SASM) build-sim
+	@$(BUILD_BIN)/sim -n 12 -t 100 --watch sp,pv,mv,integ,cnt#N,cnt#ACC \
+		$(SIM_LOOP_SASM) $(RUNTIME_DIR)/sim/plants/closed_loop.plant 2>/dev/null \
+		| grep '^{"frame"'
+
 $(NUCLEAR_FULL_SASM): $(NUCLEAR_FULL_ST) | stc-libs
 	@mkdir -p $(BUILD_SASM)
 	$(VERISTC_BIN) -a $<
@@ -111,7 +145,7 @@ $(NUCLEAR_TEST_BIN): $(NUCLEAR_TEST_SRC) $(NUCLEAR_FULL_SASM) | runtime-libs
 # Sanitizer 回归（需要跨组件的 .sasm 用例）
 # ================================================================
 
-run-sanitize: sanitize-svm sanitize-test build-smoke build-function-tests
+run-sanitize: sanitize-svm sanitize-test sanitize-dl build-smoke build-function-tests
 	@$(MAKE) -C $(RUNTIME_DIR) run-sanitize
 
 # ================================================================

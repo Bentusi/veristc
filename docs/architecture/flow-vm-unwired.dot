@@ -1,15 +1,16 @@
 // flow-vm-unwired.dot
 // VeriSTC 运行期"已实现但未接入"能力图 (当前状态 / AS-IS) —— flow-visualizer + graphviz
-// 本图只回答一个问题: 哪些运行期能力在代码里已经实现，但没有进入 svm 的可执行路径，断点具体在哪一行。
+// 本图只回答一个问题: 哪些运行期能力在代码里已经实现，但没有进入三个运行站程序（svm / sim / veristc-agent）的可执行路径，断点具体在哪一行。
 // 与 flow-vm-runtime.dot 互补: 那张图是"实际会执行的"，这张图是"存在但不执行的"。
-// 证据: veri-runtime/core/svm.c, veri-runtime/core/safeasm_interp.c, veri-runtime/io/io_mapping.c, veri-runtime/hotstandby/*.c, veri-runtime/rtos/rtthread/*.c, Makefile
-// 读法: 橙色虚线簇 = 一簇未接入能力；橙色节点 = 已实现代码；红色节点 = 断点；灰色 = 契约/测试替身/实际路径参照。
-// 纵向阅读顺序: ① I/O 扫描 → ④ RT-Thread(与①共享硬件契约) → ② 双机热备 → ③ 增量下装
+// 证据: veri-runtime/{core,sim,agent,hotstandby,io,rtos}/*.c, veri-runtime/Makefile
+// 读法: 橙色虚线簇 = 一簇未接入能力；橙色节点 = 已实现代码；红色节点 = 断点；绿色 = 已接入(参照)；灰色 = 契约/测试替身。
+// 纵向阅读顺序: ① I/O 扫描(已接入 sim) → ④ RT-Thread → ② 双机热备 → ③ 下装(已接入 agent，余下补丁路径)
 // 重新渲染: dot -Tsvg flow-vm-unwired.dot -o flow-vm-unwired.svg
+// 更新日期 2026-10-28 (Phase 6 G0 / W2'-W5 之后)
 digraph "veristc_unwired_runtime" {
     graph [
         rankdir=TB,
-        label="运行期已实现但未接入的能力 (AS-IS)\n问题: 断在哪一行 / 谁在调 / 谁能调\n证据日期 2026-10-14",
+        label="运行期已实现但未接入的能力 (AS-IS)\n问题: 断在哪一行 / 谁在调 / 谁能调\n证据日期 2026-10-28 (G0/W5 之后)",
         labelloc=t, fontsize=17, fontname="Helvetica",
         nodesep=0.4, ranksep=0.75, newrank=true, bgcolor="white"
     ];
@@ -18,32 +19,34 @@ digraph "veristc_unwired_runtime" {
 
     // 所有簇共同的事实参照(放在最上方, 避免长边横跨)
     svm_fact [shape=box, style="rounded,filled", fillcolor="#dcf5e3", color="#1a7f37",
-              label="实际运行路径参照\nveri-runtime/core/svm.c:205 直接调 vm_run → vm_execute_cycle\n周期体内无 I/O 同步、无主备同步、无看门狗"];
+              label="实际运行路径参照 (三个主程序)\nsvm: core/svm.c:257-278 循环体只有 vm_run → 打印 → 休眠, 按设计不做 I/O\nsim: sim/sim_main.c:273 走 io_mapping_cycle 全路径 + .plant 软件 I/O\nagent: agent/agent_main.c:473/490 在周期边界调 dl_apply_switch / dl_rollback"];
 
-    // ================= ① I/O 扫描链路 =================
+    // ================= ① I/O 扫描链路 (已接入 sim) =================
     subgraph cluster_io {
-        label="① I/O 扫描链路 —— 实现完整，但 svm 不链接 libvm_io"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        label="① I/O 扫描链路 —— 已接入 sim；剩余断点在物理硬件后端"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
 
-        scan_cycle [label="vm_scan_cycle(vm, iomap)\n设计上的完整周期入口\n全仓零调用点\nveri-runtime/core/safeasm_interp.c:1162 | veri-runtime/core/vm.h:349"];
-        io_cycle   [label="io_mapping_cycle (真实实现)\nread_all → vm_run → write_all\nveri-runtime/io/io_mapping.c:254-269"];
-        shim       [label="★ 断点: svm.c 内的同名本地桩\n丢弃 table 参数, 直接 return vm_run\n存在只为解析 vm_scan_cycle 引用的外部符号\n它自身也没被主循环调用\nveri-runtime/core/svm.c:31-37,205",
-                    fillcolor="#ffe2e2", color="#cf222e"];
+        io_cycle   [label="io_mapping_cycle\nread_all → vm_run → write_all\nveri-runtime/io/io_mapping.c:254-269\n调用者: sim/sim_main.c:273",
+                    fillcolor="#dcf5e3", color="#1a7f37"];
+        io_bridge  [label="桥接: io_mapping_init(IOMappingTable*, SasmModule*)\n把装载出的 IOMap 段转成运行期映射表\nveri-runtime/io/io_mapping.c:86 @ sim/sim_main.c:240\n(G0/W3 前此处无代码 —— 缺口 C 的落点)",
+                    fillcolor="#dcf5e3", color="#1a7f37"];
         read_all   [label="io_mapping_read_all\nio_read → raw_to_eng → 安全限值饱和\n→ 写 vm->memory\nveri-runtime/io/io_mapping.c:141-189"];
         write_all  [label="io_mapping_write_all\n内存 → safety_check → eng_to_raw → io_write\nveri-runtime/io/io_mapping.c:199-244"];
         scale      [label="缩放/偏置 + 安全限值\nveri-runtime/io/io_mapping.c:48-68,74-80"];
-        iomap_gap  [shape=note, fillcolor="#f2cc60", color="#9a6b00",
-                    label="★ 断点: 装载出的 IOMap 表\nSasmModule.iomap (veri-runtime/core/loader.c:175-193)\n从未被转换成 IOMappingTable\n且 scale/bias 在加载时被强制 1.0/0.0"];
+        cal_truth  [label="量程真值链 (G0/W2' 起)\nloader.c:207,210 逐条读 float64 并拒绝非有限值\n编译器侧 encoder 写占位、OCaml patch_iomap_cal 覆盖",
+                    fillcolor="#dcf5e3", color="#1a7f37"];
+        io_break   [label="★ 剩余断点: 没有生产级 VM_Interface 后端\n已实现的只有 sim/sim_io.c (软件 + 虚拟时钟)\n与未构建的 rtos/rtthread —— 真实板卡驱动缺失",
+                    fillcolor="#ffe2e2", color="#cf222e"];
         io_test    [shape=note, fillcolor="#f6f8fa", color="#8250df",
-                    label="当前唯一驱动者: test_io_mapping\n用 mock 的 g_vm_interface\nMakefile:121-124 (-lvm_io -lvm_core)"];
+                    label="另有 test_io_mapping 用 mock 的 g_vm_interface 驱动"];
     }
-    svm_fact -> scan_cycle [color="#8b949e", label="对照"];
-    scan_cycle -> io_cycle [label="extern 引用\nveri-runtime/core/safeasm_interp.c:1172"];
-    shim       -> io_cycle [label="被本地桩取代", color="#cf222e"];
+    svm_fact -> io_cycle [color="#8b949e", label="sim 主循环", constraint=false];
+    io_bridge -> io_cycle [color="#1a7f37"];
+    cal_truth -> io_bridge [color="#1a7f37"];
     io_cycle   -> read_all;
     io_cycle   -> write_all;
     read_all   -> scale [style=dotted, color="#8b949e"];
     write_all  -> scale [style=dotted, color="#8b949e"];
-    iomap_gap  -> read_all [label="缺一个显式构造步骤", color="#cf222e", fontcolor="#cf222e"];
+    io_break   -> read_all [label="以上两函数按接口指针取数", color="#cf222e", fontcolor="#cf222e"];
     io_test    -> read_all [color="#8250df"];
 
     // ================= ④ RT-Thread 移植 (紧接①, 因为共享硬件契约) =================
@@ -51,12 +54,11 @@ digraph "veristc_unwired_runtime" {
         label="物理 I/O 通道 AI/AO/DI/DO\nVM_Interface 的 25 个函数指针契约\nveri-runtime/rtos/abstract.h:77-288,294"];
 
     subgraph cluster_rtos {
-        label="④ RT-Thread 移植层 —— I/O 与看门狗的唯一真实使用者，但未被构建"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        label="④ RT-Thread 移植层 —— 硬件契约的真实使用者，但未被构建"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
         rt_main  [label="vm_rtthread.c 三线程架构\nio_drv / vm_main / vm_wdt\n周期取自 config.scan_cycle_ms\nveri-runtime/rtos/rtthread/vm_rtthread.c:483-505,355"];
         rt_wdt   [label="vm_wdt: 运行期唯一的超周期兜底\n检测周期停滞并 vm_init 复位\nveri-runtime/rtos/rtthread/vm_rtthread.c:398-427"];
         rt_iface [label="g_vm_interface 聚合 25 个 OS 回调\nveri-runtime/rtos/rtthread/vm_rtthread.c:269-295"];
-        rt_break [label="★ 断点(四条, 任一即阻断)\n· rtthread 不在 all / build-tests 目标 (Makefile:72,74)\n· CC=gcc 无交叉编译器; vm_rtthread.elf 只出现在 clean, 无构建规则\n· vm_rtthread.c:30 include \"../../core/loader.h\" —— veri-runtime/core/ 下只有 vm.h 与 sasm_dump.h\n· 即使设了 RTTHREAD_SDK 也只语法编译, 不链接 (Makefile:182-190)",
-                    fillcolor="#ffe2e2", color="#cf222e"];
+        rt_break [label="★ 断点(未变)\n· rtthread 不在 all / build-tests 目标内\n· CC=gcc 无交叉编译器；无链接规则\n· vm_rtthread.c 仍 include \"../../core/loader.h\" —— 该头文件不存在\n· 即使设了 RTTHREAD_SDK 也只语法编译, 不链接"];
     }
     read_all  -> hw [label="io_read"];
     write_all -> hw [label="io_write"];
@@ -75,13 +77,13 @@ digraph "veristc_unwired_runtime" {
         hs_run   [label="hs_run_cycle → hs_master_cycle / hs_standby_cycle\n5 状态 × 7 事件迁移表\n故障计数达阈值 → FAILED；备站连续丢 3 次心跳 → SWITCHING\nveri-runtime/hotstandby/state_machine.c:371,326,357,98-255\n※ 四个 *_cycle 入口全仓零调用点\n★ 与 VM core 的唯一耦合点: hs_master_cycle 内调 vm_run (:333)"];
         hs_sync  [label="hs_sync_send / hs_sync_receive + 心跳(magic HBT)\n共享内存 send/recv 带 __sync_synchronize 屏障\nveri-runtime/hotstandby/sync.c:205,230,158,178,92,119"];
         snapshot [label="hs_snapshot_create / hs_snapshot_apply\n包头 → 脏页 → 值栈 → 帧栈 → CRC 回填\nGLOBAL + FB_DATA 段强制整段纳入\napply 先校验 CRC(-2) / magic(-3) / 栈指针(-4)\nveri-runtime/hotstandby/snapshot.c:207,324,239-257,304-310"];
-        dirty    [label="脏页追踪 hs_dirty_mark (snapshot.c:129)\n★ 断点: 解释器 STORE 路径从不标记脏页\n唯一调用者 = test_hotstandby.c:326+ 起"];
+        dirty    [label="脏页追踪 hs_dirty_mark (snapshot.c:129)\n★ 断点: 解释器 STORE 路径从不标记脏页\n唯一调用者 = test_hotstandby.c"];
         chaninit [label="★ 断点: hs_chan_shmem_init 把\nsend/recv/last_activity 全置 NULL\nveri-runtime/hotstandby/sync.c:75-77",
                     fillcolor="#ffe2e2", color="#cf222e"];
         hs_test  [shape=note, fillcolor="#f6f8fa", color="#8250df",
-                    label="当前唯一驱动者: test_hotstandby\n用 #include \"../../hotstandby/*.c\" 内联源码\n而非链接 libvm_hs.a\nveri-runtime/tests/vm-tests/test_hotstandby.c:18-23 | Makefile:128-129"];
+                    label="当前唯一驱动者: test_hotstandby\n用 #include \"../../hotstandby/*.c\" 内联源码\n而非链接 libvm_hs.a"];
         libs     [shape=box, style="rounded,filled", fillcolor="#f6f8fa", color="#6e7781",
-                    label="构建产物: libvm_core.a / libvm_io.a / libvm_hs.a\n均在 all 目标内 (Makefile:72,82,94,106)\n★ libvm_io.a 与 libvm_hs.a 未被任何可执行目标链接"];
+                    label="构建产物: libvm_core.a / libvm_io.a / libvm_hs.a\nlibvm_io.a 由 sim 链接, libvm_hs.a 由 agent 链接\n★ 热备的周期封装仍未被这两个程序调用"];
     }
     rt_break -> hs_run [style=invis];
     hs_test  -> hs_run [label="绕过周期封装, 直调底层 API", color="#8250df"];
@@ -91,20 +93,28 @@ digraph "veristc_unwired_runtime" {
     chaninit -> hs_sync  [label="通道未真正接好", color="#cf222e"];
     libs     -> hs_test  [style=dotted, color="#8b949e"];
 
-    // ================= ③ 增量下装 =================
+    // ================= ③ 下装 (已接入 agent；补丁路径未接线) =================
     subgraph cluster_dl {
-        label="③ 增量下装 —— 切换逻辑自洽，仅在测试里被驱动"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
-        dl_prep  [label="dl_manager_init / dl_prepare_download\n静态单例 s_dl_mgr, 2 个版本槽(无 VM 句柄参数)\nveri-runtime/hotstandby/download.c:276,297,266"];
-        dl_diff  [label="compute_diff / apply_patch\nveri-runtime/hotstandby/download.c:100,210"];
-        dl_commit[label="dl_commit_switch: 先 sasm_validate 再换槽\n失败即回滚 (周期边界原子切换)\nveri-runtime/hotstandby/download.c:332-346\n※ 唯一调用者 = test_hotstandby.c:561,581"];
+        label="③ 下装 —— 全量镜像链路已接入 veristc-agent；增量补丁路径保留未接线"; style="rounded,dashed"; color="#fb8500"; fontsize=12;
+        dl_wire  [label="下装帧协议 (spec/download-spec.md)\ndl_frame_build / dl_tx_image / dl_rx_pump / dl_rx_finish\nHMAC-SHA256 先验、CRC32 后验，两道独立\nveri-runtime/hotstandby/download_wire.c:60,94,226,267",
+                  fillcolor="#dcf5e3", color="#1a7f37"];
+        dl_stage [label="dl_manager_load_image / dl_stage_image\n装载首镜像 + 把新镜像装入非活动槽(先验证再置 valid)\nveri-runtime/hotstandby/download.c:482,510",
+                  fillcolor="#dcf5e3", color="#1a7f37"];
+        dl_commit[label="dl_apply_switch → dl_commit_switch (先 sasm_validate 再换槽)\n→ vm_rebind(冷启动语义: 清双栈 + 线性内存)\n失败即 dl_rollback 回上一版本(仅一级)\nveri-runtime/hotstandby/download.c:343,543,568",
+                  fillcolor="#dcf5e3", color="#1a7f37"];
+        dl_patch [label="★ 断点: compute_diff / apply_patch / dl_prepare_download\n函数与测试齐全，但不在 agent 的链路上\n(G0 只做全量镜像，见 spec/download-spec.md §8)\nveri-runtime/hotstandby/download.c:100,210,308"];
+        dl_key   [label="★ 断点: 密钥由 --key 进程内静态注入\n无真实签名/密钥管理 (决策 D5，真签名推到 G4)\nveri-runtime/agent/agent_main.c | spec/download-spec.md §5",
+                  fillcolor="#ffe2e2", color="#cf222e"];
     }
-    snapshot -> dl_prep [style=invis];
-    dl_prep  -> dl_diff;
-    dl_diff  -> dl_commit;
-    dl_commit -> libs [label="复用加载期 sasm_validate\nveri-runtime/core/loader.c:302-342", style=dotted, color="#8b949e"];
+    snapshot -> dl_patch [style=invis];
+    dl_wire  -> dl_stage [label="收满 + 校验通过", color="#1a7f37"];
+    dl_stage -> dl_commit [label="周期边界", color="#1a7f37"];
+    dl_commit -> dl_patch [label="仅测试与旧 API 调用", color="#cf222e"];
+    dl_commit -> libs [label="链接 libvm_hs.a + libvm_core.a", style=dotted, color="#8b949e"];
+    dl_key -> dl_wire [label="MAC 密钥来源", color="#cf222e"];
 
     // ================= 结论 =================
     note3 [shape=note, fillcolor="#fff8c5", color="#9a6b00", fontsize=10,
-           label="四类断点性质不同，修复代价也不同\nA 链接层缺失: svm 不链 libvm_io / libvm_hs，改用本地桩与源码内联绕过 → 只需补 Makefile 链接关系。\nB 数据结构未桥接: SasmModule.iomap 与 IOMappingTable 之间无转换代码 → 需要一个显式构造步骤(且 scale/bias 需在加载期保留)。\nC 周期封装无调用者: vm_scan_cycle / hs_*_cycle / dl_commit_switch 都只有测试入口 → 缺一个运行站主程序。\nD 移植层不可编译: 缺头文件 + 无交叉构建 → 在拿到 RT-Thread SDK 前无法验证。"];
+           label="G0 前后对照\n已闭合: A 链接层 —— sim 链 libvm_io、agent 链 libvm_hs + libvm_core； svm.c 的 io_mapping_cycle 同名桩与 vm_scan_cycle 已删除(无调用者)。\n已闭合: B 数据桥 —— io_mapping_init 直接吃 SasmModule，且 loader 真读 scale/bias，IOMAP mem_offset 与全局槽位同源。\n已闭合: C 之下装半边 —— dl_stage_image/dl_apply_switch/vm_rebind 由 veristc-agent 在周期边界调用，CRC 全零放行后门已关(loader.c:314)。\n仍未闭合: C 之热备半边 —— hs_*_cycle 四个周期入口仍零调用点(传输层是 Phase 3 遗留的共享内存实现)。\n仍未闭合: D 移植层 —— 缺 loader.h + 无交叉构建，拿到 RT-Thread SDK 前无法验证。\n新留白: 生产 VM_Interface 后端、真实签名与密钥管理、增量补丁接线 —— 分别推到 G1/G4/后续。"];
     { rank=sink; note3; }
 }

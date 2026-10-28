@@ -1,8 +1,8 @@
 # SafeASM — 安全汇编字节码规范
 
-> **文档版本**：v1.1  
+> **文档版本**：v1.5.2  
 > **状态**：正式发布  
-> **生效日期**：2026-06-30  
+> **生效日期**：2026-10-28  
 > **对应 Coq 文件**：`safeasm.v`（形式化镜像）  
 > **对应实现文件**：`veri-runtime/core/safeasm_interp.c` `veri-runtime/core/loader.c`  
 > **编码方式**：固定宽度编码
@@ -18,6 +18,12 @@
 | v0.1 | 草案 | 初始草案 | JIANG Wei |
 | v1.0 | 2026-06-29 | 正式发布。补全完整指令集（覆盖全部 66 条指令）；完善各段详细编码格式；新增验证规则章节；完善运行时小步语义；新增编码/解码示例 | JIANG Wei |
 | **v1.1** | **2026-06-30** | **新增影子质量内存段 (SEG_QUALITY)；IOMap 扩展 quality_offset 字段；新增质量传播指令模板；新增 LOAD8_U / STORE8 指令** | JIANG Wei |
+| **v1.2** | **2026-10-28** | **IOMap 条目字节布局按实现统一为 42 字节（原 §4.4 记 46 字节，编码器与加载器各自实现均为 42）；`st_var_name_offset` 降级为 reserved(必须为 0)；`quality_offset` 明确为悬空项、不在字节流内；§4.8 Debug 段追加符号表子块（name→addr→type）并**已由编译器发射**（G0/W2，`svm -s/-l` 解析，V12b 归属主机侧）；§5.0 补全 `svm -i/-s/-l`** | JIANG Wei |
+| **v1.3** | **2026-10-28** | **G0/W2'：IOMap `[18-33]` 的 scale/bias 改为真值链路——编译器主机侧覆盖写 IR 里的 float64，加载器逐条采信并拒绝非有限值（§4.4）；删除 `vm_scan_cycle` 与 `svm` 内的 `io_mapping_cycle` stub，`svm` 改链 `build/lib/libvm_core.a`；§5.0 新增 `svm -m`（打印加载后的 I/O 映射）** | JIANG Wei |
+| **v1.4** | **2026-10-28** | **G0/W3：IOMap `mem_offset` 语义收紧为「该全局变量的真实槽位地址」——由编译器按名向 `build_global_env` 解析，不再自行编号；解析不到即编译拒绝（`KIND=declaration`，见 `spec/safest-spec.md` 附录 D）；新增被控对象 `.plant` 契约指针（`spec/simulation-spec.md` §1）与仿真主程序 `sim`（§5.0 三主程序分工）** | JIANG Wei |
+| **v1.5** | **2026-10-28** | **原生 `FUNCTION_BLOCK` + `VAR_IN_OUT` 逐引用别名：新增 `I32_LOAD_PTR` / `I32_STORE_PTR`（0x30 / 0x31，地址来自值栈而非静态 `mem_offset`）；`.svobj` 侧新增 `GLOBAL_OFF` 重定位类型与 `kind=2 GLOBAL_EXT` 符号（附录 D.3/D.4）** | JIANG Wei |
+| **v1.5.1** | **2026-10-28** | **实例字段派生全局名统一为 `实例名#字段名`；`#` 不在标识符文法内 ⇒ 派生名不可书写，源码只能写 IEC 点号；封装检查（GATE-6）与 §4.8 符号表同时覆盖派生名与实例基址** | JIANG Wei |
+| **v1.5.2** | **2026-10-28** | **G0/W5：V3 严格化 —— 尾部 CRC32 为全零一律拒绝，加载器不再放行「未计算」的校验和（此前损坏 CRC 用例只翻载荷字节，stored 恒非零，故此改动不破任何既有制品）；新增镜像交换（下装）协议契约指针 `spec/download-spec.md` 与目标端 `veristc-agent`（§5.0 三主程序分工）** | JIANG Wei |
 
 ### 0.2 术语与约定
 
@@ -387,22 +393,62 @@ C VM 中 I32/F32 两组变体运行时等价（`sasm_value` 即 32 位位型）�
 
 ### 4.4 IOMap Section (段类型 3)
 
+条目定宽 **42 字节**（v1.2 起以实现为准：`veri-stc/src/encoder.v` 的
+`encode_io_entry` 与 `veri-runtime/core/loader.c` 的 `SEC_IOMAP` 分支逐字段一致）。
+
 ```
 每个 I/O 映射条目:
-  [0-3]    st_var_name_offset: uint32  变量名字符串在 Debug Section 的偏移
-  [4-7]    mem_offset:   uint32  在 SafeASM 线性内存中的偏移（值部分）
-  [8]      qc_offset:    uint8   质量码在影子质量区中的偏移字节（v1.1）
-                                = 0xFF 表示此变量无质量位
-  [9-11]   reserved
-  [12-15]  channel_id:   uint32  物理通道 ID
-  [16]     direction:    uint8   0=INPUT, 1=OUTPUT
-  [17]     io_type:      uint8   0=AI, 1=AO, 2=DI, 3=DO
-  [18-21]  bit_width:    uint32  位宽
-  [22-29]  scale_factor: float64  工程量转换系数
-  [30-37]  bias:         float64  偏移量
-  [38-41]  safety_limit_low:  sint32  安全下限
-  [42-45]  safety_limit_high: sint32  安全上限
+  [0-3]    reserved:     uint32  必须为 0
+                                （v1.1 曾定义为 Debug Section 内的变量名偏移；
+                                  自 v1.2 起名字一律经 §4.8 符号表解析，
+                                  本字段不再写入也不得被读取）
+  [4-7]    mem_offset:   uint32  该变量在 SafeASM 线性内存里的**真实全局槽位地址**
+                                （v1.4 起按名解析，见下方「地址单一真值」）
+  [8-11]   channel_id:   uint32  物理通道 ID
+  [12]     direction:    uint8   0=INPUT, 1=OUTPUT
+  [13]     io_type:      uint8   0=AI, 1=AO, 2=DI, 3=DO
+  [14-17]  bit_width:    uint32  位宽
+  [18-25]  scale_factor: float64 工程量转换系数
+  [26-33]  bias:         float64 偏移量
+  [34-37]  safety_limit_low:  sint32  安全下限
+  [38-41]  safety_limit_high: sint32  安全上限
 ```
+
+> **悬空项**：`quality_offset` / 影子质量内存段（`SEG_QUALITY`）**不在字节流内**。
+> `safeasm.v` 的 `io_entry_sasm` 没有质量字段，编码器也不发射质量段；
+> 质量位监视属 v1.1 遗留设计，实现前不得假定其存在。
+>
+> **量程/偏置的真值链路（v1.3 起）**：
+> `[18-25]`/`[26-33]` 由**主机侧**（`veristc_main.ml` 的 `patch_iomap_cal`）按
+> `compile_module_io_cal_info` 给出的 IR float64 逐条覆盖写入——Coq 侧
+> `PrimFloat.float` 没有可用的 IEEE-754 位，编码器只写占位零（同 §4.5 的
+> F32/F64 立即数缺口）。写入前后做三重核对：条目数、段长与条目宽度、逐条通道号，
+> 任一不符即拒绝产出制品。
+>
+> 加载器（`loader.c` 的 `read_f64`）**逐条采信文件值**，不再硬写 `1.0/0.0`；
+> 非有限值（NaN / ±Inf）判为加载失败返回 `-1`。
+>
+> **当前发射值恒为 1.0 / 0.0**：SafeST 的 `IOMAP` 语法只有
+> `变量, 通道, INPUT|OUTPUT, 类型`（见 `safest-spec.md`），没有量程书写形式，
+> IR 里的 scale/bias 是常量。量程的**工程输入方式属 G0/W3 仿真侧**（`.plant` 表），
+> 给 ST 加量程语法要改语义证明边界内的 `safest.io_entry`，明确不在 G0 范围。
+>
+> **地址单一真值（v1.4 起）**：`mem_offset` 必须由编译器按 `IOMAP` 里书写的变量名，
+> 向 §4.8 符号表使用的同一张 `build_global_env` 取地址（`global_codegen.v` 的
+> `resolve_io_map`）。此前它按 1024 起步自行编号，而全局变量在 4096 起步，
+> 于是运行站写入映射的位置与程序读写的变量**不是同一块内存**——I/O 数据永远进不了程序。
+> 由此得到三条可机检的不变量：
+>
+> 1. `IOMAP` 条目名必须是已声明的全局变量，否则编译拒绝（`KIND=declaration`，
+>    退出码 22；`veri-stc/tests/compiler-tests/negative/iomap_unbound_name.st`）；
+> 2. `svm -m` 打印的每个 `mem=` 都必须出现在 `svm -l` 的地址列里
+>    （`veri-runtime/run_vm_checks.sh` 第 8 步断言）；
+> 3. 仿真侧被控对象的通道集合与方向必须与映射段一致，`sim` 启动时核对，不一致即拒绝
+>    （`spec/simulation-spec.md` §2）；
+> 4. `sim --watch` 帧里每个符号的 `addr`/`type`/`size` 必须与 `svm -l` 对同名符号报出的三个值
+>    逐条相等（`integration/run_sim_e2e.sh` 第 6 步断言）——上位工具看到的地址与
+>    命令行工具看到的地址必须来自同一个真值。
+
 
 ### 4.5 Code Section (段类型 4)
 
@@ -459,13 +505,69 @@ WCET 信息:
 
 ### 4.8 Debug Section (段类型 7, 可选)
 
+名字 → 地址符号表，是运行期与上位工具解析变量名的**唯一**来源
+（IOMap 的 `[0-3]` 自 v1.2 起为 reserved，不再承载名字）。
+
+段位置：WCET (段 6) 之后、尾部 CRC32 之前。**缺失即"无符号信息"**，
+加载与执行照常（未知段一律静默跳过），因此老制品无需重新编译。
+
 ```
-调试符号表:
-  [0-3]    string_count: uint32
-  每个字符串:
-    [0-3]  len:  uint32  字符串长度
-    [4..]  data: byte[len]  UTF-8 字符串
+STRPOOL : u32 count | { u32 len | byte[len] UTF-8 }*
+SYMTAB  : u32 count | { u32 name_off | u32 mem_addr | u8 type_tag | u8 size | u16 flags }*
 ```
+
+| 字段 | 含义 |
+|------|------|
+| `name_off` | STRPOOL 内的字节偏移，**以首个条目的 `u32 len` 字段为偏移 0**（即 `count` 字段之后）；因每个条目自带长度前缀，`pool + name_off` 直接指向该条目的 `u32 len` |
+| `mem_addr` | SafeASM 线性内存地址（全局槽基址之上的绝对偏移） |
+| `type_tag` | `st_type` 枚举序号（完整表见下），仅作展示与单位换算提示，不参与执行 |
+| `size` | 恒为 `4` —— 每个全局槽是一个 `int32` 单字（解释器无双字/f64 内存 load/store） |
+| `flags` | 保留，必须为 `0` |
+
+**确定性**：SYMTAB 按 `name` 升序且去重（与 `.svobj` SYMTAB 同纪律，附录 D），
+使 `compile_determinism` 在字节层同样可复现。
+
+`type_tag` 完整取值（`0..7` 为首期约定的常用子集，序号永不复用；
+新增类型只能追加到 `25` 之后）：
+
+| 序号 | 类型 | 序号 | 类型 | 序号 | 类型 |
+|------|------|------|------|------|------|
+| 0 | BOOL | 8 | BYTE | 16 | QSINT |
+| 1 | INT | 9 | WORD | 17 | QINT |
+| 2 | DINT | 10 | DWORD | 18 | QDINT |
+| 3 | REAL | 11 | SINT | 19 | QLINT |
+| 4 | LINT | 12 | QBOOL | 20 | QREAL |
+| 5 | LREAL | 13 | QBYTE | 21 | QLREAL |
+| 6 | TIME | 14 | QWORD | 22 | QTIME |
+| 7 | QUALITY | 15 | QDWORD | 23 | ARRAY |
+| | | | | 24 | FB |
+
+`23 ARRAY` / `24 FB` 是**块基址**：`FB` 行的地址即实例数据块首地址，
+同一实例的字段行地址 = 基址 + 字段偏移，上位工具据此还原块端口连线。
+
+**实现分层**（与 `.svobj` 同法，字节编码不进 Coq）：Coq 侧 `global_codegen.v`
+只导出语义行 `compile_program_debug_info : corest_program -> list debug_row`
+（`debug_row = (name, addr, type_tag)`），字节由主机侧 OCaml 的
+`emit_debug_section` 拼装。地址的唯一权威来源是 `build_global_env`
+（定义域为脱糖后的 `corest_program`）；在 `st_program` 上另算一套偏移会
+产生第二份地址真相，禁止。
+
+**覆盖范围**：FB 实例字段在此前已由 `expand_instances` 扁平成派生名全局
+（`实例#字段`），故符号表天然含实例字段 —— 这正是上位工具把画布上的块
+端口对应到内存地址所需的信息。
+
+**运行侧**：安全核不消费段 7 —— `loader.c` 按未知段规则整段跳过，
+`SasmModule` 里没有符号数组（不扩大下位机静态内存）。
+符号解析归主机侧工具：`svm -l <file>` 列出全部符号，
+`svm -s <NAME> <file>` 精确查一个（命中输出 `名字 0x地址 类型 size=N` 并返回 0，
+未命中/无段返回 1），`svm -i` 的 Summary 报告符号条数。
+上位工具据此把画布上的块/端口翻译成监视地址。
+
+> **实现状态**：段 7 自 v1.2 起由编译器发射（Phase 6 G0 / W2，
+> Coq `compile_program_debug_info` 出行 + OCaml `emit_debug_section` 编码）。
+> `REAL` 的 `type_tag` 照发，但 `F32_CONST`/`F64_CONST` 的立即数位当前编码为全零，
+> 上位工具须对该类型标注为不可信，直至浮点链路补齐。
+> `T_ARRAY` 全局当前只占一个 int32 槽，段 7 只报告其首槽地址，不表达数组跨度。
 
 ---
 
@@ -479,12 +581,28 @@ SafeASM 运行和反汇编由同一个可执行程序提供：
 svm [options] <file.sasm> [expected] [local_index]
 
   -d           输出 dump 后退出
+  -i           输出段信息与符号条数后退出
   -n CYCLES    执行周期数，0 表示持续运行（默认 0）
   -p MS        周期毫秒数（默认 1000）
+  -s NAME      查询符号表（段 7）中的 NAME，输出地址/类型后退出
+  -l           列出全部符号后退出
+  -m           加载模块后输出 I/O 映射表（含 scale/bias），随后退出
 ```
+
+`-s` / `-l` 只读文件的段 7，不加载模块、不进入 VM；符号缺失时返回非 0。
+`-m` 与运行模式走**同一条加载路径**（CRC32 → `sasm_load` → `sasm_validate`），
+输出的是运行期真正使用的量程，不是文件字节的复读；加载失败返回 3。
 
 默认模式为运行模式；周期起始时间使用单调时钟调度。`-d` 输出模块
 反汇编、安全元数据和 WCET，并验证末尾 CRC32。
+
+**`svm` 不做 I/O**：它只执行 VM，映射层与热备在其主循环里缺席。带 `IOMAP` 段的
+制品要跑闭环，用仿真主程序 `sim`（`spec/simulation-spec.md` §3）。
+
+**三个主程序分工**：`svm` 只跑 VM（本文）；`sim` 走 I/O 映射全路径 + 被控对象仿真
+（`spec/simulation-spec.md`）；`veristc-agent` 是目标端常驻进程，装载镜像、按周期扫描，
+并在周期边界接受下装帧协议送来的新镜像（`spec/download-spec.md` §6）。
+三者共用同一条加载路径与同一套拒绝规则，差别只在主循环与 I/O 后端。
 
 ### 5.1 运行时状态
 
@@ -673,7 +791,7 @@ SafeASM 模块在加载时必须通过以下验证。验证失败则拒绝加载
 |------|------|---------|
 | V1 | Magic 必须为 `0x4D534153` ("SASM") | 加载时 |
 | V2 | Version 必须为 `0x01` | 加载时 |
-| V3 | CRC32 覆盖 6 字节文件头后的 Section 数据，必须匹配；全零值仅为旧测试文件兼容 | 加载时 |
+| V3 | CRC32 覆盖 6 字节文件头后的 Section 数据，必须匹配；**全零值一律拒绝**（v1.5.2 起，加载器不再放行未计算的校验和） | 加载时 |
 | V4 | 文件总大小 = 文件头 + 各段头+段数据 + 4 字节校验和 | 加载时 |
 
 ### 7.2 段验证
@@ -686,8 +804,10 @@ SafeASM 模块在加载时必须通过以下验证。验证失败则拒绝加载
 | V8 | Memory Section 中各段的 `start_offset + size` 不得超出 `total_size` |
 | V9 | Memory Section 中各段区间不得重叠 |
 | V10 | IOMap Section 中每个条目的 `mem_offset + bit_width/8` 不得超出 `total_size` |
+| V10b | IOMap 每个条目的 `scale_factor` / `bias` 必须是**有限** float64；出现 NaN 或 ±Inf 即加载失败（加载器返回 `-1`）。`scale_factor = 0` 不拒（`io_mapping_eng_to_raw` 显式退化为恒等），但量程为 0 属工程配置错误 |
 | V11 | Code Section 中每个函数的 `body_size` 必须 > 0 |
 | V12 | Safety Section 必须存在（所有 8 个基础段为必选） |
+| V12b | Debug Section（段 7）可选，缺失即无符号信息；存在时每个 `name_off` 必须落在 STRPOOL 范围内，且 SYMTAB 必须按 `name` 升序。校验者是主机侧工具（`svm -s/-l` 的解析器），**不是**运行站加载器——运行站按未知段规则整段跳过，段内容不参与执行 |
 
 ### 7.3 指令验证
 

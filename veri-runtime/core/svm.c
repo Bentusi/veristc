@@ -7,6 +7,9 @@
  *   default: execute scan cycles every 1000 ms
  *   -d:      dump the module and exit
  *   -i:      show module info and exit
+ *   -m:      load the module and show the I/O map the VM actually uses
+ *   -s NAME: resolve one Debug-section symbol name and exit
+ *   -l:      list Debug-section symbol names and exit
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -30,14 +33,6 @@ static VM vm;
 static uint8_t file_data[SVM_MAX_FILE_SIZE];
 static volatile sig_atomic_t stop_requested = 0;
 
-/* io_mapping_cycle is only referenced by the I/O scan path. */
-int io_mapping_cycle(void *table, VM *scan_vm);
-int io_mapping_cycle(void *table, VM *scan_vm)
-{
-    (void)table;
-    return vm_run(scan_vm);
-}
-
 static void on_signal(int signum)
 {
     (void)signum;
@@ -51,6 +46,9 @@ static void usage(const char *prog)
             "options:\n"
             "  -d           dump module and exit\n"
             "  -i           show module info and exit\n"
+            "  -m           load the module and show its I/O map, then exit\n"
+            "  -s NAME      print the Debug-section symbol NAME and exit\n"
+            "  -l           list all Debug-section symbols and exit\n"
             "  -n CYCLES    execute CYCLES cycles (0 = continuous, default 0)\n"
             "  -p MS        cycle period in milliseconds (default 1000)\n"
             "  -h           show this help\n",
@@ -101,6 +99,22 @@ static int load_module(const char *path)
     return 0;
 }
 
+/* 打印加载器解析后的 I/O 映射：量程/偏置必须是文件里的值，不是硬写常量 */
+static void print_iomap(void)
+{
+    (void)printf("I/O map (loaded): %u channels\n", module.iomap_count);
+    for (uint32_t i = 0U; i < module.iomap_count; i++) {
+        const IOMapEntry *e = &module.iomap[i];
+        (void)printf("  [%u] ch=%u %s mem=0x%08X bits=%u scale=%.17g bias=%.17g"
+                     " safety=[%d,%d]\n",
+                     i, e->channel_id,
+                     (e->direction == IO_DIR_INPUT) ? "INPUT " : "OUTPUT",
+                     e->mem_offset, e->bit_width,
+                     e->scale_factor, e->bias,
+                     e->safety_limit_low, e->safety_limit_high);
+    }
+}
+
 static sasm_value vm_result(void)
 {
     if ((vm.frame_stack_ptr > 0) &&
@@ -142,6 +156,9 @@ int main(int argc, char **argv)
 {
     int dump_mode = 0;
     int info_mode = 0;
+    int iomap_mode = 0;
+    int list_syms = 0;
+    const char *sym_name = NULL;
     uint32_t cycles = 0;
     uint32_t period_ms = 1000;
     const char *path = NULL;
@@ -153,6 +170,17 @@ int main(int argc, char **argv)
             dump_mode = 1;
         } else if (strcmp(argv[i], "-i") == 0) {
             info_mode = 1;
+        } else if (strcmp(argv[i], "-m") == 0) {
+            iomap_mode = 1;
+        } else if (strcmp(argv[i], "-l") == 0) {
+            list_syms = 1;
+        } else if (strcmp(argv[i], "-s") == 0) {
+            if ((++i >= argc) || (argv[i][0] == '\0') ||
+                ((argv[i][0] == '-') && (argv[i][1] != '\0'))) {
+                usage(argv[0]);
+                return 2;
+            }
+            sym_name = argv[i];
         } else if (strcmp(argv[i], "-n") == 0) {
             if ((++i >= argc) || (parse_u32(argv[i], &cycles) != 0)) {
                 usage(argv[0]);
@@ -192,6 +220,21 @@ int main(int argc, char **argv)
 
     if (info_mode != 0) {
         return sasm_info_file(path);
+    }
+
+    if (list_syms != 0) {
+        return sasm_sym_file(path, NULL);
+    }
+
+    if (sym_name != NULL) {
+        return sasm_sym_file(path, sym_name);
+    }
+
+    if (iomap_mode != 0) {
+        /* 走真实加载器：打印的是 VM 运行期实际使用的量程，不是文件字节的复读 */
+        if (load_module(path) != 0) { return 3; }
+        print_iomap();
+        return 0;
     }
 
     uint32_t local_index = 0;

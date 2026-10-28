@@ -52,12 +52,15 @@ Separate Extraction
   veristc_src.function_check.prepare_program
   veristc_src.function_check.check_program_full
   veristc_src.function_check.check_program_full_diag
+  veristc_src.function_check.check_program_full_diag_rows
   veristc_src.codegen.compile_program
   veristc_src.global_codegen.compile_program_g
   veristc_src.global_codegen.compile_program_gc
   veristc_src.global_codegen.compile_program_reloc_info
   veristc_src.global_codegen.compile_program_inst_info
   veristc_src.global_codegen.compile_program_sym_info
+  veristc_src.global_codegen.compile_program_debug_info
+  veristc_src.global_codegen.compile_module_io_cal_info
   veristc_src.analysis.analyze
   veristc_src.encoder.encode_sasm_instr
   veristc_src.encoder.encode_module

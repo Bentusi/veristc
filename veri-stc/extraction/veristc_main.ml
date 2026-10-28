@@ -86,6 +86,11 @@ let rec coq_list_len (l : 'a Datatypes.list) : int =
   | Datatypes.Coq_nil -> 0
   | Datatypes.Coq_cons (_, rest) -> 1 + coq_list_len rest
 
+let rec sv_list_to_ocaml (l : 'a Datatypes.list) : 'a Stdlib.List.t =
+  match l with
+  | Datatypes.Coq_nil -> []
+  | Datatypes.Coq_cons (x, rest) -> x :: sv_list_to_ocaml rest
+
 let rec coq_list_exists (predicate : 'a -> bool) : 'a Datatypes.list -> bool =
   function
   | Datatypes.Coq_nil -> false
@@ -100,6 +105,84 @@ let analysis_has_recursion (result : Analysis.analysis_result) : bool =
     result.Analysis.ar_has_recursion
 
 let max_call_depth = 256
+
+(* ================================================================
+   G0 产出物 1 —— 机器可读接口
+   ------------------------------------------------------------
+   退出码约定（契约表见 spec/safest-spec.md 工具链节）：
+     0  成功
+     11 CLI 用法错误（含缺少 -o、输入文件不可读）
+     21 词法/语法失败
+     22 语义诊断（KIND=type/purity/declaration/... 任一）
+     23 资源上限拒绝（栈深/WCET/循环上界）
+     24 制品读写或校验失败
+     25 内部异常（不应出现；出现即编译器 bug）
+   旧实现没有任何顶层 handler，30 处 failwith 全部以未捕获异常出栈，
+   退出码恒为 2、并把 OCaml 运行时栈打到 stderr。现在所有拒绝路径
+   显式携带类别，文本输出逐字不变（既有 71 项断言依赖 KIND=/VAR= 子串）。
+   ================================================================ *)
+
+let exit_ok = 0
+let exit_usage = 11
+let exit_syntax = 21
+let exit_semantic = 22
+let exit_resource = 23
+let exit_artifact = 24
+let exit_internal = 25
+
+exception Fatal of int * string
+
+let die (code : int) (msg : string) : 'a = raise (Fatal (code, msg))
+
+(* --json：stdout 只出 NDJSON，拒绝路径不再打印 OCaml 运行时栈。 *)
+let json_mode = ref false
+
+(* --json 时把解析失败的行列带出来（当前唯一有真实源位置的路径）。 *)
+let syntax_loc : (int * int) option ref = ref None
+
+let json_escape (s : string) : string =
+  let buf = Buffer.create (Stdlib.String.length s + 8) in
+  Stdlib.String.iter
+    (fun c ->
+      let code = Char.code c in
+      match c with
+      | '"' -> Buffer.add_string buf "\\\""
+      | '\\' -> Buffer.add_string buf "\\\\"
+      | '\n' -> Buffer.add_string buf "\\n"
+      | '\r' -> Buffer.add_string buf "\\r"
+      | '\t' -> Buffer.add_string buf "\\t"
+      | _ when code < 0x20 ->
+          Buffer.add_string buf (Printf.sprintf "\\u%04x" code)
+      | _ -> Buffer.add_char buf c)
+    s;
+  Buffer.contents buf
+
+(* diag_row = ((pou, var), kind, msg)，Coq 元组左结合。 *)
+let decode_diag_row (r : F.diag_row) :
+      string * string option * string * string =
+  let Datatypes.Coq_pair (p2, msg_cs) = r in
+  let Datatypes.Coq_pair (p1, kind_cs) = p2 in
+  let Datatypes.Coq_pair (pou_cs, var_opt) = p1 in
+  let var =
+    match var_opt with
+    | None -> None
+    | Some v -> Some (native_of_coq_string v)
+  in
+  (native_of_coq_string pou_cs, var,
+   native_of_coq_string kind_cs, native_of_coq_string msg_cs)
+
+(* NDJSON：一行一条诊断，字段固定 pou/var/kind/loc/msg。
+   var 为派生名（实例#字段），IDE 侧据此反查画布上的块与端口。
+   loc 沿用文本模式的 POU=/VAR= 词汇，前端可直接显示。 *)
+let emit_json_diag (pou, var, kind, msg) : unit =
+  let var_text = match var with Some v -> v | None -> "-" in
+  Printf.printf "{\"pou\":\"%s\",\"var\":%s,\"kind\":\"%s\",\"loc\":\"POU=%s VAR=%s\",\"msg\":\"%s\"}\n"
+    (json_escape pou)
+    (match var with
+     | Some v -> "\"" ^ json_escape v ^ "\""
+     | None -> "null")
+    (json_escape kind)
+    (json_escape pou) (json_escape var_text) (json_escape msg)
 
 (* WS-F：把字节偏移映射回源文件的行/列，用于定位解析错误。 *)
 let rec nat_to_int (n : Datatypes.nat) : int =
@@ -131,7 +214,7 @@ let nth_nat (l : Datatypes.nat Datatypes.list) (idx : int) : int option =
 let parse_or_fail (native_src : string) (coq_src : String.string) =
   let tokens = match L.lex coq_src with
     | Some ts -> ts
-    | None -> failwith "lexer failed"
+    | None -> die exit_syntax "lexer failed"
   in
   match P.parse tokens with
   | Some p -> p
@@ -142,11 +225,12 @@ let parse_or_fail (native_src : string) (coq_src : String.string) =
             (match nth_nat offs (z_to_int z) with
              | Some off ->
                  let (ln, col) = offset_to_line_col native_src off in
+                 syntax_loc := Some (ln, col);
                  Printf.sprintf "parser failed at line %d, col %d" ln col
              | None -> "parser failed")
         | _ -> "parser failed"
       in
-      failwith msg
+      die exit_syntax msg
 
 let crc32_table =
   Array.init 256 (fun n ->
@@ -170,7 +254,7 @@ let crc32_range (data : string) (offset : int) (length : int) : int32 =
 
 let attach_crc32 (data : string) : string =
   let len = Stdlib.String.length data in
-  if len < 10 then failwith "encoded module is too short for CRC32";
+  if len < 10 then die exit_internal "encoded module is too short for CRC32";
   let bytes = Bytes.of_string data in
   let crc = crc32_range data 6 (len - 10) in
   let value = Int32.to_int crc in
@@ -180,17 +264,177 @@ let attach_crc32 (data : string) : string =
   Bytes.set bytes (len - 1) (Char.chr ((value lsr 24) land 0xFF));
   Bytes.to_string bytes
 
+(* ---------------- 定宽小端写入（.sasm 段 7 与 .svobj 共用）---------------- *)
+
+let put_u8 (b : Buffer.t) (v : int) : unit =
+  Buffer.add_char b (Char.chr (v land 0xff))
+let put_u16 (b : Buffer.t) (v : int) : unit =
+  put_u8 b v; put_u8 b ((v lsr 8) land 0xff)
+let put_u32 (b : Buffer.t) (v : int) : unit =
+  put_u16 b (v land 0xffff); put_u16 b ((v lsr 16) land 0xffff)
+
+(* ================================================================
+   段 7 Debug：名字 → 地址符号表（契约见 spec/safeasm-spec.md §4.8）
+
+   字节布局（段体，段头与其他段同格式）：
+     STRPOOL : u32 count | { u32 len | byte[len] }*
+     SYMTAB  : u32 count | { u32 name_off | u32 mem_addr | u8 tag | u8 size | u16 flags }*
+   name_off 以 STRPOOL 首个条目的 u32 len 字段为偏移 0（即 count 之后）。
+   行来源为 Coq 的 compile_program_debug_info（地址唯一权威 = build_global_env）；
+   本侧只做排序/去重/编码，不重算任何偏移。
+   ================================================================ *)
+
+(* debug_row = ((name, addr), type_tag) —— Coq 元组左结合 *)
+let decode_debug_row (r : G.debug_row) : string * int * int =
+  let Datatypes.Coq_pair (na, tag_n) = r in
+  let Datatypes.Coq_pair (name_cs, addr) = na in
+  (native_of_coq_string name_cs, z_to_int addr, nat_to_int tag_n)
+
+let emit_debug_section (rows : (string * int * int) Stdlib.List.t) : string =
+  if Stdlib.List.length rows = 0 then ""
+  else begin
+    (* 名字升序 + 相邻去重：地址全部来自 Coq 侧，本侧不裁决同名冲突 *)
+    let by_name (a, _, _) (b, _, _) = Stdlib.String.compare a b in
+    let rec drop_dup = function
+      | ([] | [_]) as l -> l
+      | ((n1, _, _) as x) :: (((n2, _, _) :: _) as rest) ->
+          if Stdlib.String.equal n1 n2 then drop_dup rest else x :: drop_dup rest
+    in
+    let syms = drop_dup (Stdlib.List.sort by_name rows) in
+    let pool = Buffer.create 1024 in
+    let offs =
+      Stdlib.List.map
+        (fun (name, _, _) ->
+           let off = Buffer.length pool in
+           put_u32 pool (Stdlib.String.length name);
+           Buffer.add_string pool name;
+           (name, off))
+        syms
+    in
+    let tab = Buffer.create (8 + 14 * Stdlib.List.length syms) in
+    put_u32 tab (Stdlib.List.length syms);
+    Stdlib.List.iter
+      (fun (name, addr, tag) ->
+         put_u32 tab (Stdlib.List.assoc name offs);
+         put_u32 tab addr;
+         put_u8 tab tag;
+         put_u8 tab 4;   (* size：每个全局槽恒为一个 int32 单字 *)
+         put_u16 tab 0)  (* flags：保留，必须为 0 *)
+      syms;
+    let body = Buffer.create (Buffer.length pool + Buffer.length tab) in
+    put_u32 body (Stdlib.List.length syms);
+    Buffer.add_buffer body pool;
+    Buffer.add_buffer body tab;
+    let sec = Buffer.create (Buffer.length body + 8) in
+    put_u8 sec 7;                          (* SEC_DEBUG *)
+    put_u32 sec (Buffer.length body);
+    put_u8 sec 0;                          (* reserved *)
+    put_u16 sec 0;                         (* flags *)
+    Buffer.add_buffer sec body;
+    Buffer.contents sec
+  end
+
+let splice_debug (image : string) (body : string) : string =
+  let n = Stdlib.String.length image in
+  if Stdlib.String.length body = 0 || n < 4 then image
+  else
+    Stdlib.String.sub image 0 (n - 4) ^ body
+    ^ Stdlib.String.make 4 '\x00'
+
+(* ================================================================
+   段 3 IOMAP 的工程量标尺（scale / bias，两个 float64）
+
+   Coq 拿不到 float 的 IEEE-754 位（PrimFloat 靠提取期实现；与 encoder.v 里
+   F32/F64_CONST 立即数写成全零是同一个缺口），所以这 16 字节由主机侧覆盖，
+   值逐条取自 compile_module_io_cal_info。条目布局见 spec/safeasm-spec.md §4.4：
+   条目长 42，scale 在 [18-25]，bias 在 [26-33]。
+   写序与 encode_io_entries 一致（fold_right，不重排）；条数或段长对不上即拒绝产出，
+   绝不错位缩放。
+   ================================================================ *)
+
+let iomap_sec_id = 3
+let iomap_entry_len = 42
+let iomap_count_len = 4
+let iomap_scale_off = 18
+let iomap_bias_off = 26
+
+(* float64 → 小端 8 字节（等价于 Bytes.set_double_le_bytes，不依赖 stdlib 版本）*)
+let put_f64 (b : Bytes.t) (off : int) (v : float) : unit =
+  (* 64 位平台上 Int64.to_int 是位模式的恒等转换 *)
+  let raw = Stdlib.Int64.to_int (Stdlib.Int64.bits_of_float v) in
+  for i = 0 to 7 do
+    Bytes.set b (off + i) (Char.chr ((raw lsr (8 * i)) land 0xff))
+  done
+
+(* io_cal_row = ((channel, scale), bias) —— Coq 元组左结合 *)
+let decode_io_cal (r : G.io_cal_row) : int * float * float =
+  let Datatypes.Coq_pair (cb, bias) = r in
+  let Datatypes.Coq_pair (ch, scale) = cb in
+  (z_to_int ch, scale, bias)
+
+let patch_iomap_cal (image : string)
+                    (rows : (int * float * float) Stdlib.List.t) : string =
+  let n = Stdlib.String.length image in
+  let b = Bytes.of_string image in
+  let get_u32 off =
+    if off + 4 > n then die exit_internal "iomap: short read"
+    else
+      Char.code (Bytes.get b off)
+      lor (Char.code (Bytes.get b (off + 1)) lsl 8)
+      lor (Char.code (Bytes.get b (off + 2)) lsl 16)
+      lor (Char.code (Bytes.get b (off + 3)) lsl 24)
+  in
+  let sections_end = n - 4 in
+  let rec find_sec off =
+    if off + 8 > sections_end then None
+    else
+      let sec_len = get_u32 (off + 1) in
+      if sec_len > sections_end - off - 8 then None
+      else if Char.code (Bytes.get b off) = iomap_sec_id then Some (off + 8, sec_len)
+      else find_sec (off + 8 + sec_len)
+  in
+  match find_sec 6 with
+  | None -> die exit_internal "IOMAP section (3) not found in encoded module"
+  | Some (body, sec_len) ->
+      let count = get_u32 body in
+      if Stdlib.List.length rows <> count then
+        die exit_internal
+          (Printf.sprintf "iomap calibration count %d != encoded entries %d"
+             (Stdlib.List.length rows) count)
+      (* 段长度必须正好容纳 count 个定宽条目，否则条目边界不可信 *)
+      else if sec_len <> iomap_count_len + count * iomap_entry_len then
+        die exit_internal "iomap section length does not match its entry count"
+      else begin
+        Stdlib.List.iteri
+          (fun i (ch, scale, bias) ->
+             let e = body + iomap_count_len + (i * iomap_entry_len) in
+             (* 逐条核对通道号：行序与编码序必须一致，否则缩放会写到别的通道上 *)
+             if get_u32 (e + 8) <> ch then
+               die exit_internal
+                 (Printf.sprintf
+                    "iomap calibration row %d: channel %d != encoded channel %d"
+                    i ch (get_u32 (e + 8)));
+             put_f64 b (e + iomap_scale_off) scale;
+             put_f64 b (e + iomap_bias_off) bias)
+          rows;
+        Bytes.to_string b
+      end
+
 let frontend (source_path : string) =
-  let native_src = read_file source_path in
+  let native_src =
+    try read_file source_path
+    with Sys_error e -> die exit_usage e
+  in
   let source = coq_string_of_native native_src in
   let parsed = parse_or_fail native_src source in
   (* 命名冲突 = 编译错误：上游库展开后的扁平命名空间中，
      重复的全局变量/POU 声明会导致两个逻辑变量静默共享内存 *)
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
-    failwith "duplicate global variable or POU name (naming conflict)";
+    die exit_semantic
+      "duplicate global variable or POU name (naming conflict)";
   let prepared = match F.prepare_program parsed with
     | Some p -> p
-    | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
+    | None -> die exit_semantic "invalid FUNCTION declaration or missing PROGRAM"
   in
   (* prepare_program 会 expand_instances 派生实例字段名（如 a1#LAST）。
      派生名与用户声明同名时二者落到同一全局槽位、互相覆盖，而展开前的
@@ -199,43 +443,66 @@ let frontend (source_path : string) =
        现在兜住的是 FB 内部同名字段等展开自身产生的重名。） *)
   begin match T.duplicate_declaration_msg prepared with
   | Some nm ->
-      failwith
+      die exit_semantic
         (Printf.sprintf
            "duplicate global variable or POU name '%s' after instance \
             expansion (naming conflict)"
            (native_of_coq_string nm))
   | None -> ()
   end;
-  begin match F.check_program_full_diag prepared with
-  | None -> ()
-  | Some msg -> failwith (native_of_coq_string msg)
+  (* 文本模式沿用单条渲染 API（既有断言依赖其逐字输出）；--json 走全量行。 *)
+  if !json_mode then begin
+    let rows =
+      Stdlib.List.map decode_diag_row (sv_list_to_ocaml (F.check_program_full_diag_rows prepared))
+    in
+    Stdlib.List.iter emit_json_diag rows;
+    if Stdlib.List.length rows > 0 then die exit_semantic ""
+  end else begin match F.check_program_full_diag prepared with
+    | None -> ()
+    | Some msg -> die exit_semantic (native_of_coq_string msg)
   end;
   let normalized = match I.normalize_program prepared with
     | Some p -> p
-    | None -> failwith "function normalization failed"
+    | None -> die exit_internal "function normalization failed"
   in
   let ast = I.optimize_inline_program normalized in
   if coq_list_len ast.Safest.pou_list = 0 then
-    failwith "parser produced empty program";
+    die exit_internal "parser produced empty program";
   let corest = D.desugar_program ast in
   if coq_list_len corest.Desugar.cprog_functions = 0 then
-    failwith "desugar produced empty function list";
+    die exit_internal "desugar produced empty function list";
   let analysis = A.analyze corest in
   if analysis_has_recursion analysis then
-    failwith "recursive calls are not supported";
+    die exit_semantic "recursive calls are not supported";
   let stack_depth = z_to_int analysis.Analysis.ar_max_stack_depth in
   if stack_depth > max_call_depth then
-    failwith
+    die exit_resource
       (Printf.sprintf "static stack depth %d exceeds limit %d"
          stack_depth max_call_depth);
   corest
 
 let compile_st_to_sasm (source_path : string) : string =
   let corest = frontend source_path in
-  attach_crc32 (z_bytes_to_string (E.encode_module (G.compile_program_gc corest)))
+  let module_ir = G.compile_program_gc corest in
+  let image =
+    patch_iomap_cal
+      (z_bytes_to_string (E.encode_module module_ir))
+      (Stdlib.List.map decode_io_cal
+         (sv_list_to_ocaml (G.compile_module_io_cal_info module_ir)))
+  in
+  let debug =
+    emit_debug_section
+      (Stdlib.List.map decode_debug_row
+         (sv_list_to_ocaml (G.compile_program_debug_info corest)))
+  in
+  (* 段 7 插在尾部 CRC 占位之前，CRC 覆盖 [6, len-4) 自动把它算进去 *)
+  attach_crc32 (splice_debug image debug)
 
 let write_file (path : string) (data : string) : unit =
-  let ch = open_out path in
+  let ch =
+    try open_out path
+    with Sys_error e -> die exit_artifact e
+  in
   output_string ch data;
   close_out ch
 
@@ -259,11 +526,6 @@ let bool_to_string (b : Datatypes.bool) : string =
    符号/数据块按名字排序保证字节级确定性 (PRE-2)。
    ================================================================ *)
 
-let rec sv_list_to_ocaml (l : 'a Datatypes.list) : 'a Stdlib.List.t =
-  match l with
-  | Datatypes.Coq_nil -> []
-  | Datatypes.Coq_cons (x, rest) -> x :: sv_list_to_ocaml rest
-
 let svobj_magic = "SOBJ"
 let svobj_version = 1
 let svobj_header_len = 36
@@ -286,12 +548,6 @@ let decode_inst c =
   (native_of_coq_string iname, native_of_coq_string fbname,
    z_to_int base, z_to_int size)
 
-let put_u8 (b : Buffer.t) (v : int) : unit =
-  Buffer.add_char b (Char.chr (v land 0xff))
-let put_u16 (b : Buffer.t) (v : int) : unit =
-  put_u8 b v; put_u8 b ((v lsr 8) land 0xff)
-let put_u32 (b : Buffer.t) (v : int) : unit =
-  put_u16 b (v land 0xffff); put_u16 b ((v lsr 16) land 0xffff)
 let put_name (b : Buffer.t) (s : string) : unit =
   put_u16 b (Stdlib.String.length s); Buffer.add_string b s
 
@@ -336,13 +592,13 @@ let emit_svobj (source_path : string) : string =
   let row_of n =
     try Stdlib.List.find (fun (m, _, _) -> m = n) sym_rows
     with Not_found ->
-      failwith (Printf.sprintf "svobj: symbol %s has no info row" n)
+      die exit_internal (Printf.sprintf "svobj: symbol %s has no info row" n)
   in
   let sym_index = Stdlib.List.mapi (fun i s -> (s, i)) sym_names in
   let sym_idx_of s =
     try Stdlib.List.assoc s sym_index
     with Not_found ->
-      failwith (Printf.sprintf "svobj: reloc symbol %s missing from symtab" s) in
+      die exit_internal (Printf.sprintf "svobj: reloc symbol %s missing from symtab" s) in
   let symtab = Buffer.create 256 in
   Stdlib.List.iter (fun s ->
       let (_, k, a) = row_of s in
@@ -358,7 +614,15 @@ let emit_svobj (source_path : string) : string =
   Stdlib.List.iter (fun (i, fb, base, sz) ->
       put_name block_buf i; put_name block_buf fb;
       put_u32 block_buf base; put_u32 block_buf sz) blocks;
-  let image = z_bytes_to_string (E.encode_module (G.compile_program_gc corest)) in
+  let module_ir = G.compile_program_gc corest in
+  (* svobj 内嵌的 IMAGE 与 -c 产物同源，量程同样必须是真值：
+     否则 P3 链接出来的 .sasm 会带着 scale=0 的 IOMAP 条目 *)
+  let image =
+    patch_iomap_cal
+      (z_bytes_to_string (E.encode_module module_ir))
+      (Stdlib.List.map decode_io_cal
+         (sv_list_to_ocaml (G.compile_module_io_cal_info module_ir)))
+  in
   let st_s = Buffer.contents symtab in
   let rl_s = Buffer.contents reloc_buf in
   let bl_s = Buffer.contents block_buf in
@@ -389,11 +653,11 @@ let verify_svobj (path : string) : unit =
   let g16 i = g8 i + (g8 (i + 1) lsl 8) in
   let g32 i =
     (g8 i) + (g8 (i + 1) lsl 8) + (g8 (i + 2) lsl 16) + (g8 (i + 3) lsl 24) in
-  if n < svobj_header_len + 4 then failwith "svobj: file too short";
-  if Stdlib.String.sub data 0 4 <> svobj_magic then failwith "svobj: bad magic";
+  if n < svobj_header_len + 4 then die exit_artifact "svobj: file too short";
+  if Stdlib.String.sub data 0 4 <> svobj_magic then die exit_artifact "svobj: bad magic";
   let version = g16 4 in
   if version <> svobj_version then
-    failwith (Printf.sprintf "svobj: unsupported version %d" version);
+    die exit_artifact (Printf.sprintf "svobj: unsupported version %d" version);
   let n_syms = g32 8 in
   let n_relocs = g32 12 in
   let n_blocks = g32 16 in
@@ -404,28 +668,28 @@ let verify_svobj (path : string) : unit =
   let expect_total =
     svobj_header_len + st_len + rl_len + bl_len + img_len + 4 in
   if expect_total <> n then
-    failwith (Printf.sprintf "svobj: length mismatch (header %d, file %d)"
+    die exit_artifact (Printf.sprintf "svobj: length mismatch (header %d, file %d)"
                 expect_total n);
   if rl_len <> n_relocs * svobj_reloc_entry_len then
-    failwith (Printf.sprintf "svobj: reloc size %d != %d*%d"
+    die exit_artifact (Printf.sprintf "svobj: reloc size %d != %d*%d"
                 rl_len n_relocs svobj_reloc_entry_len);
   let stored_crc = g32 (n - 4) in
   let calc_crc = Int32.to_int (crc32_range data 0 (n - 4)) in
   if (stored_crc land 0xFFFFFFFF) <> (calc_crc land 0xFFFFFFFF) then
-    failwith "svobj: CRC32 mismatch";
+    die exit_artifact "svobj: CRC32 mismatch";
   let rec walk_symtab off left cnt =
     if left = 0 then cnt
     else if off + 2 > svobj_header_len + st_len then
-      failwith "svobj: symtab truncated"
+      die exit_artifact "svobj: symtab truncated"
     else
       let nlen = g16 off in
       let entry = 2 + nlen + 1 + 4 in
       if off + entry > svobj_header_len + st_len then
-        failwith "svobj: symtab overrun";
+        die exit_artifact "svobj: symtab overrun";
       walk_symtab (off + entry) (left - 1) (cnt + 1)
   in
   let got_syms = walk_symtab svobj_header_len n_syms 0 in
-  if got_syms <> n_syms then failwith "svobj: symtab count mismatch";
+  if got_syms <> n_syms then die exit_artifact "svobj: symtab count mismatch";
   (* RELOC 段逐条校验：符号索引在范围内，并统计各重定位类型 *)
   let reloc_base = svobj_header_len + st_len in
   let rec walk_reloc off left (c, i, g, bad) =
@@ -447,7 +711,7 @@ let verify_svobj (path : string) : unit =
     walk_reloc reloc_base n_relocs (0, 0, 0, 0)
   in
   if n_bad <> 0 then
-    failwith (Printf.sprintf "svobj: %d reloc entr(y|ies) invalid (bad kind or symbol index)"
+    die exit_artifact (Printf.sprintf "svobj: %d reloc entr(y|ies) invalid (bad kind or symbol index)"
                 n_bad);
   Printf.printf
     "svobj OK: syms=%d relocs=%d (call=%d inst=%d global=%d) blocks=%d image=%dB crc=%08x\n"
@@ -455,97 +719,194 @@ let verify_svobj (path : string) : unit =
     (stored_crc land 0xFFFFFFFF)
 
 let analyze_st (source_path : string) : unit =
-  let native_src = read_file source_path in
+  let native_src =
+    try read_file source_path
+    with Sys_error e -> die exit_usage e
+  in
   let source = coq_string_of_native native_src in
   let parsed = parse_or_fail native_src source in
   if T.check_no_duplicate_declarations parsed = Datatypes.Coq_false then
-    failwith "duplicate global variable or POU name (naming conflict)";
+    die exit_semantic "duplicate global variable or POU name (naming conflict)";
   let prepared = match F.prepare_program parsed with
     | Some p -> p
-    | None -> failwith "invalid FUNCTION declaration or missing PROGRAM"
+    | None -> die exit_semantic "invalid FUNCTION declaration or missing PROGRAM"
   in
   begin match T.duplicate_declaration_msg prepared with
   | Some nm ->
-      failwith
+      die exit_semantic
         (Printf.sprintf
            "duplicate global variable or POU name '%s' after instance \
             expansion (naming conflict)"
            (native_of_coq_string nm))
   | None -> ()
   end;
-  begin match F.check_program_full_diag prepared with
-  | None -> ()
-  | Some msg -> failwith (native_of_coq_string msg)
+  if !json_mode then begin
+    let rows =
+      Stdlib.List.map decode_diag_row (sv_list_to_ocaml (F.check_program_full_diag_rows prepared))
+    in
+    Stdlib.List.iter emit_json_diag rows;
+    if Stdlib.List.length rows > 0 then die exit_semantic ""
+  end else begin match F.check_program_full_diag prepared with
+    | None -> ()
+    | Some msg -> die exit_semantic (native_of_coq_string msg)
   end;
   let normalized = match I.normalize_program prepared with
     | Some p -> p
-    | None -> failwith "function normalization failed"
+    | None -> die exit_internal "function normalization failed"
   in
   let ast = I.optimize_inline_program normalized in
   if coq_list_len ast.Safest.pou_list = 0 then
-    failwith "parser produced empty program";
+    die exit_internal "parser produced empty program";
   let result = A.analyze (D.desugar_program ast) in
-  Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
-  Printf.printf "recursive calls: %s\n"
-    (bool_to_string
-       (if analysis_has_recursion result then Datatypes.Coq_true
-        else Datatypes.Coq_false));
-  Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
-  Printf.printf "loops bounded: %s\n"
-    (bool_to_string result.A.ar_all_loops_bounded)
+  (* -a 只报告、不拒绝：递归与栈深在这里是指标，不是错误。 *)
+  if !json_mode then
+    Printf.printf
+      "{\"kind\":\"analysis\",\"stack_depth\":%d,\"recursive\":%s,\"wcet\":%d,\"loops_bounded\":%s}\n"
+      (z_to_int result.A.ar_max_stack_depth)
+      (bool_to_string
+         (if analysis_has_recursion result then Datatypes.Coq_true
+          else Datatypes.Coq_false))
+      (z_to_int result.A.ar_estimated_wcet)
+      (bool_to_string result.A.ar_all_loops_bounded)
+  else begin
+    Printf.printf "stack depth: %d\n" (z_to_int result.A.ar_max_stack_depth);
+    Printf.printf "recursive calls: %s\n"
+      (bool_to_string
+         (if analysis_has_recursion result then Datatypes.Coq_true
+          else Datatypes.Coq_false));
+    Printf.printf "estimated wcet: %d\n" (z_to_int result.A.ar_estimated_wcet);
+    Printf.printf "loops bounded: %s\n"
+      (bool_to_string result.A.ar_all_loops_bounded)
+  end
+
+(* ================================================================
+   命令行
+   ------------------------------------------------------------
+   旧解析只认 args.(1) 上的动作选项，且 -o 必须紧跟输入文件后的固定
+   槽位，位置不对就静默忽略、回退默认相对名并写进当前工作目录。现在
+   选项可在任意位置；-c/-g 缺少 -o 直接判用法错误，编译器不再往 CWD
+   落盘（IDE 后端按请求建独立工作目录，不依赖这一行为）。
+   ================================================================ *)
+
+type action = Analyze | Compile | Object | Verify | Help
+
+let kind_of_code (code : int) : string =
+  match code with
+  | 11 -> "usage" | 21 -> "syntax" | 22 -> "semantic"
+  | 23 -> "resource" | 24 -> "artifact" | _ -> "internal"
+
+let usage_text (prog : string) : string =
+  Printf.sprintf
+    "usage: %s [-a|-c|-g|-x] [--json] <input> [-o <output>]\n\
+     \  -a  analyze (default)\n\
+     \  -c  compile to .sasm (requires -o)\n\
+     \  -g  compile to relocatable .svobj (requires -o)\n\
+     \  -x  verify a .svobj (structure + CRC round-trip)\n\
+     \  --json  one NDJSON object per line on stdout\n"
+    prog
+
+let parse_args (args : string array) : action * string option * string option =
+  let mode = ref None in
+  let input = ref None in
+  let out = ref None in
+  let set_mode m =
+    match !mode with
+    | None -> mode := Some m
+    | Some m' -> if m' <> m then die exit_usage "multiple action options given"
+  in
+  let i = ref 1 in
+  while !i < Array.length args do
+    let a = args.(!i) in
+    (match a with
+     | "-a" -> set_mode Analyze
+     | "-c" -> set_mode Compile
+     | "-g" -> set_mode Object
+     | "-x" -> set_mode Verify
+     | "-h" | "--help" -> set_mode Help
+     | "--json" -> json_mode := true
+     | "-o" ->
+         if !i + 1 >= Array.length args then die exit_usage "-o requires a path";
+         if !out <> None then die exit_usage "duplicate -o option";
+         out := Some args.(!i + 1);
+         incr i
+     | s when Stdlib.String.length s > 0 && Stdlib.String.get s 0 = '-' ->
+         die exit_usage (Printf.sprintf "unknown option: %s" s)
+     | s ->
+         if !input <> None then
+           die exit_usage (Printf.sprintf "unexpected argument: %s" s);
+         input := Some s);
+    incr i
+  done;
+  let m = match !mode with None -> Analyze | Some m -> m in
+  (m, !input, !out)
+
+let require_output (out : string option) : string =
+  match out with
+  | Some d -> d
+  | None -> die exit_usage "this action writes an artifact and requires -o <output>"
+
+let run () : unit =
+  let args = Sys.argv in
+  let mode, input, out = parse_args args in
+  match mode with
+  | Help -> Printf.eprintf "%s" (usage_text args.(0))
+  | _ ->
+      let src =
+        match input with
+        | Some s -> s
+        | None -> Printf.eprintf "%s" (usage_text args.(0));
+                  die exit_usage "no input file"
+      in
+      match mode with
+      | Compile ->
+          let dst = require_output out in
+          let data = compile_st_to_sasm src in
+          write_file dst data;
+          if !json_mode then
+            Printf.printf "{\"kind\":\"output\",\"path\":\"%s\",\"bytes\":%d}\n"
+              (json_escape dst) (Stdlib.String.length data)
+          else
+            Printf.printf "compiled: %s -> %s\n" src dst
+      | Object ->
+          let dst = require_output out in
+          let data = emit_svobj src in
+          write_file dst data;
+          if !json_mode then
+            Printf.printf "{\"kind\":\"output\",\"path\":\"%s\",\"bytes\":%d}\n"
+              (json_escape dst) (Stdlib.String.length data)
+          else
+            Printf.printf "emitted: %s -> %s\n" src dst
+      | Verify -> verify_svobj src
+      | Analyze -> analyze_st src
+      | Help -> ()
 
 let () =
-  let args = Sys.argv in
-  let usage () =
-    Printf.eprintf
-      "usage: %s [-a|-c|-g|-x] <input> [-o <output>]\n\
-       \  -a  analyze (default)\n\
-       \  -c  compile to .sasm\n\
-       \  -g  compile to relocatable .svobj\n\
-       \  -x  verify a .svobj (structure + CRC round-trip)\n" args.(0)
-  in
-  if Array.length args < 2 then begin
-    usage ();
-    exit 1
-  end;
-  let mode, source_index =
-    match args.(1) with
-    | "-a" -> `Analyze, 2
-    | "-c" -> `Compile, 2
-    | "-g" -> `Object, 2
-    | "-x" -> `Verify, 2
-    | "-h" | "--help" -> usage (); exit 0
-    | arg when Stdlib.String.length arg > 0 &&
-               Stdlib.String.get arg 0 = '-' ->
-        Printf.eprintf "unknown option: %s\n" arg;
-        usage ();
-        exit 1
-    | _ -> `Analyze, 1
-  in
-  if Array.length args <= source_index then begin
-    usage ();
-    exit 1
-  end;
-  let source = args.(source_index) in
-  let out_path default_name =
-    if Array.length args >= source_index + 3 &&
-       args.(source_index + 1) = "-o" then
-      args.(source_index + 2)
-    else default_name
-  in
-  match mode with
-  | `Compile ->
-      let sasm_data = compile_st_to_sasm source in
-      let output = out_path "output.sasm" in
-      write_file output sasm_data;
-      Printf.printf "compiled: %s -> %s\n" source output
-  | `Object ->
-      let svobj_data = emit_svobj source in
-      let output = out_path "output.svobj" in
-      write_file output svobj_data;
-      Printf.printf "emitted: %s -> %s\n" source output
-  | `Verify ->
-      verify_svobj source
-  | `Analyze ->
-      analyze_st source
+  try run ()
+  with
+  | Fatal (code, msg) ->
+      if Stdlib.String.length msg > 0 then
+        if !json_mode then
+          Printf.printf "{\"kind\":\"%s\",\"msg\":\"%s\"%s}\n"
+            (kind_of_code code) (json_escape msg)
+            (match !syntax_loc with
+             | Some (ln, col) ->
+                 Printf.sprintf ",\"line\":%d,\"col\":%d" ln col
+             | None -> "")
+        else
+          output_string Stdlib.stderr (msg ^ "\n");
+      exit code
+  | Sys_error e ->
+      if !json_mode then
+        Printf.printf "{\"kind\":\"artifact\",\"msg\":\"%s\"}\n" (json_escape e)
+      else
+        output_string Stdlib.stderr (e ^ "\n");
+      exit exit_artifact
+  | e ->
+      if !json_mode then
+        Printf.printf "{\"kind\":\"internal\",\"msg\":\"%s\"}\n"
+          (json_escape (Printexc.to_string e))
+      else
+        Printf.eprintf "Fatal error: %s\n%!" (Printexc.to_string e);
+      exit exit_internal
+
 

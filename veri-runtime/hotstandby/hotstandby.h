@@ -7,7 +7,7 @@
  *   2. 脏页追踪 — 仅同步变更的内存页
  *   3. 同步通信协议 — 主备间状态传输
  *   4. 主备状态机 — 故障检测 + 角色切换
- *   5. 增量下装 — 周期边界原子切换 + 回滚
+ *   5. 下装 — 全量镜像周期边界原子切换 + 一级回滚（增量补丁路径保留未接线）
  *   6. 无扰切换 — 输出值平滑过渡
  *
  * 安全约束:
@@ -237,6 +237,46 @@ int  hs_chan_shmem_init(SyncChannel *chan,
                         uint32_t local_buf_size,
                         uint32_t peer_buf_size);
 void hs_chan_shmem_deinit(SyncChannel *chan);
+
+/* ---------- 下装：全量镜像 + 周期边界切换 + 一级回滚 ----------
+ *
+ * 契约唯一源见 spec/download-spec.md。链路：
+ *   dl_manager_load_image (首装) → 周期运行
+ *   → dl_stage_image (收下完整镜像，进待切换槽)
+ *   → dl_apply_switch   (周期边界提交 + vm_rebind)
+ *   → 健康检查不过 → dl_rollback (回切上一个槽)
+ *
+ * 拒绝码与传输层拒绝码 (DlResult) 分属两层：这里只区分失败阶段，
+ * 底层原因（加载器的 -1/-2 等）用 dl_last_error() 取。
+ */
+
+#define DL_RC_OK           0
+#define DL_RC_EARG        (-101)   /* 空指针 / 长度 0 / 超镜像上限 */
+#define DL_RC_EBUSY       (-102)   /* 上一个下装尚未提交或回滚 */
+#define DL_RC_ELOAD       (-103)   /* sasm_load 拒绝该镜像 */
+#define DL_RC_EVALIDATE   (-104)   /* sasm_validate 拒绝该镜像 */
+#define DL_RC_ENOSWITCH   (-105)   /* 无待切换镜像可提交 */
+#define DL_RC_ENOVMBIND   (-106)   /* vm_rebind 失败（已自动回切） */
+
+int  dl_manager_load_image(const uint8_t *raw, uint32_t len);
+int  dl_stage_image(const uint8_t *raw, uint32_t len);
+int  dl_apply_switch(VM *vm);
+const SasmModule *dl_rollback(VM *vm);
+uint32_t dl_active_version(void);
+uint32_t dl_pending_version(void);
+int  dl_last_error(void);
+
+/* ---------- 下装：增量补丁路径（保留，不进 G0 链路）---------- */
+
+void dl_manager_init(const SasmModule *initial_module);
+int  dl_prepare_download(const SasmModule *new_module);
+int  dl_commit_switch(void);
+const SasmModule *dl_get_active_module(void);
+const SasmModule *dl_get_pending_module(void);
+bool dl_is_download_in_progress(void);
+uint32_t dl_get_progress(void);
+void dl_set_callbacks(void (*on_start)(uint32_t),
+                      void (*on_complete)(uint32_t, bool));
 
 #ifdef __cplusplus
 }

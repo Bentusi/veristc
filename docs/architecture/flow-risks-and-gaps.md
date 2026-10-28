@@ -3,53 +3,61 @@
 范围仅限三张流程图所表达的内容：未被证据支持的步骤、失败路径、缺失的运行期机制。
 **这不是架构评审**（风险登记、质量属性、技术债评估请走 `risk-quality-reviewer`）。
 
-## G1 场景关键机制缺失：运行期的 I/O 与故障收敛
+## G1 场景关键机制缺失：运行期的 I/O 与故障收敛 —— ✅ 已闭合（Phase 6 G0 / W3-W5）
 
-`flow-vm-runtime.dot` 的主路径里没有 I/O 同步、没有看门狗、没有安全态。
-这不是画图遗漏，而是代码事实（`veri-runtime/core/svm.c:204-225` 循环体内只有 `vm_run` + 休眠）。
+原判断成立的前提是"运行站只有 `svm` 一个程序"。现在有三个主程序，分工写进了
+`spec/safeasm-spec.md` §5.0：
 
-需要确认的是**这是不是当前预期**：若 VeriSTC 现阶段定位是"编译正确性 + 指令语义 SIL 验证平台"，
-那么 `svm` 是一个测试用执行器，I/O 接入本就不在射程内，模型应把它标注为"验证用运行器"；
-若定位是"安全级仪控运行站"，则 G1 是主路径上的实质缺口。
+- `svm`：纯执行器，周期体内不含 I/O（`veri-runtime/core/svm.c:257-277`）。**这是有意的**，
+  用于测试与黄金时间线复算，不再算缺口。
+- `sim`：`io_mapping_cycle` 全路径（`veri-runtime/sim/sim_main.c:273` → `io/io_mapping.c:254-269`），
+  软件 I/O 后端 `sim/sim_io.c` + `.plant` 被控对象；watch 帧给出工程站仿真按钮要的数据面。
+- `veristc-agent`：装载 + 周期扫描 + 下装帧接收 + 周期边界换版 + 健康窗回滚
+  （`agent/agent_main.c:473,490`）。**故障收敛**目前只有这一层：换版后窗口内 `vm_run` 出错即
+  `dl_rollback` 回上一版本（仅一级）。
 
-验证动作：向负责人确认 `svm` 的定位；或直接看 `integration/run_nuclear_e2e.sh` / `integration/run_channel_e2e.sh`
-是否以内存值而非物理通道值作为判据（若是，则支持前者）。
+仍未闭合的部分改记为 G9（生产 `VM_Interface` 后端缺失）与 G4（热备周期封装无调用者）。
 
-## G2 `.sasm` 完整性校验对"未签名文件"不设防
+## G2 `.sasm` 完整性校验对"未签名文件"不设防 —— ✅ 已闭合（Phase 6 G0 / W5）
 
-`veri-runtime/core/loader.c:283-289`：CRC 不匹配时，若 `stored_crc == 0` 则放行，注释写明为
-"legacy handcrafted development fixtures"。而项目约定是"SVM 加载时拒绝损坏文件"（`AGENTS.md`）。
+`veri-runtime/core/loader.c:305-314` 现为无条件强制：
 
-先厘清这条放行的**真实可达范围**，避免把结论说过头：
+```c
+if ((stored_crc == 0U) || (stored_crc != computed_crc)) { return -2; }
+```
 
-- 损坏检测本身是有效的，也有断言覆盖：`veri-runtime/run_vm_checks.sh:197-209` 与 `veri-runtime/run_sanitizer.sh:48-55`
-  把 CRC 字段（末尾 4 字节）之前的最后一个字节改写为 `0xFF`（`seek=size-5`），
-  使 `computed_crc` 变化而 `stored_crc` 保持非零，并断言输出含 `sasm_load failed: -2`。
-- 真正进入 `sasm_load` 的只有四个调用点：`veri-runtime/core/svm.c:85`、`veri-runtime/tests/fuzz/sasm_fuzzer.c:168`、
-  `veri-runtime/tests/vm-tests/test_nuclear_protection_full_e2e.c:218`、`veri-runtime/rtos/rtthread/vm_rtthread.c:447`。
-- `veri-runtime/tests/vm-tests/test_vm.c` **不经过装载器**：它用 `install_code()`（`:23`）直接填充内存中的
-  `SasmModule`，全文件没有任何 CRC 相关代码。因此它不能作为放行路径的证据。
-- `stored_crc == 0` 的约定在工具侧也成型了：`veri-runtime/core/sasm_dump.c:544-551` 把它单独标注为 `(未计算)`，
-  与 `OK` / `MISMATCH` 并列。
+即"值不符"与"从未计算（全零）"两种情形一律拒绝，改写后把 CRC 字段清零不再能绕过。
 
-影响流程判断的地方：主路径图里"装载即可信"这一前提只对**已计算 CRC 的文件**成立。
-一个 `stored_crc` 恰为 0 的文件（手工构造、下装链路未填 CRC、或**被改写后把 CRC 字段清零**）
-都能通过校验。所以缺口的准确表述不是"损坏检测可绕过"，而是"完整性校验对未签名文件不强制"。
+改动前先确认了非破坏性：`run_vm_checks.sh` 的损坏 CRC 用例翻的是 `size-5` 的**载荷**字节、
+stored 恒为非零，因此严格化不破任何既有制品；所有黄金 `.sasm` 由编译器 `attach_crc32`
+（`veristc_main.ml:255-265`）产出真值。新增门禁：`veri-runtime/run_vm_checks.sh` 第 6/10 步
+分别断言"损坏载荷 → -2"与"全零尾部 → -2"；`sasm_dump` 仍把 0 标注为 `(未计算)`，
+但那是**展示**层的读法，装载层不再据此放行。
 
-验证动作：确认是否应把放行限定在测试构建（编译期开关或独立的 `sasm_load_strict`），
-或在生产入口把 `stored_crc == 0` 视为拒绝；同时明确下装/热备增量下装路径写入 CRC 的时机。
+## G3 装载出的 IOMap 与 I/O 映射表之间没有桥 —— ✅ 已闭合（Phase 6 G0 / W2'-W3）
 
-## G3 装载出的 IOMap 与 I/O 映射表之间没有桥
+原判断的顺序依赖完全正确（先补桥接与 scale/bias 保留，再谈链接），两点都已落地：
 
-`veri-runtime/core/loader.c:175-193` 把 IOMap 段解析进 `SasmModule.iomap`，但：
-`scale_factor` 与 `bias` 在解析时就被写死为 `1.0` / `0.0` 并跳过 16 字节（`:186-190`），
-且全仓没有任何代码把 `SasmModule.iomap` 转换成 `IOMappingTable`。
+1. **真值保留**：`loader.c:207,210` 经 `read_f64`（`:65`）逐条采信文件里的 float64，
+   非有限值（NaN/±Inf）直接判加载失败；编译器侧由 OCaml `patch_iomap_cal` 用 IR 值覆盖
+   Coq 编码器无法表示的 IEEE-754 位（三重核对不符即拒绝产出）。
+2. **桥接**：`io_mapping_init`（`io/io_mapping.c:86`）直接吃 `SasmModule`，
+   `sim_main.c:240` 调用；`svm -m` 打印的是加载后的运行期量程，不是文件字节复读。
+3. **地址同源**（原缺口的新发现）：IOMAP 的 `mem_offset` 曾按 1024 起步自行编号，
+   而全局变量从 4096 起步 —— 运行站写入的位置与程序读写的变量不是同一块内存。
+   现由 Coq `global_codegen.v` 的 `resolve_io_map` 按名向 `build_global_env`（段 7 同一张表）取槽位；
+   可机检不变量：`svm -m` 的每个 `mem=` 必出现在 `svm -l` 的地址列
+   （`run_vm_checks.sh` 第 8 步）。
 
-后果：即使把 `libvm_io.a` 链进 `svm` 并删掉 `svm.c:31-37` 的桩，缩放/偏置与安全限值
-也不会生效——数据在装载阶段已经丢了。这是一个**顺序依赖**：桥接与"保留 scale/bias"必须同时做。
+## G9 新的运行期留白（G0 之后）
 
-验证动作：先补 `SasmModule.iomap → IOMappingTable` 的构造与 scale/bias 读取，
-再改链接关系，否则会得到"接上了但全为 1.0/0.0"的假成功。
+| 留白 | 现状 | 推到 |
+| --- | --- | --- |
+| 生产 `VM_Interface` 后端 | 只有 `sim/sim_io.c`（软件 + 虚拟时钟）与未构建的 RT-Thread 层 | 目标硬件适配（Phase 2 的未完成半边） |
+| 真实签名与密钥管理 | 下装密钥由 `--key` 进程内静态注入（决策 D5） | G4 |
+| 增量补丁链路 | `compute_diff`/`apply_patch` 齐全但不在 agent 链路上 | 后续（`spec/download-spec.md` §8） |
+| socket 传输 | 下装后端只有文件/管道流（`DlStream` 抽象已隔离） | G1+（工程站联调时） |
+| watch 数据面走 socket | 首期 stdout JSONL 帧（决策 D4） | G1 |
 
 ## G4 热备的脏页机制在语义上未闭合
 
@@ -68,7 +76,7 @@
 
 端到端语义保持定理的组合是 `compile_st_to_sasm = compile_core_program`
 （`compiler_correctness.v:85-99`），内部用 `type_check_program` + `codegen.compile_program`；
-生产入口用 `global_codegen.compile_program_gc`（`veristc_main.ml:221,347`）。
+生产入口用 `global_codegen.compile_program_gc`（`veristc_main.ml:486,617`）。
 针对 `compile_program_gc` 的定理集中在 `:2228-2493`（WS-C 段），内容为 CALL 结构性质
 （段长度、被调目标存在、形参数 ≤ 局部槽位数），不含端到端语义保持。
 
@@ -79,24 +87,28 @@
 验证动作：确认 `spec/semantics-preservation.md` 与 `AGENTS.md` 定理表是否已声明
 "定理覆盖 `compile_program`，生产入口为 `compile_program_gc` + WS-C 结构定理 + 测试"。
 
-## G6 分析模式无产物、`.iomap` 文件未实现
+## G6 分析模式无产物（`.iomap` 一条已在文档层面澄清）
 
-`-a` 只 `printf` 四项指标到 stdout（`veristc_main.ml:465-472`），不产出文件；
-`AGENTS.md` 声明的 `.iomap` 输出实际是 `.sasm` 内的 Section type=3（`encoder.v:166-174,335-340`）。
+`-a` 只把四项指标发出（`--json` 单行 `veristc_main.ml:763-771`；文本四行 `:772-779`），不产出文件。
+`.iomap` 独立文件**不是待实现项**：I/O 配置一直作为 `.sasm` 的段 3 编码
+（`encoder.v:155-174`），`AGENTS.md` 与 `spec/safeasm-spec.md` §4.4 均已如此声明，
+运行站对它的消费路径自 G0/W3 起由 `sim` 打通（`io_mapping_init` ← `sim_main.c:240`）。
 
-影响：任何依赖"读 `.iomap` 文件"的外部工具链（组态、下装工具）在流程上无处可接。
-验证动作：确认 `.iomap` 是废弃需求还是待实现；若废弃，同步 `AGENTS.md`。
+余留影响：任何仍按"读 `.iomap` 文件"设想的外部工具链需要改读 `.sasm` 段 3 或 `svm -m`。
 
 ## G7 `-a` 与 `-c` 是两份同构管线，门禁判据不同
 
-`analyze_st`（`veristc_main.ml:457-495`）与 `frontend`（`:183-231`）十步逐行同构
-（`:458-487` 对 `:184-231`），但 `analyze_st` **不做** `frontend:224-230` 的递归拒绝与栈深超限拒绝，
-只把 `recursive calls` 与 `stack depth` 打印出来（`:488-492`）。
+`analyze_st`（`veristc_main.ml:721-780`）与 `frontend`（`:423-482`）十步逐行同构
+（`:722-760` 对 `:425-474`），但 `analyze_st` **不做** `frontend:475-481` 的递归拒绝与栈深超限拒绝，
+只把 `recursive calls` 与 `stack depth` 报告出来（`:762-779`）。
 
 后果有两层：
 1. 判据不一致 —— 同一程序可以"`-a` 报告正常"而"`-c` 编译失败"。若把 `-a` 输出当作
-   可编译性预检（`Makefile:158` 在核电用例里就是先 `-a` 再 `-c`），这个预检是弱于编译门禁的。
+   可编译性预检（根 `Makefile:135` 在核电用例里就是先 `-a` 再 `-c`，
+   `integration/run_{algo,algo_fb,channel}_e2e.sh:23` 同样先跑 `-a`），这个预检是弱于编译门禁的。
 2. 演进风险 —— 任何新增到 `frontend` 的门禁都必须同步补到 `analyze_st`，否则静默漂移。
+   G0/W1 的 `--json` 与 G0/W2 的段 7 都是"两处都要改"的实例（诊断行 API 在两条管线里各接一次：
+   `:455-459` 与 `:744-748`）。
 
 验证动作：确认 `-a` 的定位是"信息报告"还是"可编译性预检"。若是后者，
 应让 `analyze_st` 复用 `frontend` 并在其后打印，而不是维护第二份管线。

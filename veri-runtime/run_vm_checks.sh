@@ -8,18 +8,19 @@ cd "$ROOT"
 
 test_begin "VM/SVM Checks"
 
-make build-vm-test build-io-test build-hs-test build-smoke build-function-tests
+make build-vm-test build-io-test build-hs-test \
+     build-dlwire-test build-dlswitch-test build-smoke build-function-tests
 
-step "1/6" "minimal VM tests"
+step "1/10" "minimal VM tests"
 assert_ok "VM unit tests" build/bin/test_vm
 
-step "2/6" "I/O mapping unit tests"
+step "2/10" "I/O mapping unit tests"
 assert_ok "I/O mapping tests" build/bin/test_io_mapping
 
-step "3/6" "Hotstandby unit tests"
+step "3/10" "Hotstandby unit tests"
 assert_ok "Hotstandby tests" build/bin/test_hotstandby
 
-step "4/6" "SVM one-cycle, PRINT and CycleCounter"
+step "4/10" "SVM one-cycle, PRINT and CycleCounter"
 ./build/bin/svm -n 1 -p 0 build/sasm/core_assign.sasm 42 \
     > /tmp/veristc-svm-once.out
 assert_contains "/tmp/veristc-svm-once.out" "[cycle_counter] 1" "cycle_counter present"
@@ -28,7 +29,7 @@ assert_contains "/tmp/veristc-svm-once.out" " x=" "x variable output"
 assert_contains "/tmp/veristc-svm-once.out" "1, " "value 1 output"
 assert_contains "/tmp/veristc-svm-once.out" "42, " "value 42 output"
 
-step "5/6" "full FUNCTION control flow, nested CALL and safety gates"
+step "5/10" "full FUNCTION control flow, nested CALL and safety gates"
 ./build/bin/svm -n 6 -p 0 build/sasm/function_control_flow.sasm \
     > /tmp/veristc-function.out
 assert_contains "/tmp/veristc-function.out" "tick=1,  y=2," "tick=1 output"
@@ -253,7 +254,7 @@ else
     echo "  svobj corrupt rejection ... OK"; _TF_PASS=$((_TF_PASS + 1))
 fi
 
-step "6/6" "SVM dump, SIL3, CRC, period and corrupt CRC rejection"
+step "6/10" "SVM dump, SIL3, CRC, period and corrupt CRC rejection"
 ./build/bin/svm -d build/sasm/core_assign.sasm \
     > /tmp/veristc-svm-dump.out
 assert_contains "/tmp/veristc-svm-dump.out" "状态:   OK" "dump status OK"
@@ -280,12 +281,181 @@ printf '\377' | dd of=/tmp/veristc-bad-crc.sasm bs=1 \
     seek="$((size - 5))" count=1 conv=notrunc status=none
 if ./build/bin/svm -n 1 -p 0 /tmp/veristc-bad-crc.sasm \
     > /tmp/veristc-bad-crc.out 2>&1; then
-    echo "  corrupt CRC rejected ... FAIL (SVM accepted bad CRC)"
+    echo "  corrupt CRC rejected ... FAIL (load succeeded)"
     _TF_FAIL=$((_TF_FAIL + 1))
 else
     echo "  corrupt CRC rejected ... OK"
     _TF_PASS=$((_TF_PASS + 1))
 fi
 assert_contains "/tmp/veristc-bad-crc.out" "sasm_load failed: -2" "CRC error code correct"
+
+# 全零 CRC 尾部（旧的"未计算即放行"后门）同样必须拒绝
+cp build/sasm/core_assign.sasm /tmp/veristc-zero-crc.sasm
+size="$(wc -c < /tmp/veristc-zero-crc.sasm)"
+printf '\0\0\0\0' | dd of=/tmp/veristc-zero-crc.sasm bs=1 \
+    seek="$((size - 4))" count=4 conv=notrunc status=none
+if ./build/bin/svm -n 1 -p 0 /tmp/veristc-zero-crc.sasm \
+    > /tmp/veristc-zero-crc.out 2>&1; then
+    echo "  uncomputed (zero) CRC rejected ... FAIL (load succeeded)"
+    _TF_FAIL=$((_TF_FAIL + 1))
+else
+    echo "  uncomputed (zero) CRC rejected ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+fi
+assert_contains "/tmp/veristc-zero-crc.out" "sasm_load failed: -2" "zero CRC error code correct"
+
+step "7/10" "Debug symbol table (section 7, spec 4.8)"
+SYM_ST=veri-stc/tests/st-examples/algo_blocks_fb.st
+SYM_SASM=build/sasm/algo_blocks_fb.sasm
+"$V" -c "$SYM_ST" -o /tmp/veristc-sym-a.sasm > /dev/null 2>&1
+"$V" -c "$SYM_ST" -o /tmp/veristc-sym-b.sasm > /dev/null 2>&1
+assert_ok "symbol section is byte-deterministic" \
+    cmp -s /tmp/veristc-sym-a.sasm /tmp/veristc-sym-b.sasm
+
+./build/bin/svm -s 'pid1#U' "$SYM_SASM" > /tmp/veristc-sym-u.out 2>&1
+assert_contains "/tmp/veristc-sym-u.out" "pid1#U 0x" \
+    "derived instance field resolves to an address"
+assert_contains "/tmp/veristc-sym-u.out" "DINT size=4" "symbol carries its IEC type"
+assert_fail "unknown symbol is rejected" \
+    ./build/bin/svm -s no_such_symbol "$SYM_SASM"
+
+# The reported address must be a real global slot: inside [GLOBAL_BASE, memory).
+addr_hex="$(sed -n 's/^pid1#U 0x\([0-9A-Fa-f]*\) .*$/\1/p' /tmp/veristc-sym-u.out)"
+addr="$(( 16#${addr_hex:-0} ))"
+total_mem="$(./build/bin/svm -i "$SYM_SASM" |
+    sed -n 's/.*Memory:[[:space:]]*\([0-9]*\) bytes total.*/\1/p')"
+if [ "$addr" -ge 4096 ] && [ "$addr" -lt "${total_mem:-0}" ]; then
+    echo "  address $addr inside [$((4096)), ${total_mem}) ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+else
+    echo "  address $addr inside [4096, ${total_mem}) ... FAIL"
+    _TF_FAIL=$((_TF_FAIL + 1))
+fi
+
+# -l and -i must agree on the symbol count, and instance fields must be listed.
+n_list="$(./build/bin/svm -l "$SYM_SASM" | wc -l)"
+n_info="$(./build/bin/svm -i "$SYM_SASM" |
+    sed -n 's/.*Symbols:[[:space:]]*\([0-9]*\).*/\1/p')"
+n_field="$(./build/bin/svm -l "$SYM_SASM" | grep -c '#')"
+if [ "$n_list" -gt 0 ] && [ "$n_list" = "$n_info" ] && [ "$n_field" -gt 0 ]; then
+    echo "  symbol listing (${n_list} rows, ${n_field} fields) matches info" \
+        "... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+else
+    echo "  symbol listing (list=${n_list} info=${n_info} fields=${n_field})" \
+        "... FAIL"
+    _TF_FAIL=$((_TF_FAIL + 1))
+fi
+
+step "8/10" "IOMAP calibration: scale/bias read from the file, not hardcoded"
+make build-io-cal > /dev/null
+./build/bin/svm -m build/sasm/io_cal.sasm > /tmp/veristc-iomap-id.out 2>&1
+assert_contains "/tmp/veristc-iomap-id.out" "I/O map (loaded): 2 channels" \
+    "both mappings reach the runtime table"
+assert_contains "/tmp/veristc-iomap-id.out" "scale=1 bias=0" \
+    "compiler identity calibration survives the loader"
+
+# 单一地址真值：IOMAP 的 mem_offset 必须是该全局变量在符号段里的真实槽位
+# 地址。两侧编号曾经不同源（映射用 1024 起的私有编号，变量用 4096 起的全局
+# 槽），运行站写进去的位置和程序读写的变量不是同一块内存。
+./build/bin/svm -l build/sasm/io_cal.sasm > /tmp/veristc-iomap-sym.out 2>&1
+iomap_offsets=$(sed -n 's/.*mem=\(0x[0-9A-Fa-f]*\).*/\1/p' /tmp/veristc-iomap-id.out \
+                | tr 'A-F' 'a-f' | sort -u)
+sym_offsets=$(awk '{print $2}' /tmp/veristc-iomap-sym.out | tr 'A-F' 'a-f' | sort -u)
+orphan=$(comm -23 <(echo "$iomap_offsets") <(echo "$sym_offsets") | tr -d '[:space:]')
+if [ -z "$orphan" ]; then
+    echo "  every mapped address names a declared global slot ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+else
+    echo "  every mapped address names a declared global slot ... FAIL (orphan: $orphan)"
+    _TF_FAIL=$((_TF_FAIL + 1))
+fi
+
+if command -v python3 > /dev/null 2>&1; then
+python3 - build/sasm/io_cal.sasm \
+    /tmp/veristc-iomap-cal.sasm /tmp/veristc-iomap-nan.sasm <<'PY'
+import struct, sys, zlib
+src, cal_out, nan_out = sys.argv[1], sys.argv[2], sys.argv[3]
+d = bytearray(open(src, 'rb').read())
+
+# locate the IOMAP section body (8-byte header, then u32 count, 42-byte entries)
+off, end, body = 6, len(d) - 4, None
+while off + 8 <= end:
+    sec, ln = d[off], struct.unpack_from('<I', d, off + 1)[0]
+    if sec == 3:
+        body = off + 8
+        break
+    off += 8 + ln
+assert body is not None, "IOMAP section missing"
+first = body + 4
+
+def seal(buf):
+    struct.pack_into('<I', buf, len(buf) - 4, zlib.crc32(bytes(buf[6:len(buf) - 4])) & 0xffffffff)
+    return bytes(buf)
+
+cal = bytearray(d)
+struct.pack_into('<dd', cal, first + 18, 0.5, 100.0)
+struct.pack_into('<dd', cal, first + 42 + 18, -2.0, 3.25)
+open(cal_out, 'wb').write(seal(cal))
+
+nan = bytearray(d)
+struct.pack_into('<Q', nan, first + 18, 0x7FF8000000000000)
+open(nan_out, 'wb').write(seal(nan))
+PY
+    ./build/bin/svm -m /tmp/veristc-iomap-cal.sasm > /tmp/veristc-iomap-cal.out 2>&1
+    assert_contains "/tmp/veristc-iomap-cal.out" "scale=0.5 bias=100" \
+        "channel 0 calibration comes from the file bytes"
+    assert_contains "/tmp/veristc-iomap-cal.out" "scale=-2 bias=3.25" \
+        "channel 1 calibration is read independently"
+    assert_fail "non-finite scale is rejected" \
+        ./build/bin/svm -m /tmp/veristc-iomap-nan.sasm
+    ./build/bin/svm -m /tmp/veristc-iomap-nan.sasm \
+        > /tmp/veristc-iomap-nan.out 2>&1 || true
+    assert_contains "/tmp/veristc-iomap-nan.out" "sasm_load failed: -1" \
+        "NaN rejection reports the loader error code"
+else
+    skip "python3 missing: scale/bias fixture editing skipped (4 checks)"
+fi
+
+step "9/10" "Download wire protocol (frames, HMAC-SHA256, receiver state machine)"
+if ./build/bin/test_download_wire > /tmp/veristc-dlwire.out 2>&1; then
+    assert_contains "/tmp/veristc-dlwire.out" "sha256 matches FIPS vectors" \
+        "SHA-256 matches published vectors"
+    assert_contains "/tmp/veristc-dlwire.out" "hmac-sha256 matches RFC 4231" \
+        "HMAC-SHA256 matches RFC 4231 test vectors"
+    assert_contains "/tmp/veristc-dlwire.out" "multi-frame image reassembles" \
+        "multi-frame image reassembly (incl. byte-drip)"
+    assert_contains "/tmp/veristc-dlwire.out" "every malformed frame class is refused" \
+        "each malformed-frame class refused at the right step"
+    assert_contains "/tmp/veristc-dlwire.out" "sender reports transport failure" \
+        "sender reports transport failure instead of dropping frames"
+else
+    echo "  download wire tests ... ${_TF_C_RED}FAIL${_TF_C_RESET}"
+    _TF_FAIL=$((_TF_FAIL + 1))
+    cat /tmp/veristc-dlwire.out
+fi
+
+step "10/10" "Full-image download: stage, cycle-boundary switch, rollback"
+DL_A=build/sasm/core_assign.sasm
+DL_B=build/sasm/algo_blocks_fb.sasm
+if ./build/bin/test_download_switch "$DL_A" "$DL_B" \
+    > /tmp/veristc-dlswitch.out 2>&1; then
+    assert_contains "/tmp/veristc-dlswitch.out" "cold load" \
+        "initial image loads and runs"
+    assert_contains "/tmp/veristc-dlswitch.out" "takes effect at the cycle boundary" \
+        "switch applies at the cycle boundary with cold-start state"
+    assert_contains "/tmp/veristc-dlswitch.out" "rollback returns to the previous slot" \
+        "rollback returns to the previous slot, one level only"
+    assert_contains "/tmp/veristc-dlswitch.out" "never touch the active slot" \
+        "corrupt / oversize / zero-CRC images never touch the active slot"
+    assert_contains "/tmp/veristc-dlswitch.out" "reassemble into an image the VM actually runs" \
+        "frames reassemble into an image the VM actually runs"
+    assert_contains "/tmp/veristc-dlswitch.out" "never reaches the download layer" \
+        "a tampered frame is refused before the download layer"
+else
+    echo "  full-image download switch tests ... ${_TF_C_RED}FAIL${_TF_C_RESET}"
+    _TF_FAIL=$((_TF_FAIL + 1))
+    cat /tmp/veristc-dlswitch.out
+fi
 
 check_failures "VM/SVM checks (period ${elapsed_ms}ms)"

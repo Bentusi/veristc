@@ -36,12 +36,12 @@ VeriIDE = **Veri**fied **I**ntegrated **De**velopment **E**nvironment，与 Veri
 
 | # | 需要的能力 | 现状 | 证据 |
 |---|-----------|------|------|
-| 1 | 工程/多文件输入 | 单文件位置参数；`-o` 仅固定槽位可认；缺省写 `output.sasm` 到 CWD（多租户隐患） | [veristc_main.ml:529-536](file:///home/wei/veristc/veri-stc/extraction/veristc_main.ml#L529) |
-| 2 | 结构化诊断 | 有 `KIND=`，但 `LOC` 恒为 `-`；诊断经 `failwith` 抛栈，stderr 带 OCaml 异常文本，退出码非约定 | [function_check.v:87-94](file:///home/wei/veristc/veri-stc/src/function_check.v#L87)、[safest-spec.md:1257](file:///home/wei/veristc/spec/safest-spec.md#L1257) |
+| 1 | 工程/多文件输入 | 🟡 部分已清（G0/W1）：写当前工作目录的隐患已消除——`-c`/`-g` 缺 `-o` 即判退出码 11，**绝不落到 CWD**；多文件/工程目录输入仍待 G1（编译器唯一入口仍是单个文本 `.st`，这是语义证明边界） | `spec/safest-spec.md` 附录 D、`veri-stc/tests/compiler-tests/run_compiler_tests.sh` 第 3 步 |
+| 2 | 结构化诊断 | ✅ 已清（G0/W1，决策 D3）：全量诊断收集 + `--json` NDJSON（`pou/var/kind/loc/msg`）+ 约定退出码 0/11/21–25；`loc` 按 D3 只到 **POU + 变量名**，语句级定位推到 G2 | `spec/safest-spec.md` 附录 D、`veri-stc/src/function_check.v` 的 `diagnostic` 记录、`veri-stc/extraction/veristc_main.ml` 的 `--json` 路径 |
 | 3 | 图形语言 | 无。AST 仅 ST 语句集 | [safest.v:290-344](file:///home/wei/veristc/veri-stc/spec/safest.v#L290) |
-| 4 | 仿真监视 name→addr | `.sasm` DEBUG 段从未发射，IOMAP 条目 `st_var_name_offset` 与 `scale/bias` 写死占位 `0`；符号名只存在于 `.svobj` SYMTAB | [encoder.v:155-163](file:///home/wei/veristc/veri-stc/src/encoder.v#L155) |
-| 5 | 数字孪生闭环 | `svm.c` 用 stub 覆盖了 `io_mapping_cycle` ⇒ 发布二进制**零 I/O**；`VM_Interface` 仿真后端无任一实现（测试全用 `{0}`） | [svm.c:33-39](file:///home/wei/veristc/veri-runtime/core/svm.c#L33) |
-| 6 | 下装传输 | 仅进程内补丁切换，无 socket/分帧/重组；结构变更走 full-replace 被 `apply_patch` 拒（−2）；`crc32==0` 被放行 ⇒ 未签名镜像可加载 | [loader.c:285-288](file:///home/wei/veristc/veri-runtime/core/loader.c#L285) |
+| 4 | ✅ 已清（G0/W2+W2'）| ~~仿真监视 name→addr：`.sasm` DEBUG 段从未发射，IOMAP 条目 `st_var_name_offset` 与 `scale/bias` 写死占位 `0`~~ ⇒ 段 7 符号表已发射并由 `svm -s/-l/-i` 解析；scale/bias 走「文件 ≡ IR」真值链；`mem_offset` 改为按名解析到真实全局槽位（GATE-7） | `spec/safeasm-spec.md` §4.8 / §4.4「地址单一真值」 |
+| 5 | ✅ 已清（G0/W3+W4）| ~~数字孪生闭环：`svm.c` 用 stub 覆盖 `io_mapping_cycle` ⇒ 发布二进制零 I/O；`VM_Interface` 仿真后端无任一实现~~ ⇒ `sim` 主程序实现 8 个被真实调用的接口 + `.plant` 被控对象，`io_mapping_cycle` 端到端跑通并有 12 周期黄金时间线（`integration/run_sim_e2e.sh`）。W4 补上监视数据面：`sim --watch 名字表` 逐周期发 stdout JSONL 帧（名字→段 7 地址→数值，含派生名 `cnt#N`、`status`、累计 `violations`、流末 done 帧），即工程站仿真按钮要消费的那一份。`svm` 仍定位为纯执行、不做 I/O | `veri-runtime/sim/`、`spec/simulation-spec.md` §4 |
+| 6 | 下装传输 | ✅ 已清（G0/W5，决策 D5）：下装帧协议（24B 头 + 载荷 + HMAC-SHA256，CRC32/HMAC 两道独立闸、MAC 先验）、接收状态机与十类拒绝码、全量镜像版本槽 + `vm_rebind` 周期边界原子切换 + 一级回滚、目标端 `veristc-agent`（装载/周期执行/下装服务/状态上报，管道后端）。`crc32==0` 后门已关闭（未计算校验和一律拒）。真签名、UDS/网络、重传与断点续传推到 G4；增量补丁代码保留但不进链路 | `spec/download-spec.md`、`veri-runtime/hotstandby/download_wire.c`、`integration/run_download_e2e.sh`（34 项） |
 | 7 | 版本化库 | 仅 `veri-stc/tools/stpreproc.py` 演示实现，PRE-2/3/5 契约未成体系；无 lock、无内容寻址 | [safest-spec.md:1604-1611](file:///home/wei/veristc/spec/safest-spec.md#L1604) |
 | 8 | 资源上限强制 | 栈深 > 256 已拒绝，但 `check_all_loops_bounded` / `estimate_wcet` 算了**不接拒绝路径** | [analysis.v:153](file:///home/wei/veristc/veri-stc/src/analysis.v#L153) |
 
@@ -85,8 +85,8 @@ plant-unit/                        <- 全文本，入 Git
 | 产出物 | 路径 | 内容 |
 |--------|------|------|
 | 编译器 API 包装 | `veri-stc/extraction/veristc_main.ml`（扩展） | `--json` 诊断、约定退出码、隔离输出目录、`LOC` 至少填到 POU/端口粒度 |
-| 符号名段发射 | `veri-stc/src/encoder.v` + `veri-runtime/core/loader.c` | 填实 `SEC_DEBUG 7` 的 name→mem_offset 表（纯新增段） |
-| 仿真后端 | `veri-runtime/sim/`（新增） | 实现 `VM_Interface` 四 I/O 函数 + `get_ticks/sleep`，由 `sim/plant.yaml` 驱动 |
+| 符号名段发射 | Coq `global_codegen.v`（新增取行函数）+ `veristc_main.ml`（字节编码）+ `veri-runtime/core/loader.c` | 新增 `SEC_DEBUG 7`：字符串池 + name→(addr,type) 符号表。**字节编码不进 Coq**（Coq `ident`/`float` → 字节无可靠路径，与 `emit_svobj` 同层） |
+| 仿真后端 | `veri-runtime/sim/`（新增） | 只实现**被真实调用**的 `io_read/io_write` + `get_ticks/sleep/ms_to_ticks/init/deinit`；前置需修 `loader.c` 丢弃 scale/bias 与 `svm` 的 `io_mapping_cycle` stub |
 | watch 通道 | `veri-runtime/sim/watch.c`（新增） | 读 `vm->memory` + 符号表解析 name→addr，输出结构化采样帧 |
 | 下装协议 + agent | `veri-runtime/hotstandby/download_wire.c`、`veri-runtime/agent/` | 分帧/重组/签名校验/周期边界提交/回滚；关闭 `CRC==0` 后门并真校验 patch CRC |
 | 图→ST 生成器 | `veri-ide/backend/gen/` | `*.FC.json` / `*.SFC.json` → `merged.st`；确定性 + 往返恒等 |
@@ -98,7 +98,9 @@ plant-unit/                        <- 全文本，入 Git
 
 ## 实现流程
 
-1. **G0 前置能力补齐（4-6 周）**：产出物 1~5。验收 = 新增 e2e 断言「IDE 侧能从 watch 读到 `pid1.OUT` 的真实数值」，且 `veri-runtime/run_vm_checks.sh` 扩展到含 watch 与下装帧校验；`make coq` 保持绿色、无新增 `Admitted`。
+1. **G0 前置能力补齐（4-6 周）**：产出物 1~5，实施级方案见 `phase6-g0-technical-plan.md`。
+   验收 = 新增 e2e 断言「IDE 侧能从 watch 读到 `pid1#OUT` 的真实数值」，且 `veri-runtime/run_vm_checks.sh` 扩展到含 watch 与下装帧校验；`make coq` 保持绿色、无新增 `Admitted`。
+   **决策 D1**：验收信号取 **DINT** 而非 REAL —— REAL 全链路当前不可用（词法无小数字面量、`F32_CONST` 立即数被编码为全零且无 OCaml 后处理），补 REAL 属并行子项、不在 G0 关键路径。
 2. **G1 骨架（4 周）**：文本化工程 schema + project-svc + ST 编辑器 + LSP + build-svc + CLI。验收 = 无 GUI 全链路（CLI 提交工程 → 得制品 + JSON 诊断）。
 3. **G2 图形组态（6-8 周）**：画布 + 块/端口模型 + 图→ST 生成器 + 往返恒等 CI 门禁。连线语义直接映射已实现且 Coq 检查过的三机制：端口绑定→具名实参 `S_FB_CALL`、跨周期状态→FB 内 `VAR`、透传/跟踪→`VAR_IN_OUT` 别名。
 4. **G3 仿真验证（4 周）**：双模式仿真（干跑=无 I/O 逻辑级，对照黄金时间线；孪生=plant 模型 + watch），波形视图、基线管理与偏差回指到块。
@@ -117,6 +119,7 @@ plant-unit/                        <- 全文本，入 Git
 - 传输 = REST + WebSocket RPC；构建流为拉取式（前端订阅 job 事件）
 - 下装首期只做**全量 + 签名 + 周期边界切换**，增量补丁待结构变更能力补齐后再开放
 - 目标形态先虚拟控制器（容器/Linux x64），真机作为 G4 之后的移植项
+- **G0 五项已定决策（D1–D5）**：验收信号用 DINT ／ IOMAP `st_var_name_offset` 降级 reserved、符号名全放 section 7 ／ LOC 只到 POU+变量名 ／ watch 首期 stdout 帧不上 socket ／ 下装首期 HMAC-SHA256、真签名推 G4。逐条后果与字节契约见 `phase6-g0-technical-plan.md` §0
 
 ## 范围外（首期不做）
 
