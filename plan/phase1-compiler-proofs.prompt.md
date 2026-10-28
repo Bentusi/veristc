@@ -13,15 +13,15 @@ description: 'Phase 1: implement VeriSTC compiler passes with Coq correctness pr
 
 | 阶段 | 文件 | 实现内容 | 正确性定理 |
 |------|------|---------|-----------|
-| 1.1 | `veristc/src/typechecker.v` | 类型检查器 + 类型推理规则 | `type_safety` (progress + preservation) |
-| 1.2 | `veristc/src/desugar.v` | 脱糖（AST → CoreST IR） | `desugar_semantics_preservation` |
-| 1.3 | `veristc/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_preservation` **（核心定理）** |
-| 1.4 | `veristc/src/analysis.v` | 静态分析（WCET/循环上限/栈深度） | 无证明（工具性质） |
-| 1.5 | `veristc/extraction/` | Coq Extraction → OCaml 配置 | 无（工具链配置） |
+| 1.1 | `veri-stc/src/typechecker.v` | 类型检查器 + 类型推理规则 | `type_safety` (progress + preservation) |
+| 1.2 | `veri-stc/src/desugar.v` | 脱糖（AST → CoreST IR） | `desugar_semantics_preservation` |
+| 1.3 | `veri-stc/src/codegen.v` | CoreST → SafeASM 代码生成 | `codegen_preservation` **（核心定理）** |
+| 1.4 | `veri-stc/src/analysis.v` | 静态分析（WCET/循环上限/栈深度） | 无证明（工具性质） |
+| 1.5 | `veri-stc/extraction/` | Coq Extraction → OCaml 配置 | 无（工具链配置） |
 
 **并行任务**（VM 端，与 1.1-1.5 同步）：
-- `vm/memory/`：静态安全内存容器实现
-- `vm/safeasm_interp.c`：SafeASM 解释器从子集扩展到完整指令集
+- `veri-runtime/core/memory/`：静态安全内存容器实现
+- `veri-runtime/core/safeasm_interp.c`：SafeASM 解释器从子集扩展到完整指令集
 
 ## 实现流程
 

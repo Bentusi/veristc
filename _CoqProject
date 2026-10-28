@@ -1,28 +1,28 @@
 # VeriSTC _CoqProject — 用于 Proof General (Emacs/RocqIDE)
 # 用法: 在 Emacs 中打开任意 .v 文件，PG 自动读取此文件
 
--Q veristc/spec veristc_spec
--Q veristc/src veristc_src
+-Q veri-stc/spec veristc_spec
+-Q veri-stc/src veristc_src
 
 # Spec 文件（按依赖顺序）
-veristc/spec/safeasm.v
-veristc/spec/safest.v
-veristc/spec/st_semantics.v
-veristc/spec/function_semantics.v
-veristc/spec/asm_semantics.v
-veristc/spec/compiler_correctness.v
+veri-stc/spec/safeasm.v
+veri-stc/spec/safest.v
+veri-stc/spec/st_semantics.v
+veri-stc/spec/function_semantics.v
+veri-stc/spec/asm_semantics.v
+veri-stc/spec/compiler_correctness.v
 
 # Src 文件（按依赖顺序）
-veristc/src/encoder.v
-veristc/src/lexer.v
-veristc/src/parser.v
-veristc/src/inline.v
-veristc/src/desugar.v
-veristc/src/analysis.v
-veristc/src/typechecker.v
-veristc/src/function_check.v
-veristc/src/codegen.v
-veristc/src/global_codegen.v
+veri-stc/src/encoder.v
+veri-stc/src/lexer.v
+veri-stc/src/parser.v
+veri-stc/src/inline.v
+veri-stc/src/desugar.v
+veri-stc/src/analysis.v
+veri-stc/src/typechecker.v
+veri-stc/src/function_check.v
+veri-stc/src/codegen.v
+veri-stc/src/global_codegen.v
 
 # Extraction 文件
-veristc/extraction/extraction.v
+veri-stc/extraction/extraction.v

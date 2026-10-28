@@ -13,7 +13,7 @@ ST 工程师 ──> veristc (上位机, OCaml 原生) ──写──> .sasm �
 
 两者之间没有进程通信、没有共享库、没有网络协议。`.sasm` 是唯一接口，
 其结构（Header / 段表 / IOMap / Code / Safety / CRC32）由 `spec/safeasm-spec.md` 与
-`veristc/src/encoder.v` + `vm/loader.c` 两侧各自实现，靠测试保持一致而非类型系统。
+`veri-stc/src/encoder.v` + `veri-runtime/core/loader.c` 两侧各自实现，靠测试保持一致而非类型系统。
 
 第三个产物 `.svobj`（可重定位对象）目前**只有生产者，没有消费者** —— 链接器 `veristc-ld`
 属 P3 计划，仓库内无实现。它是目标态，不是当前架构的一部分，模型里以 `TargetState` 标出。
@@ -22,23 +22,23 @@ ST 工程师 ──> veristc (上位机, OCaml 原生) ──写──> .sasm �
 
 `Makefile:72` 的 `all` 目标产出 `coq veristc vm-lib vm-hs vm-io svm`。其中：
 
-- **`veristc`**（`veristc/extraction/veristc`，`Makefile:279-292`）—— 上位机编译器，唯一入口。
-- **`svm`**（`vm/svm`，`Makefile:132-137`）—— 运行站程序，由 `svm.c + sasm_dump.c + loader.c +
+- **`veristc`**（`veri-stc/extraction/veristc`，`Makefile:279-292`）—— 上位机编译器，唯一入口。
+- **`svm`**（`veri-runtime/core/svm`，`Makefile:132-137`）—— 运行站程序，由 `svm.c + sasm_dump.c + loader.c +
   safeasm_interp.c` 直接 gcc 链接，**不链接任何 `libvm_*.a`**。
 
 `libvm_core.a`、`libvm_io.a`、`libvm_hs.a` 三个静态库都被构建，但只有 `libvm_io.a` 和
 `libvm_core.a` 被测试二进制链接（`Makefile:118-124`）；`libvm_hs.a` **没有被任何可执行目标链接**
 （`test_hotstandby` 用 `#include "…/hotstandby/*.c"` 把源码内联进去，`Makefile:128-129`、
-`tests/vm-tests/test_hotstandby.c:18-23`）。
+`veri-runtime/tests/vm-tests/test_hotstandby.c:18-23`）。
 
 `vm_rtthread.elf` 只出现在 `clean` 列表（`Makefile:66,388`），没有任何构建规则；
 `rtthread` 目标即使设了 `RTTHREAD_SDK` 也只语法编译不链接（`Makefile:182-190`），
-且 `rtos/rtthread/vm_rtthread.c:30` 引用了不存在的 `vm/loader.h`（`vm/` 下只有 `vm.h` 与
+且 `veri-runtime/rtos/rtthread/vm_rtthread.c:30` 引用了不存在的 `veri-runtime/core/loader.h`（`veri-runtime/core/` 下只有 `vm.h` 与
 `sasm_dump.h`）。所以移植层是**当前不可编译的代码**，不是运行单元。
 
 ## 编译器内部：一条前端 + 三条后端分叉
 
-`veristc/extraction/veristc_main.ml` 是手写的（不参与提取，`Makefile:281-282` 显式列为依赖）。
+`veri-stc/extraction/veristc_main.ml` 是手写的（不参与提取，`Makefile:281-282` 显式列为依赖）。
 它把 Coq 提取出来的计算函数串成一条 `frontend()`（`veristc_main.ml:183-217`）：
 
 ```
@@ -112,8 +112,8 @@ read_file → Lexer.lex → Parser.parse → 重名门禁 → Function_check.pre
 | 关系 | 性质 | 证据 |
 | --- | --- | --- |
 | `veristc` → `.sasm` | 文件写（定宽小端 + OCaml 侧 CRC32） | `veristc_main.ml:219-226` |
-| `.sasm` → `svm` | 文件读（fread 进 2MB 静态缓冲） | `vm/svm.c:70-99` |
-| `svm` → 物理 I/O | **契约存在，运行期未接入** | `rtos/abstract.h:77-288` vs `vm/svm.c:204-225` |
+| `.sasm` → `svm` | 文件读（fread 进 2MB 静态缓冲） | `veri-runtime/core/svm.c:70-99` |
+| `svm` → 物理 I/O | **契约存在，运行期未接入** | `veri-runtime/rtos/abstract.h:77-288` vs `veri-runtime/core/svm.c:204-225` |
 | `libvm_hs` → `svm` | 库内函数调用，但库未被链接 | `state_machine.c:333` + `Makefile:104-107` |
 | 证明层 → 生产层 | 共用类型定义，不共用被证明的函数 | `compiler_correctness.v:85-99` vs `veristc_main.ml:221` |
 | Coq → OCaml | 构建期 Extraction，`veristc_main.ml` 为手写例外 | `Makefile:256-292` |
@@ -126,7 +126,7 @@ read_file → Lexer.lex → Parser.parse → 重名门禁 → Function_check.pre
    还是**已接入运行站程序**。这决定后续该做接入还是做文档修正。
 2. **`.iomap` 独立文件是否仍计划交付。** `AGENTS.md` 声明编译器输出 `.sasm` + `.iomap`，
    实际 I/O 映射是 `.sasm` 内 Section type=3（`encoder.v:166-174`），无独立 `.iomap` 文件产出。
-3. **CRC `stored==0` 放行是否为受控偏差。** 损坏文件确实被拒（`run_vm_checks.sh:209` 断言 `-2`），
+3. **CRC `stored==0` 放行是否为受控偏差。** 损坏文件确实被拒（`veri-runtime/run_vm_checks.sh:209` 断言 `-2`），
    但 `loader.c:286-288` 对 `stored_crc == 0` 的未签名文件放行，`sasm_dump.c:544-551` 也把这种情况
    标为 `(未计算)`。因此冲突点是"完整性校验对未签名文件不强制"，而非检测失效；
    需确认是否限定在测试路径（可达 `sasm_load` 的仅 `svm.c:85`、`sasm_fuzzer.c:168`、

@@ -32,36 +32,36 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          veristc/spec/*.vo
-          veristc/src/*.vo
-          veristc/extraction/*.vo
-        key: coq-${{ runner.os }}-${{ hashFiles('veristc/**/*.v') }}
+          veri-stc/spec/*.vo
+          veri-stc/src/*.vo
+          veri-stc/extraction/*.vo
+        key: coq-${{ runner.os }}-${{ hashFiles('veri-stc/**/*.v') }}
         restore-keys: |
           coq-${{ runner.os }}-
 
     - name: Build Coq spec (dune)
       run: |
-        cd veristc
+        cd veri-stc
         dune build spec/
 
     - name: Build Coq src (dune)
       run: |
-        cd veristc
+        cd veri-stc
         dune build src/
 
     - name: Build Coq extraction (dune)
       run: |
-        cd veristc
+        cd veri-stc
         dune build extraction/
 
     - name: Extract OCaml code
       run: |
-        cd veristc
+        cd veri-stc
         dune build @extraction
 
     - name: Build veristc executable
       run: |
-        cd veristc
+        cd veri-stc
         dune build extraction/veristc.exe
 
     - name: Build VM libraries
@@ -83,7 +83,7 @@ jobs:
     - name: Run VM tests
       run: |
         make build-vm-test
-        ./tests/vm-tests/test_vm
+        ./build/bin/test_vm
 
     - name: Run MISRA-C check
       run: |
@@ -93,5 +93,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: veristc-binary
-        path: veristc/extraction/veristc.exe
+        path: veri-stc/_build/default/extraction/veristc.exe
         retention-days: 7

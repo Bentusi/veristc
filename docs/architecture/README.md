@@ -8,9 +8,22 @@
 的 `文件:行号` 已按当前工作树逐条 grep 重导，并补入 v1.5.1 的两处新门禁
 （`duplicate_declaration_msg` 展开后重名、`check_program_access` 字段封装 `KIND=access`）与
 解析期 `inst.field → inst#field` 名字融合。**VM/RTOS/热备侧的图与行号未重导**（本次改动未触碰
-`vm/`、`rtos/`），仍为 2026-10-14 基线。
+`veri-runtime/core/`、`rtos/`），仍为 2026-10-14 基线。
 
 每张图只回答一个问题；节点/边文本内嵌 `文件:行号` 证据，可直接跳读源码核对。
+
+**2026-10-28 三组件化路径更新**：仓库已重组为 `veri-stc/`（编译器）、`veri-runtime/`（运行站）、
+`veri-ide/`（工程站，规划中），本目录全部 `文件:行号` 的**源码路径前缀**已随之更新
+（`veristc/…`→`veri-stc/…`，`vm/…`→`veri-runtime/core/…`，`vm/io/`→`veri-runtime/io/`，
+`vm/hotstandby/`→`veri-runtime/hotstandby/`，`rtos/`→`veri-runtime/rtos/`，
+`tests/vm-tests/`→`veri-runtime/tests/vm-tests/`，`tests/st-examples/`→`veri-stc/tests/st-examples/`）。
+被引源码文件仅做过路径级修改、行数未变，因此**行号仍然有效**；`.svg` 已由对应 `.dot` 重新渲染。
+
+例外：形如 `Makefile:NNN` 的行号指向**拆分前的单一根 Makefile**（git `8311fb5`）。
+Makefile 现已拆为根 `Makefile`（聚合转发 + 跨组件制品）、`Makefile.common`（共享配置）、
+`veri-stc/Makefile`、`veri-runtime/Makefile`，这些数字**不再可用**；请按目标名
+（`coq` / `veristc` / `vm-lib` / `vm-io` / `vm-hs` / `svm` / `build-*-test` / `build-smoke` /
+`build-nuclear-e2e` / `sanitize-*` / `build-fuzzer` / `rtthread`）在对应文件中定位。
 
 ## 清单
 
@@ -70,5 +83,5 @@ DSL 语法按标准 Structurizr 书写但未做机器校验 —— 见 `flow-ris
 ```bash
 grep -rn 'vm_scan_cycle' --include='*.c' --include='*.h' .   # 期望：仅声明 + 定义，无调用点
 grep -rn 'sasm_load('  --include='*.c' .                     # 期望：4 个调用点 + 1 个定义
-grep -c 'compile_program_gc' veristc/spec/compiler_correctness.v
+grep -c 'compile_program_gc' veri-stc/spec/compiler_correctness.v
 ```

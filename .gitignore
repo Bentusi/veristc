@@ -55,9 +55,20 @@ output.txt
 *.cma
 
 # 提取生成的 OCaml 代码（Coq Extraction 产出）
-veristc/extraction/*.ml
-veristc/extraction/*.mli
-!veristc/extraction/veristc_main.ml
+veri-stc/extraction/*.ml
+veri-stc/extraction/*.mli
+!veri-stc/extraction/veristc_main.ml
+
+# 组件构建产物（一律收敛到 build/，源码树内不得留存二进制）
+veri-stc/extraction/veristc
+veri-stc/extraction/.extract_stamp
+veri-runtime/core/svm
+veri-runtime/core/svm-asan
+veri-runtime/tests/vm-tests/test_vm
+veri-runtime/tests/vm-tests/test_vm-asan
+veri-runtime/tests/vm-tests/test_io_mapping
+veri-runtime/tests/vm-tests/test_hotstandby
+veri-runtime/tests/vm-tests/test_nuclear_protection_full_e2e
 
 # Dune 构建缓存
 _build/
@@ -113,8 +124,10 @@ __pycache__/
 # ================================================================
 # 测试生成的文件
 # ================================================================
-/tests/*.log
-/tests/*.out
+/veri-runtime/tests/**/*.log
+/veri-runtime/tests/**/*.out
+/veri-stc/tests/**/*.log
+/veri-stc/tests/**/*.out
 
 # MISRA-C 检查产物 (run_misra_check.sh)
 .misra_report.txt

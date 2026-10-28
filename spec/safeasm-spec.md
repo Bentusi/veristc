@@ -4,7 +4,7 @@
 > **状态**：正式发布  
 > **生效日期**：2026-06-30  
 > **对应 Coq 文件**：`safeasm.v`（形式化镜像）  
-> **对应实现文件**：`vm/safeasm_interp.c` `vm/loader.c`  
+> **对应实现文件**：`veri-runtime/core/safeasm_interp.c` `veri-runtime/core/loader.c`  
 > **编码方式**：固定宽度编码
 
 ---
@@ -576,7 +576,7 @@ SafeASM 虚拟机在以下情况触发**安全保护动作 (safety trap)**，立
 
 ### 5.6 小步语义的形式化定义（Coq 对应）
 
-SafeASM 的小步操作语义在 `veristc/spec/safeasm.v` 中用归纳关系定义：
+SafeASM 的小步操作语义在 `veri-stc/spec/safeasm.v` 中用归纳关系定义：
 
 ```
 Inductive step : sasm_module -> runtime_state -> runtime_state -> Prop :=
@@ -1165,12 +1165,12 @@ ST:  qDINT := QINT_var;     -- QINT → QDINT (提升)
 
 ## 附录 D：`.svobj` 可重定位对象格式（P2）
 
-VeriSTC 编译器除产出可直接装载的 `.sasm`（`-c`）外，还可产出**可重定位目标文件** `.svobj`（`-g`），供后续链接器 `veristc-ld`（P3）跨模块链接。目标：把 `tools/stpreproc.py` 的源到源文本展开替换为真正的「逻辑一份 + 数据分离 + 类 C 连接」编译—链接工具链。
+VeriSTC 编译器除产出可直接装载的 `.sasm`（`-c`）外，还可产出**可重定位目标文件** `.svobj`（`-g`），供后续链接器 `veristc-ld`（P3）跨模块链接。目标：把 `veri-stc/tools/stpreproc.py` 的源到源文本展开替换为真正的「逻辑一份 + 数据分离 + 类 C 连接」编译—链接工具链。
 
 ### D.1 分层与信任边界
 
-- **编译器侧（Coq）**：`veristc/src/global_codegen.v` 中的 `compile_program_reloc_info` / `compile_program_inst_info` / `compile_program_sym_info` 从**已链接**的 `.sasm` 镜像中，把属于跨模块链接点的指令位置与符号信息提取为**扁平可提取元数据表**（纯新增定义，不触碰任何已证明结构）。这些定义经 Extraction 暴露给 OCaml。
-- **编码侧（主机 OCaml）**：`veristc/extraction/veristc_main.ml` 的 `emit_svobj` 把元数据确定性编码为 `.svobj` 字节（SYMTAB 的 `kind`/`aux` 直接取自 `compile_program_sym_info`，不再由 reloc 行反推）；`verify_svobj`（`-x`）做结构 + CRC + RELOC 逐条（类型直方图、`sym_idx` 范围）round-trip。
+- **编译器侧（Coq）**：`veri-stc/src/global_codegen.v` 中的 `compile_program_reloc_info` / `compile_program_inst_info` / `compile_program_sym_info` 从**已链接**的 `.sasm` 镜像中，把属于跨模块链接点的指令位置与符号信息提取为**扁平可提取元数据表**（纯新增定义，不触碰任何已证明结构）。这些定义经 Extraction 暴露给 OCaml。
+- **编码侧（主机 OCaml）**：`veri-stc/extraction/veristc_main.ml` 的 `emit_svobj` 把元数据确定性编码为 `.svobj` 字节（SYMTAB 的 `kind`/`aux` 直接取自 `compile_program_sym_info`，不再由 reloc 行反推）；`verify_svobj`（`-x`）做结构 + CRC + RELOC 逐条（类型直方图、`sym_idx` 范围）round-trip。
 - 链接器正确性属**「信任 + 测试」**层，不进安全核，故 `.svobj` 仅记录相对量、不烘焙绝对地址。
 
 ### D.2 文件布局（小端 / 定宽，无 LEB128，与 `.sasm` 风格一致）
@@ -1234,7 +1234,7 @@ u16 name_len | byte name | u16 fb_len | byte fb_name | u32 base | u32 size
 - 透传（实参是调用方自身的 `VAR_IN_OUT` 端口）压的是 `LOCAL_GET` 槽位、不含立即数 ⇒ 不产行，别名在运行时沿调用链解析。
 - 已知精度取舍（属「信任 + 测试」层，与 `INST_BASE_IMM` 同类的窗口启发式）：窗口内若某个**值端口**读了「同时被别名过」的全局，codegen 也压该全局地址（`global_load`），会多出一条 `GLOBAL_OFF`；该行陈述「此 `I32_CONST` 持有符号 X 的地址」，对被多记的站点同样为真，链接期回写结果一致。窗口外（无基址候选）的全局地址常量不入行。
 
-实测（由 `run_vm_checks.sh` 断言覆盖）：
+实测（由 `veri-runtime/run_vm_checks.sh` 断言覆盖）：
 
 | 用例 | CALL_IDX | INST_BASE_IMM | GLOBAL_OFF | 符号数 |
 |------|----------|---------------|------------|--------|

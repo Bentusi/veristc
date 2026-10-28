@@ -28,7 +28,7 @@
 ```
 ├─ 规则/约束编号格式：Sx.y（安全约束）、Tx.y（类型规则）、Lx.y（词法规则）
 ├─ EBNF 中 [...] 表示可选，{...} 表示重复零次或多次
-├─ Coq 引用以 `veristc/spec/safest.v` 中的定义名为准
+├─ Coq 引用以 `veri-stc/spec/safest.v` 中的定义名为准
 └─ 所有非规范性说明以"注："开头
 ```
 
@@ -148,7 +148,7 @@ SafeST 删除了约 **70%** 的 IEC 61131-3 ST 语言特性。保留的 30% 经�
 
 ## 3. SAFEST 形式化定义 (Formal Definition)
 
-本章给出 SafeST 语言的**形式化数学定义**，包括抽象语法范畴、类型系统、表达式类型规则、语句类型规则、质量传播公理以及良构程序条件。这些定义构成了编译器正确性证明的语义基础，与 `veristc/spec/safest.v` 中的 Coq 形式化描述完全对应。
+本章给出 SafeST 语言的**形式化数学定义**，包括抽象语法范畴、类型系统、表达式类型规则、语句类型规则、质量传播公理以及良构程序条件。这些定义构成了编译器正确性证明的语义基础，与 `veri-stc/spec/safest.v` 中的 Coq 形式化描述完全对应。
 
 ### 3.1 语法范畴 (Syntax Categories)
 
@@ -1265,7 +1265,7 @@ QUALITY        ❌        ✅③   ✅
 
 ## 7. SafeST 操作语义 (Operational Semantics)
 
-SafeST 的操作语义采用**小步语义 (small-step semantics)** 定义，与 Coq 文件 `veristc/spec/compiler_correctness.v` 中的形式化定义一致。
+SafeST 的操作语义采用**小步语义 (small-step semantics)** 定义，与 Coq 文件 `veri-stc/spec/compiler_correctness.v` 中的形式化定义一致。
 
 ### 7.1 运行时状态
 
@@ -1463,7 +1463,7 @@ star_step_st(p, σ, σ')  :=  σ = σ'
 terminal_state(σ) := σ.call_stack = nil
 ```
 
-**注**：完整的形式化定义请参见 Coq 文件 `veristc/spec/compiler_correctness.v`。上述规则是其精确的数学表示。
+**注**：完整的形式化定义请参见 Coq 文件 `veri-stc/spec/compiler_correctness.v`。上述规则是其精确的数学表示。
 
 ---
 
@@ -1629,7 +1629,7 @@ q2 := RS(q2, s2, r2);   (* 实体 2：同一份代码，另一组变量 *)
 | ME-3 | VAR_GLOBAL 块须位于 POU 列表之前 | 语法约定，支持多个连续块 |
 | ME-4 | 多输出 = 每调用一个返回值 | 第二输出在调用点派生（如 `Q1 := NOT q`）或由共享输入的姊妹函数提供；不依赖、也不需要 FUNCTION 双返回值 |
 
-参考示例：`tests/st-examples/rs_multi_entity.st`。
+参考示例：`veri-stc/tests/st-examples/rs_multi_entity.st`。
 
 **FB 形式多实体模式（共享函数实体 + 全局状态 + 赋值调用）**
 
@@ -1657,10 +1657,10 @@ q2 := RS(q2, s2, r2);   (* 实体 2：同一份代码，另一组变量 *)
 后续可由编译器根据大小、调用次数和安全分析选择性内联；内联只是优化，
 不改变源程序语义。
 
-参考示例：授权源 `tests/st-examples/rs_multi_entity_fb.st` +
-模板 `tests/st-examples/lib-templates/rs_v1.tpl.st` →
-展开产物 `tests/st-examples/rs_multi_entity_fb.expanded.st`；
-参考实现：`tools/stpreproc.py`（演示级，含 T-1~T-4 加载期检查）。
+参考示例：授权源 `veri-stc/tests/st-examples/rs_multi_entity_fb.st` +
+模板 `veri-stc/tests/st-examples/lib-templates/rs_v1.tpl.st` →
+展开产物 `veri-stc/tests/st-examples/rs_multi_entity_fb.expanded.st`；
+参考实现：`veri-stc/tools/stpreproc.py`（演示级，含 T-1~T-4 加载期检查）。
 多 VAR_GLOBAL 块语法（每实例一个上下文块）在展开产物中示范。
 
 **编译器守门规则（不信任上游，独立强制）**

@@ -36,14 +36,14 @@ VeriIDE = **Veri**fied **I**ntegrated **De**velopment **E**nvironment，与 Veri
 
 | # | 需要的能力 | 现状 | 证据 |
 |---|-----------|------|------|
-| 1 | 工程/多文件输入 | 单文件位置参数；`-o` 仅固定槽位可认；缺省写 `output.sasm` 到 CWD（多租户隐患） | [veristc_main.ml:529-536](file:///home/wei/veristc/veristc/extraction/veristc_main.ml#L529) |
-| 2 | 结构化诊断 | 有 `KIND=`，但 `LOC` 恒为 `-`；诊断经 `failwith` 抛栈，stderr 带 OCaml 异常文本，退出码非约定 | [function_check.v:87-94](file:///home/wei/veristc/veristc/src/function_check.v#L87)、[safest-spec.md:1257](file:///home/wei/veristc/spec/safest-spec.md#L1257) |
-| 3 | 图形语言 | 无。AST 仅 ST 语句集 | [safest.v:290-344](file:///home/wei/veristc/veristc/spec/safest.v#L290) |
-| 4 | 仿真监视 name→addr | `.sasm` DEBUG 段从未发射，IOMAP 条目 `st_var_name_offset` 与 `scale/bias` 写死占位 `0`；符号名只存在于 `.svobj` SYMTAB | [encoder.v:155-163](file:///home/wei/veristc/veristc/src/encoder.v#L155) |
-| 5 | 数字孪生闭环 | `svm.c` 用 stub 覆盖了 `io_mapping_cycle` ⇒ 发布二进制**零 I/O**；`VM_Interface` 仿真后端无任一实现（测试全用 `{0}`） | [svm.c:33-39](file:///home/wei/veristc/vm/svm.c#L33) |
-| 6 | 下装传输 | 仅进程内补丁切换，无 socket/分帧/重组；结构变更走 full-replace 被 `apply_patch` 拒（−2）；`crc32==0` 被放行 ⇒ 未签名镜像可加载 | [loader.c:285-288](file:///home/wei/veristc/vm/loader.c#L285) |
-| 7 | 版本化库 | 仅 `tools/stpreproc.py` 演示实现，PRE-2/3/5 契约未成体系；无 lock、无内容寻址 | [safest-spec.md:1604-1611](file:///home/wei/veristc/spec/safest-spec.md#L1604) |
-| 8 | 资源上限强制 | 栈深 > 256 已拒绝，但 `check_all_loops_bounded` / `estimate_wcet` 算了**不接拒绝路径** | [analysis.v:153](file:///home/wei/veristc/veristc/src/analysis.v#L153) |
+| 1 | 工程/多文件输入 | 单文件位置参数；`-o` 仅固定槽位可认；缺省写 `output.sasm` 到 CWD（多租户隐患） | [veristc_main.ml:529-536](file:///home/wei/veristc/veri-stc/extraction/veristc_main.ml#L529) |
+| 2 | 结构化诊断 | 有 `KIND=`，但 `LOC` 恒为 `-`；诊断经 `failwith` 抛栈，stderr 带 OCaml 异常文本，退出码非约定 | [function_check.v:87-94](file:///home/wei/veristc/veri-stc/src/function_check.v#L87)、[safest-spec.md:1257](file:///home/wei/veristc/spec/safest-spec.md#L1257) |
+| 3 | 图形语言 | 无。AST 仅 ST 语句集 | [safest.v:290-344](file:///home/wei/veristc/veri-stc/spec/safest.v#L290) |
+| 4 | 仿真监视 name→addr | `.sasm` DEBUG 段从未发射，IOMAP 条目 `st_var_name_offset` 与 `scale/bias` 写死占位 `0`；符号名只存在于 `.svobj` SYMTAB | [encoder.v:155-163](file:///home/wei/veristc/veri-stc/src/encoder.v#L155) |
+| 5 | 数字孪生闭环 | `svm.c` 用 stub 覆盖了 `io_mapping_cycle` ⇒ 发布二进制**零 I/O**；`VM_Interface` 仿真后端无任一实现（测试全用 `{0}`） | [svm.c:33-39](file:///home/wei/veristc/veri-runtime/core/svm.c#L33) |
+| 6 | 下装传输 | 仅进程内补丁切换，无 socket/分帧/重组；结构变更走 full-replace 被 `apply_patch` 拒（−2）；`crc32==0` 被放行 ⇒ 未签名镜像可加载 | [loader.c:285-288](file:///home/wei/veristc/veri-runtime/core/loader.c#L285) |
+| 7 | 版本化库 | 仅 `veri-stc/tools/stpreproc.py` 演示实现，PRE-2/3/5 契约未成体系；无 lock、无内容寻址 | [safest-spec.md:1604-1611](file:///home/wei/veristc/spec/safest-spec.md#L1604) |
+| 8 | 资源上限强制 | 栈深 > 256 已拒绝，但 `check_all_loops_bounded` / `estimate_wcet` 算了**不接拒绝路径** | [analysis.v:153](file:///home/wei/veristc/veri-stc/src/analysis.v#L153) |
 
 ## 架构分层
 
@@ -84,21 +84,21 @@ plant-unit/                        <- 全文本，入 Git
 
 | 产出物 | 路径 | 内容 |
 |--------|------|------|
-| 编译器 API 包装 | `veristc/extraction/veristc_main.ml`（扩展） | `--json` 诊断、约定退出码、隔离输出目录、`LOC` 至少填到 POU/端口粒度 |
-| 符号名段发射 | `veristc/src/encoder.v` + `vm/loader.c` | 填实 `SEC_DEBUG 7` 的 name→mem_offset 表（纯新增段） |
-| 仿真后端 | `vm/sim/`（新增） | 实现 `VM_Interface` 四 I/O 函数 + `get_ticks/sleep`，由 `sim/plant.yaml` 驱动 |
-| watch 通道 | `vm/sim/watch.c`（新增） | 读 `vm->memory` + 符号表解析 name→addr，输出结构化采样帧 |
-| 下装协议 + agent | `vm/hotstandby/download_wire.c`、`vm/agent/` | 分帧/重组/签名校验/周期边界提交/回滚；关闭 `CRC==0` 后门并真校验 patch CRC |
-| 图→ST 生成器 | `veriide/backend/gen/` | `*.FC.json` / `*.SFC.json` → `merged.st`；确定性 + 往返恒等 |
-| 块 manifest 契约 | `veriide/schema/block.schema.json` | 端口方向/类型/默认参数/图标/SIL 属性/semver/实现源哈希 |
-| 库注册服务 | `veriide/backend/registry/` | 内容寻址制品 + `lib.lock.yaml` + 准入门禁（WCET/栈深/纯性/循环上界） |
-| PRE 展开内核 | `veriide/backend/pre/`（替换 `tools/stpreproc.py`） | PRE-1..PRE-8 全量落地，尤其 PRE-2 确定性、PRE-3 递归上限、PRE-4 命名空间 mangle、PRE-5 manifest |
-| 前端 | `veriide/frontend/` | 编辑器 / 画布 / 监视表 / 时间线 / 下装向导 |
-| CLI | `veriide/cli/veride` | 无 UI，工作区·会话·PLC 命令，CI 复用 build-svc |
+| 编译器 API 包装 | `veri-stc/extraction/veristc_main.ml`（扩展） | `--json` 诊断、约定退出码、隔离输出目录、`LOC` 至少填到 POU/端口粒度 |
+| 符号名段发射 | `veri-stc/src/encoder.v` + `veri-runtime/core/loader.c` | 填实 `SEC_DEBUG 7` 的 name→mem_offset 表（纯新增段） |
+| 仿真后端 | `veri-runtime/sim/`（新增） | 实现 `VM_Interface` 四 I/O 函数 + `get_ticks/sleep`，由 `sim/plant.yaml` 驱动 |
+| watch 通道 | `veri-runtime/sim/watch.c`（新增） | 读 `vm->memory` + 符号表解析 name→addr，输出结构化采样帧 |
+| 下装协议 + agent | `veri-runtime/hotstandby/download_wire.c`、`veri-runtime/agent/` | 分帧/重组/签名校验/周期边界提交/回滚；关闭 `CRC==0` 后门并真校验 patch CRC |
+| 图→ST 生成器 | `veri-ide/backend/gen/` | `*.FC.json` / `*.SFC.json` → `merged.st`；确定性 + 往返恒等 |
+| 块 manifest 契约 | `veri-ide/schema/block.schema.json` | 端口方向/类型/默认参数/图标/SIL 属性/semver/实现源哈希 |
+| 库注册服务 | `veri-ide/backend/registry/` | 内容寻址制品 + `lib.lock.yaml` + 准入门禁（WCET/栈深/纯性/循环上界） |
+| PRE 展开内核 | `veri-ide/backend/pre/`（替换 `veri-stc/tools/stpreproc.py`） | PRE-1..PRE-8 全量落地，尤其 PRE-2 确定性、PRE-3 递归上限、PRE-4 命名空间 mangle、PRE-5 manifest |
+| 前端 | `veri-ide/frontend/` | 编辑器 / 画布 / 监视表 / 时间线 / 下装向导 |
+| CLI | `veri-ide/cli/veride` | 无 UI，工作区·会话·PLC 命令，CI 复用 build-svc |
 
 ## 实现流程
 
-1. **G0 前置能力补齐（4-6 周）**：产出物 1~5。验收 = 新增 e2e 断言「IDE 侧能从 watch 读到 `pid1.OUT` 的真实数值」，且 `run_vm_checks.sh` 扩展到含 watch 与下装帧校验；`make coq` 保持绿色、无新增 `Admitted`。
+1. **G0 前置能力补齐（4-6 周）**：产出物 1~5。验收 = 新增 e2e 断言「IDE 侧能从 watch 读到 `pid1.OUT` 的真实数值」，且 `veri-runtime/run_vm_checks.sh` 扩展到含 watch 与下装帧校验；`make coq` 保持绿色、无新增 `Admitted`。
 2. **G1 骨架（4 周）**：文本化工程 schema + project-svc + ST 编辑器 + LSP + build-svc + CLI。验收 = 无 GUI 全链路（CLI 提交工程 → 得制品 + JSON 诊断）。
 3. **G2 图形组态（6-8 周）**：画布 + 块/端口模型 + 图→ST 生成器 + 往返恒等 CI 门禁。连线语义直接映射已实现且 Coq 检查过的三机制：端口绑定→具名实参 `S_FB_CALL`、跨周期状态→FB 内 `VAR`、透传/跟踪→`VAR_IN_OUT` 别名。
 4. **G3 仿真验证（4 周）**：双模式仿真（干跑=无 I/O 逻辑级，对照黄金时间线；孪生=plant 模型 + watch），波形视图、基线管理与偏差回指到块。
@@ -124,5 +124,5 @@ plant-unit/                        <- 全文本，入 Git
 
 ## 待议
 
-- **规范漂移**：PRE-8 声明「未展开的 FB 调用禁止提交编译器」，但 v1.5.1 已支持原生 `FUNCTION_BLOCK` 直接编译（`tests/st-examples/algo_blocks_fb.st`）。IDE 与 PRE 内核必须认单一权威，建议改写 §9.4 第二层为「按块来源分层」而非「按是否展开分层」。
+- **规范漂移**：PRE-8 声明「未展开的 FB 调用禁止提交编译器」，但 v1.5.1 已支持原生 `FUNCTION_BLOCK` 直接编译（`veri-stc/tests/st-examples/algo_blocks_fb.st`）。IDE 与 PRE 内核必须认单一权威，建议改写 §9.4 第二层为「按块来源分层」而非「按是否展开分层」。
 - `.iomap` 是否独立成文件：现状是内嵌 `.sasm` Section 3，AGENTS.md 却宣称独立 `.iomap` 产物。建议以 `iomap/*.toml` 为工程源、`.sasm` 内嵌段为编译产物，消除文档与实现的口径差。

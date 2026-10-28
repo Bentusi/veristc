@@ -1,7 +1,7 @@
 // flow-compile-pipeline.dot
 // VeriSTC 编译管线数据流 (当前状态 / AS-IS) —— flow-visualizer + graphviz
 // 问题: 一个 .st 源文件从触发到产出可执行镜像，数据形态如何逐步变化，门禁在哪拒绝，四种模式如何分叉。
-// 证据: veristc/extraction/veristc_main.ml (生产入口) + veristc/src/*.v (被提取的计算函数)
+// 证据: veri-stc/extraction/veristc_main.ml (生产入口) + veri-stc/src/*.v (被提取的计算函数)
 // 读法: 命令行分派在最上方; -c/-g 共用 frontend(), -a 走 analyze_st() 这条**重复实现且门禁更少**的管线, -x 完全不读 .st。
 //       八边形 = 终止编译的门禁; 虚线簇 = 存在但不在生产运行路径上的部分。
 // 重新渲染: dot -Tsvg flow-compile-pipeline.dot -o flow-compile-pipeline.svg
@@ -133,7 +133,7 @@ digraph "veristc_compile_pipeline" {
     // ================= 证明层旁注 =================
     subgraph cluster_proof {
         label="构建期证明层 —— 不产出运行期代码"; style="rounded,dotted"; color="#57606a"; fontsize=11;
-        specs [label="spec/safest.v, spec/safeasm.v\nst_program / sasm_module 类型定义\n+ derived_field_sep = \"#\"(v1.5.1 保留分隔符)\n→ 作为提取模块进入可执行文件\nsafest.v:357,94 | safeasm.v:282,293",
+        specs [label="veri-stc/spec/safest.v, veri-stc/spec/safeasm.v\nst_program / sasm_module 类型定义\n+ derived_field_sep = \"#\"(v1.5.1 保留分隔符)\n→ 作为提取模块进入可执行文件\nsafest.v:357,94 | safeasm.v:282,293",
                fillcolor="#f6f8fa"];
         thms  [label="端到端语义保持链\ncompile_st_to_sasm = compile_core_program (:85-99)\n= type_check_program + codegen.compile_program\n定理 :1688 :1739 :2007 :2204 :2216",
                fillcolor="#e6f4ea"];

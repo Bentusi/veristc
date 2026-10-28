@@ -6,30 +6,30 @@
 ## G1 场景关键机制缺失：运行期的 I/O 与故障收敛
 
 `flow-vm-runtime.dot` 的主路径里没有 I/O 同步、没有看门狗、没有安全态。
-这不是画图遗漏，而是代码事实（`vm/svm.c:204-225` 循环体内只有 `vm_run` + 休眠）。
+这不是画图遗漏，而是代码事实（`veri-runtime/core/svm.c:204-225` 循环体内只有 `vm_run` + 休眠）。
 
 需要确认的是**这是不是当前预期**：若 VeriSTC 现阶段定位是"编译正确性 + 指令语义 SIL 验证平台"，
 那么 `svm` 是一个测试用执行器，I/O 接入本就不在射程内，模型应把它标注为"验证用运行器"；
 若定位是"安全级仪控运行站"，则 G1 是主路径上的实质缺口。
 
-验证动作：向负责人确认 `svm` 的定位；或直接看 `run_nuclear_e2e.sh` / `run_channel_e2e.sh`
+验证动作：向负责人确认 `svm` 的定位；或直接看 `integration/run_nuclear_e2e.sh` / `integration/run_channel_e2e.sh`
 是否以内存值而非物理通道值作为判据（若是，则支持前者）。
 
 ## G2 `.sasm` 完整性校验对"未签名文件"不设防
 
-`vm/loader.c:283-289`：CRC 不匹配时，若 `stored_crc == 0` 则放行，注释写明为
+`veri-runtime/core/loader.c:283-289`：CRC 不匹配时，若 `stored_crc == 0` 则放行，注释写明为
 "legacy handcrafted development fixtures"。而项目约定是"SVM 加载时拒绝损坏文件"（`AGENTS.md`）。
 
 先厘清这条放行的**真实可达范围**，避免把结论说过头：
 
-- 损坏检测本身是有效的，也有断言覆盖：`run_vm_checks.sh:197-209` 与 `run_sanitizer.sh:48-55`
+- 损坏检测本身是有效的，也有断言覆盖：`veri-runtime/run_vm_checks.sh:197-209` 与 `veri-runtime/run_sanitizer.sh:48-55`
   把 CRC 字段（末尾 4 字节）之前的最后一个字节改写为 `0xFF`（`seek=size-5`），
   使 `computed_crc` 变化而 `stored_crc` 保持非零，并断言输出含 `sasm_load failed: -2`。
-- 真正进入 `sasm_load` 的只有四个调用点：`vm/svm.c:85`、`tests/fuzz/sasm_fuzzer.c:168`、
-  `tests/vm-tests/test_nuclear_protection_full_e2e.c:218`、`rtos/rtthread/vm_rtthread.c:447`。
-- `tests/vm-tests/test_vm.c` **不经过装载器**：它用 `install_code()`（`:23`）直接填充内存中的
+- 真正进入 `sasm_load` 的只有四个调用点：`veri-runtime/core/svm.c:85`、`veri-runtime/tests/fuzz/sasm_fuzzer.c:168`、
+  `veri-runtime/tests/vm-tests/test_nuclear_protection_full_e2e.c:218`、`veri-runtime/rtos/rtthread/vm_rtthread.c:447`。
+- `veri-runtime/tests/vm-tests/test_vm.c` **不经过装载器**：它用 `install_code()`（`:23`）直接填充内存中的
   `SasmModule`，全文件没有任何 CRC 相关代码。因此它不能作为放行路径的证据。
-- `stored_crc == 0` 的约定在工具侧也成型了：`vm/sasm_dump.c:544-551` 把它单独标注为 `(未计算)`，
+- `stored_crc == 0` 的约定在工具侧也成型了：`veri-runtime/core/sasm_dump.c:544-551` 把它单独标注为 `(未计算)`，
   与 `OK` / `MISMATCH` 并列。
 
 影响流程判断的地方：主路径图里"装载即可信"这一前提只对**已计算 CRC 的文件**成立。
@@ -41,7 +41,7 @@
 
 ## G3 装载出的 IOMap 与 I/O 映射表之间没有桥
 
-`vm/loader.c:175-193` 把 IOMap 段解析进 `SasmModule.iomap`，但：
+`veri-runtime/core/loader.c:175-193` 把 IOMap 段解析进 `SasmModule.iomap`，但：
 `scale_factor` 与 `bias` 在解析时就被写死为 `1.0` / `0.0` 并跳过 16 字节（`:186-190`），
 且全仓没有任何代码把 `SasmModule.iomap` 转换成 `IOMappingTable`。
 
@@ -55,7 +55,7 @@
 
 `hs_snapshot_create` 按脏页构造快照（`snapshot.c:207`，并对 GLOBAL+FB_DATA 段整段纳入
 `:239-257`），但 `hs_dirty_mark`（`:129`）在解释器的任何 STORE 路径上都没有被调用
-（唯一调用者是 `tests/vm-tests/test_hotstandby.c`）。
+（唯一调用者是 `veri-runtime/tests/vm-tests/test_hotstandby.c`）。
 
 因此"脏页追踪"目前只在测试里由人工标记闭合，运行期语义未闭合。
 同类问题：`hs_chan_shmem_init` 把 `send`/`recv`/`last_activity` 全置 NULL（`sync.c:75-77`），
@@ -108,11 +108,11 @@
   若预览器报错，优先修 DSL 源而不是改导出件。
 - 图中所有"零调用点"结论来自全仓 `Grep`，覆盖 `.c/.h`；复现命令见 `README.md` 末尾的自检命令块。
   若后续新增其它语言的运行站入口（例如 C++/Rust 宿主），这些结论需要重跑。
-- 本轮自检修正过一处错误归因：早期版本称 `tests/vm-tests/test_vm.c` 的手工字节序列"走 CRC 放行路径
+- 本轮自检修正过一处错误归因：早期版本称 `veri-runtime/tests/vm-tests/test_vm.c` 的手工字节序列"走 CRC 放行路径
   进入解释器"，实际该文件用 `install_code()` 直接构造内存模块、从不调用 `sasm_load`。
   G2 已按可达性重写。**同类"某测试覆盖了 X"的表述应优先按调用点验证，而非按文件用途推断。**
-- 基线是 2026-10-14 的**工作树**（含未提交改动，如 `vm/safeasm_interp.c`、
-  `veristc/src/global_codegen.v` 与 v1.5 VAR_IN_OUT 相关文件）。提交后行号可能漂移，
+- 基线是 2026-10-14 的**工作树**（含未提交改动，如 `veri-runtime/core/safeasm_interp.c`、
+  `veri-stc/src/global_codegen.v` 与 v1.5 VAR_IN_OUT 相关文件）。提交后行号可能漂移，
   建议以函数名而非行号做长期锚点。
 
 ## 建议的下一步（按依赖排序）

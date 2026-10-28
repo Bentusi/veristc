@@ -14,12 +14,12 @@
 # ================================================================
 
 # ---- 自动生成的常量表: 排除出 MISRA 检查范围 ----
-# vm/crc32_table.inc 为 CRC32 查找表 (256 项十六进制常量), 由生成器产出,
+# veri-runtime/core/crc32_table.inc 为 CRC32 查找表 (256 项十六进制常量), 由生成器产出,
 # 逐条手写风格规则无意义。整个文件不纳入 MISRA 检查。
-*:vm/crc32_table.inc
+*:veri-runtime/core/crc32_table.inc
 
 # ---- cppcheck 原生 style/info 检查 (非 MISRA) ----
-# cppcheck 逐个翻译单元分析, 无法看到 tests/ 及其他模块的跨文件调用,
+# cppcheck 逐个翻译单元分析, 无法看到 veri-runtime/tests 及其他模块的跨文件调用,
 # 因此这些符号被误判为"未使用/应为 static"。实际均为公开的模块 API。
 unusedFunction
 staticFunction

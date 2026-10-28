@@ -1,0 +1,28 @@
+# Makefile.common — VeriSTC 平台三组件共享构建配置
+#
+# 被根 Makefile 与 veri-stc/Makefile、veri-runtime/Makefile 共同 include。
+# VERI_ROOT 由本文件自身位置推导，因此组件目录内可独立执行 make，也可由根 Makefile 转发。
+
+VERI_ROOT   := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+STC_DIR     = $(VERI_ROOT)/veri-stc
+RUNTIME_DIR = $(VERI_ROOT)/veri-runtime
+
+# ── 工具链 ──
+CC      = gcc
+CFLAGS  = -Wall -Wextra -std=c11 -g -O0 -I.
+AR      = ar
+ARFLAGS = rcs
+
+# 自动检测 Rocq/Coq 编译器路径；仍可通过 make COQC=/path/to/coqc 覆盖。
+COQC ?= $(shell command -v coqc 2>/dev/null || command -v rocq 2>/dev/null || echo coqc)
+ROQC  = $(COQC)
+
+# ── 统一构建输出目录（组件相对，绝对定位）──
+BUILD_DIR  = $(VERI_ROOT)/build
+BUILD_BIN  = $(BUILD_DIR)/bin
+BUILD_LIB  = $(BUILD_DIR)/lib
+BUILD_SASM = $(BUILD_DIR)/sasm
+
+# ── Sanitizer 变体 (P2: ASan/UBSan) ──
+SANITIZE_FLAGS   = -fsanitize=address,undefined -fno-omit-frame-pointer -O1
+SANITIZE_LDFLAGS = -fsanitize=address,undefined

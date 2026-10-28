@@ -13,10 +13,10 @@ description: 'Phase 2: integrate I/O mapping and RTOS abstraction for the C VM. 
 
 | 产出物 | 路径 | 内容 |
 |--------|------|------|
-| I/O 映射表生成器（编译器端） | `veristc/src/codegen.v`（扩展） | 从 ST 程序生成 `.iomap` 文件 |
-| I/O 映射层（VM 端） | `vm/io/` | 加载 `.iomap`，ST 变量↔物理通道映射 |
-| RTOS 抽象层 | `rtos/abstract.h` | `VM_Interface` 结构体定义 |
-| RT-Thread 适配 | `rtos/rtthread/` | 周期调度 + I/O 驱动任务 |
+| I/O 映射表生成器（编译器端） | `veri-stc/src/codegen.v`（扩展） | 从 ST 程序生成 `.iomap` 文件 |
+| I/O 映射层（VM 端） | `veri-runtime/io/` | 加载 `.iomap`，ST 变量↔物理通道映射 |
+| RTOS 抽象层 | `veri-runtime/rtos/abstract.h` | `VM_Interface` 结构体定义 |
+| RT-Thread 适配 | `veri-runtime/rtos/rtthread/` | 周期调度 + I/O 驱动任务 |
 
 ## 实现流程
 

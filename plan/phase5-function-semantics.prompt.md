@@ -24,19 +24,19 @@ description: 'Phase 5: restore IEC-style stateless FUNCTION semantics with real 
 
 | 模块 | 状态 |
 |------|------|
-| `veristc/src/function_check.v` | 新增：函数结果变量准备、POU 局部作用域、调用感知类型检查、函数纯性检查 |
-| `veristc/src/inline.v` | 新增 `normalize_program`：保留用户函数，展开 `CycleCounter`，不再强制单表达式内联 |
-| `veristc/src/global_codegen.v` | 新增 `compile_program_gc`：函数索引表、`CE_FUNC_CALL -> CALL`、函数结果返回协议 |
-| `veristc/src/global_codegen.v` | 修复 `ABS` 临时槽硬编码问题，新调用路径使用函数帧末尾保留的 scratch local |
-| `veristc/src/function_check.v` | 放行常数界 `FOR` 与字面量局部初值（经 `prepare_function_pou` 下推为入口 `S_ASSIGN`）；仍拒 `WHILE`/`REPEAT`/`EXIT` |
-| `vm/safeasm_interp.c` | 修复 `OP_CALL`：按函数签名 `param_count` 传参，而不是错误地按 `local_count` 弹栈 |
-| `tests/st-examples/function_control_flow.st` | 新增正向测试：局部变量、`IF/ELSIF/ELSE`、嵌套调用 |
-| `tests/st-examples/function_impure.st` | 新增负向测试：拒绝写输入参数和全局变量 |
-| `tests/st-examples/function_recursive.st` | 新增负向测试：拒绝递归函数 |
-| `tests/st-examples/function_loop.st` | 正向测试：函数内常数界 `FOR` 循环编译并在 VM 运行正确 |
-| `tests/st-examples/function_local_initializer.st` | 正向测试：函数局部变量字面量初值下推为入口赋值，编译并运行正确 |
-| `tests/vm-tests/test_vm.c` | 新增 SafeASM `CALL` 单元测试 |
-| `tests/vm-tests/test_nuclear_protection_full_e2e.c` | 更新：允许多函数 `.sasm` 模块，不再假设内联后只剩一个函数 |
+| `veri-stc/src/function_check.v` | 新增：函数结果变量准备、POU 局部作用域、调用感知类型检查、函数纯性检查 |
+| `veri-stc/src/inline.v` | 新增 `normalize_program`：保留用户函数，展开 `CycleCounter`，不再强制单表达式内联 |
+| `veri-stc/src/global_codegen.v` | 新增 `compile_program_gc`：函数索引表、`CE_FUNC_CALL -> CALL`、函数结果返回协议 |
+| `veri-stc/src/global_codegen.v` | 修复 `ABS` 临时槽硬编码问题，新调用路径使用函数帧末尾保留的 scratch local |
+| `veri-stc/src/function_check.v` | 放行常数界 `FOR` 与字面量局部初值（经 `prepare_function_pou` 下推为入口 `S_ASSIGN`）；仍拒 `WHILE`/`REPEAT`/`EXIT` |
+| `veri-runtime/core/safeasm_interp.c` | 修复 `OP_CALL`：按函数签名 `param_count` 传参，而不是错误地按 `local_count` 弹栈 |
+| `veri-stc/tests/st-examples/function_control_flow.st` | 新增正向测试：局部变量、`IF/ELSIF/ELSE`、嵌套调用 |
+| `veri-stc/tests/st-examples/function_impure.st` | 新增负向测试：拒绝写输入参数和全局变量 |
+| `veri-stc/tests/st-examples/function_recursive.st` | 新增负向测试：拒绝递归函数 |
+| `veri-stc/tests/st-examples/function_loop.st` | 正向测试：函数内常数界 `FOR` 循环编译并在 VM 运行正确 |
+| `veri-stc/tests/st-examples/function_local_initializer.st` | 正向测试：函数局部变量字面量初值下推为入口赋值，编译并运行正确 |
+| `veri-runtime/tests/vm-tests/test_vm.c` | 新增 SafeASM `CALL` 单元测试 |
+| `veri-runtime/tests/vm-tests/test_nuclear_protection_full_e2e.c` | 更新：允许多函数 `.sasm` 模块，不再假设内联后只剩一个函数 |
 
 ## 完成情况与后续前沿
 
