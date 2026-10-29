@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BlockManifest",
+  "description": "VeriIDE 算法块 manifest 协议",
+  "type": "object",
+  "required": ["name", "version", "type", "interface", "implementation"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "块名称（唯一标识）",
+      "pattern": "^[A-Z][A-Z0-9_]{0,31}$"
+    },
+    "version": {
+      "type": "string",
+      "description": "语义化版本号 (semver)",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["FUNCTION", "FUNCTION_BLOCK"],
+      "description": "块类型"
+    },
+    "description": {
+      "type": "string",
+      "description": "块描述"
+    },
+    "author": {
+      "type": "string",
+      "description": "作者"
+    },
+    "sil_level": {
+      "type": "string",
+      "enum": ["SIL1", "SIL2", "SIL3", "SIL4"],
+      "description": "安全完整性等级"
+    },
+    "interface": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "default": { "type": ["number", "boolean", "string", "null"] },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "output": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "in_out": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "type": "object",
+      "description": "可调参数（FUNCTION_BLOCK 特有）",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type", "default"],
+        "properties": {
+          "type": { "type": "string" },
+          "default": { "type": ["number", "boolean", "string"] },
+          "min": { "type": "number" },
+          "max": { "type": "number" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "required": ["source_hash", "source_path"],
+      "properties": {
+        "source_hash": {
+          "type": "string",
+          "description": "实现源文件 SHA-256",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_path": {
+          "type": "string",
+          "description": "实现源文件相对路径"
+        },
+        "language": {
+          "type": "string",
+          "enum": ["ST"],
+          "default": "ST"
+        }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "description": "静态分析结果（准入门禁）",
+      "properties": {
+        "wcet_cycles": { "type": "integer" },
+        "stack_depth": { "type": "integer" },
+        "is_pure": { "type": "boolean" },
+        "loop_bound": { "type": "integer" },
+        "compiler_version": { "type": "string" }
+      }
+    },
+    "icon": {
+      "type": "string",
+      "description": "图标 SVG 或 Unicode 字符"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "标签（用于搜索/分类）"
+    }
+  }
+}

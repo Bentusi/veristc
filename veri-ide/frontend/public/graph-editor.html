@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeriIDE - 功能图编辑器 (SCADE 风格)</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #2b2b2b;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        /* 顶部工具栏 */
+        .toolbar {
+            background: #3c3c3c;
+            padding: 8px 16px;
+            border-bottom: 1px solid #1e1e1e;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            height: 48px;
+        }
+        .toolbar button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+        .toolbar button:hover {
+            background: #1177bb;
+        }
+        .toolbar button.secondary {
+            background: #5a5a5a;
+        }
+        .toolbar button.secondary:hover {
+            background: #6a6a6a;
+        }
+        .toolbar .separator {
+            width: 1px;
+            height: 24px;
+            background: #555;
+            margin: 0 4px;
+        }
+        .toolbar .title {
+            font-weight: 600;
+            font-size: 14px;
+            margin-right: auto;
+        }
+        
+        /* 主布局 */
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        /* 左侧项目树 */
+        .project-tree {
+            width: 240px;
+            background: #252526;
+            border-right: 1px solid #1e1e1e;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-header {
+            padding: 10px 14px;
+            background: #2d2d30;
+            border-bottom: 1px solid #1e1e1e;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tree-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+        .tree-item {
+            padding: 6px 10px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tree-item:hover {
+            background: #37373d;
+        }
+        .tree-item.selected {
+            background: #094771;
+        }
+        .tree-item .icon {
+            width: 16px;
+            height: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+        
+        /* 树形分组 */
+        .tree-section {
+            margin-bottom: 8px;
+        }
+        .tree-section-header {
+            padding: 8px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #cccccc;
+            border-radius: 3px;
+            user-select: none;
+        }
+        .tree-section-header:hover {
+            background: #37373d;
+        }
+        .tree-section-icon {
+            font-size: 12px;
+        }
+        .tree-section-arrow {
+            margin-left: auto;
+            font-size: 10px;
+            transition: transform 0.2s;
+        }
+        .tree-section-arrow.collapsed {
+            transform: rotate(-90deg);
+        }
+        .tree-section-content {
+            padding-left: 12px;
+        }
+        .tree-section-content.collapsed {
+            display: none;
+        }
+        
+        /* 中间画布 */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: #1e1e1e;
+            overflow: hidden;
+        }
+        #canvas {
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+        
+        /* 右侧属性面板 */
+        .properties-panel {
+            width: 320px;
+            background: #252526;
+            border-left: 1px solid #1e1e1e;
+            display: flex;
+            flex-direction: column;
+        }
+        .properties-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .property-group {
+            margin-bottom: 16px;
+        }
+        .property-group-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #888;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+        .property-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .property-label {
+            width: 100px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .property-value {
+            flex: 1;
+        }
+        .property-value input,
+        .property-value select {
+            width: 100%;
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .property-value input:focus,
+        .property-value select:focus {
+            outline: none;
+            border-color: #0e639c;
+        }
+        
+        /* 底部 ST 预览 */
+        /* 底部面板 */
+        .bottom-panel {
+            height: 200px;
+            background: #252526;
+            border-top: 1px solid #1e1e1e;
+            display: flex;
+            flex-direction: column;
+        }
+        .tab-bar {
+            display: flex;
+            background: #2d2d30;
+            border-bottom: 1px solid #1e1e1e;
+        }
+        .tab {
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            color: #858585;
+            border-right: 1px solid #1e1e1e;
+            user-select: none;
+            transition: all 0.15s;
+        }
+        .tab:hover {
+            background: #37373d;
+            color: #cccccc;
+        }
+        .tab.active {
+            background: #252526;
+            color: #ffffff;
+            border-bottom: 2px solid #007acc;
+        }
+        .tab-content {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .tab-content.active {
+            display: flex;
+        }
+        .tab-toolbar {
+            padding: 6px 12px;
+            background: #2d2d30;
+            border-bottom: 1px solid #1e1e1e;
+            display: flex;
+            justify-content: flex-end;
+        }
+        #st-code {
+            flex: 1;
+            padding: 12px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: none;
+            resize: none;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-content {
+            flex: 1;
+            padding: 12px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #2d2d30;
+        }
+        .log-entry .log-time {
+            color: #858585;
+            margin-right: 8px;
+        }
+        .log-entry .log-message {
+            color: #d4d4d4;
+        }
+        .log-entry.info .log-message { color: #4ec9b0; }
+        .log-entry.warning .log-message { color: #dcdcaa; }
+        .log-entry.error .log-message { color: #f48771; }
+        
+        /* 状态栏 */
+        .status-bar {
+            background: #007acc;
+            color: white;
+            padding: 4px 16px;
+            font-size: 12px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+        }
+        
+        /* SVG 样式 */
+        .block {
+            cursor: move;
+            user-select: none;
+        }
+        .block rect {
+            fill: #0e639c;
+            stroke: #1177bb;
+            stroke-width: 2;
+            rx: 4;
+        }
+        .block.selected rect {
+            stroke: #ff6b6b;
+            stroke-width: 3;
+        }
+        .block text {
+            fill: white;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .block .type-text {
+            font-size: 11px;
+            font-weight: 400;
+            opacity: 0.8;
+        }
+        .port {
+            cursor: pointer;
+        }
+        .port circle {
+            fill: #4ec9b0;
+            stroke: #569cd6;
+            stroke-width: 2;
+        }
+        .port:hover circle {
+            fill: #569cd6;
+            r: 8;
+        }
+        .port.input circle {
+            fill: #4ec9b0;
+        }
+        .port.output circle {
+            fill: #ce9178;
+        }
+        .connection {
+            stroke: #4ec9b0;
+            stroke-width: 2;
+            fill: none;
+            marker-end: url(#arrowhead);
+        }
+        .connection:hover {
+            stroke-width: 3;
+            cursor: pointer;
+        }
+        .temp-connection {
+            stroke: #ce9178;
+            stroke-width: 2;
+            stroke-dasharray: 5,5;
+            fill: none;
+        }
+        
+        /* 接口管理 */
+        .interface-list {
+            margin-top: 8px;
+        }
+        .interface-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            background: #3c3c3c;
+            border-radius: 3px;
+            margin-bottom: 4px;
+            font-size: 12px;
+        }
+        .interface-item input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #d4d4d4;
+            font-size: 12px;
+        }
+        .interface-item select {
+            width: 80px;
+            background: #2b2b2b;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+        .interface-item button {
+            background: #c0392b;
+            border: none;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .add-interface-btn {
+            width: 100%;
+            background: #27ae60;
+            border: none;
+            color: white;
+            padding: 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .add-interface-btn:hover {
+            background: #2ecc71;
+        }
+        
+        /* 参数编辑 */
+        .param-list {
+            margin-top: 8px;
+        }
+        .param-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            background: #3c3c3c;
+            border-radius: 3px;
+            margin-bottom: 4px;
+            font-size: 12px;
+        }
+        .param-item input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #d4d4d4;
+            font-size: 12px;
+        }
+        .param-item button {
+            background: #c0392b;
+            border: none;
+            color: white;
+            width: 20px;
+            height: 20px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .add-param-btn {
+            width: 100%;
+            background: #27ae60;
+            border: none;
+            color: white;
+            padding: 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .add-param-btn:hover {
+            background: #2ecc71;
+        }
+        
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+        <div class="title">VeriIDE - 功能图编辑器</div>
+    </div>
+    
+    <!-- 主布局 -->
+    <div class="main">
+        <!-- 左侧项目树 -->
+        <div class="project-tree">
+            <div class="panel-header">项目结构</div>
+            <div class="tree-content">
+                <!-- 组态图页 -->
+                <div class="tree-section">
+                    <div class="tree-section-header" onclick="toggleSection('pages')">
+                        <span class="tree-section-icon"></span>
+                        <span>组态图页</span>
+                        <span class="tree-section-arrow" id="pages-arrow">▼</span>
+                    </div>
+                    <div class="tree-section-content" id="pages-content">
+                        <div class="tree-item selected" onclick="selectPage('main')">
+                            <span class="icon">📊</span>
+                            <span>MAIN (主程序)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 变量信息 -->
+                <div class="tree-section">
+                    <div class="tree-section-header" onclick="toggleSection('variables')">
+                        <span class="tree-section-icon"></span>
+                        <span>变量信息</span>
+                        <span class="tree-section-arrow" id="variables-arrow">▼</span>
+                    </div>
+                    <div class="tree-section-content" id="variables-content">
+                        <div class="tree-item" onclick="selectTreeItem('input-vars')">
+                            <span class="icon">️</span>
+                            <span>输入变量 (<span id="input-var-count">0</span>)</span>
+                        </div>
+                        <div class="tree-item" onclick="selectTreeItem('output-vars')">
+                            <span class="icon">️</span>
+                            <span>输出变量 (<span id="output-var-count">0</span>)</span>
+                        </div>
+                        <div class="tree-item" onclick="selectTreeItem('inout-vars')">
+                            <span class="icon">🔄</span>
+                            <span>输入输出变量 (<span id="inout-var-count">0</span>)</span>
+                        </div>
+                        <div class="tree-item" onclick="selectTreeItem('local-vars')">
+                            <span class="icon">📦</span>
+                            <span>局部变量 (<span id="local-var-count">0</span>)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 功能块统计 -->
+                <div class="tree-section">
+                    <div class="tree-section-header" onclick="toggleSection('blocks')">
+                        <span class="tree-section-icon">📊</span>
+                        <span>功能块统计</span>
+                        <span class="tree-section-arrow" id="blocks-arrow">▼</span>
+                    </div>
+                    <div class="tree-section-content" id="blocks-content">
+                        <div class="tree-item">
+                            <span class="icon"></span>
+                            <span>总块数 (<span id="total-block-count">0</span>)</span>
+                        </div>
+                        <div class="tree-item">
+                            <span class="icon"></span>
+                            <span>连线数 (<span id="total-connection-count">0</span>)</span>
+                        </div>
+                        <div id="block-type-stats"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 中间画布 -->
+        <div class="canvas-container">
+            <svg id="canvas">
+                <defs>
+                    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
+                        <polygon points="0 0, 10 3, 0 6" fill="#4ec9b0" />
+                    </marker>
+                </defs>
+                <g id="connections-layer"></g>
+                <g id="blocks-layer"></g>
+                <line id="temp-connection" class="temp-connection" style="display:none" />
+            </svg>
+        </div>
+        
+        <!-- 右侧属性面板 -->
+        <div class="properties-panel">
+            <div class="panel-header">属性</div>
+            <div class="properties-content" id="properties-content">
+                <div class="empty-state">选择一个块以编辑属性</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 底部面板 -->
+    <div class="bottom-panel">
+        <div class="tab-bar">
+            <div class="tab active" data-tab="st-code" onclick="switchTab('st-code')">生成的 ST 代码</div>
+            <div class="tab" data-tab="operation-log" onclick="switchTab('operation-log')">操作信息</div>
+            <div class="tab" data-tab="diagnostics" onclick="switchTab('diagnostics')">问题</div>
+        </div>
+        
+        <div class="tab-content active" id="tab-st-code">
+            <div class="tab-toolbar">
+                <button onclick="copyST()" class="secondary" style="padding: 4px 10px; font-size: 11px;">复制</button>
+            </div>
+            <textarea id="st-code" readonly></textarea>
+        </div>
+        
+        <div class="tab-content" id="tab-operation-log">
+            <div class="tab-toolbar">
+                <button onclick="clearLog()" class="secondary" style="padding: 4px 10px; font-size: 11px;">清空</button>
+            </div>
+            <div id="operation-log" class="log-content"></div>
+        </div>
+        
+        <div class="tab-content" id="tab-diagnostics">
+            <div class="empty-state" style="padding: 20px; text-align: center; color: #666;">暂无问题</div>
+        </div>
+    </div>
+    
+    <!-- 状态栏 -->
+    <div class="status-bar">
+        <span id="status">就绪</span>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const blocksLayer = document.getElementById('blocks-layer');
+        const connectionsLayer = document.getElementById('connections-layer');
+        const tempConnection = document.getElementById('temp-connection');
+        const stCodeArea = document.getElementById('st-code');
+        const status = document.getElementById('status');
+        const propertiesContent = document.getElementById('properties-content');
+
+        let graph = {
+            version: "1.0",
+            type: "FC",
+            name: "NEW_PROGRAM",
+            interface: { input: [], output: [], in_out: [] },
+            blocks: [],
+            connections: []
+        };
+
+        let dragging = null;
+        let connecting = null;
+        let selectedBlock = null;
+        let blockIdCounter = 0;
+
+        function addBlock(type) {
+            const id = `${type.toLowerCase()}${blockIdCounter++}`;
+            const block = {
+                id: id,
+                type: type,
+                position: { x: 100 + Math.random() * 200, y: 100 + Math.random() * 200 },
+                parameters: {}
+            };
+            graph.blocks.push(block);
+            render();
+            updateST();
+            updateCounts();
+            selectBlock(block.id);
+            setStatus(`添加块：${id}`);
+        }
+
+        function selectBlock(blockId) {
+            selectedBlock = blockId;
+            render();
+            showProperties(blockId);
+        }
+
+        function showProperties(blockId) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (!block) {
+                propertiesContent.innerHTML = '<div class="empty-state">选择一个块以编辑属性</div>';
+                return;
+            }
+
+            let html = `
+                <div class="property-group">
+                    <div class="property-group-title">基本信息</div>
+                    <div class="property-row">
+                        <div class="property-label">ID</div>
+                        <div class="property-value"><input type="text" value="${block.id}" onchange="updateBlockId('${block.id}', this.value)" /></div>
+                    </div>
+                    <div class="property-row">
+                        <div class="property-label">类型</div>
+                        <div class="property-value"><input type="text" value="${block.type}" readonly /></div>
+                    </div>
+                    <div class="property-row">
+                        <div class="property-label">X 坐标</div>
+                        <div class="property-value"><input type="number" value="${block.position.x}" onchange="updateBlockPosition('${block.id}', 'x', this.value)" /></div>
+                    </div>
+                    <div class="property-row">
+                        <div class="property-label">Y 坐标</div>
+                        <div class="property-value"><input type="number" value="${block.position.y}" onchange="updateBlockPosition('${block.id}', 'y', this.value)" /></div>
+                    </div>
+                </div>
+                
+                <div class="property-group">
+                    <div class="property-group-title">参数</div>
+                    <div class="param-list">
+            `;
+
+            for (const [key, value] of Object.entries(block.parameters)) {
+                html += `
+                    <div class="param-item">
+                        <input type="text" value="${key}" onchange="updateParamKey('${block.id}', '${key}', this.value)" />
+                        <input type="text" value="${value}" onchange="updateParamValue('${block.id}', '${key}', this.value)" />
+                        <button onclick="removeParam('${block.id}', '${key}')">×</button>
+                    </div>
+                `;
+            }
+
+            html += `
+                    </div>
+                    <button class="add-param-btn" onclick="addParam('${block.id}')">+ 添加参数</button>
+                </div>
+            `;
+
+            propertiesContent.innerHTML = html;
+        }
+
+        function updateBlockId(oldId, newId) {
+            const block = graph.blocks.find(b => b.id === oldId);
+            if (block) {
+                block.id = newId;
+                graph.connections.forEach(c => {
+                    if (c.from.block === oldId) c.from.block = newId;
+                    if (c.to.block === oldId) c.to.block = newId;
+                });
+                render();
+                updateST();
+                showProperties(newId);
+            }
+        }
+
+        function updateBlockPosition(blockId, axis, value) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (block) {
+                block.position[axis] = parseFloat(value);
+                render();
+            }
+        }
+
+        function addParam(blockId) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (block) {
+                const key = prompt('参数名:');
+                if (key) {
+                    const value = prompt('参数值:');
+                    if (value !== null) {
+                        block.parameters[key] = isNaN(value) ? value : parseFloat(value);
+                        render();
+                        updateST();
+                        showProperties(blockId);
+                    }
+                }
+            }
+        }
+
+        function updateParamKey(blockId, oldKey, newKey) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (block && block.parameters[oldKey] !== undefined) {
+                block.parameters[newKey] = block.parameters[oldKey];
+                delete block.parameters[oldKey];
+                updateST();
+            }
+        }
+
+        function updateParamValue(blockId, key, value) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (block) {
+                block.parameters[key] = isNaN(value) ? value : parseFloat(value);
+                updateST();
+            }
+        }
+
+        function removeParam(blockId, key) {
+            const block = graph.blocks.find(b => b.id === blockId);
+            if (block) {
+                delete block.parameters[key];
+                render();
+                updateST();
+                showProperties(blockId);
+            }
+        }
+
+        function render() {
+            blocksLayer.innerHTML = '';
+            connectionsLayer.innerHTML = '';
+
+            graph.connections.forEach(conn => {
+                renderConnection(conn);
+            });
+
+            graph.blocks.forEach(block => {
+                renderBlock(block);
+            });
+        }
+
+        function renderBlock(block) {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', `block ${selectedBlock === block.id ? 'selected' : ''}`);
+            g.setAttribute('data-id', block.id);
+
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', block.position.x);
+            rect.setAttribute('y', block.position.y);
+            rect.setAttribute('width', 120);
+            rect.setAttribute('height', 60);
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('x', block.position.x + 60);
+            text.setAttribute('y', block.position.y + 25);
+            text.setAttribute('text-anchor', 'middle');
+            text.textContent = block.id;
+
+            const typeText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            typeText.setAttribute('class', 'type-text');
+            typeText.setAttribute('x', block.position.x + 60);
+            typeText.setAttribute('y', block.position.y + 45);
+            typeText.setAttribute('text-anchor', 'middle');
+            typeText.textContent = block.type;
+
+            g.appendChild(rect);
+            g.appendChild(text);
+            g.appendChild(typeText);
+
+            const inputPort = createPort(block.position.x, block.position.y + 30, 'input', block.id);
+            const outputPort = createPort(block.position.x + 120, block.position.y + 30, 'output', block.id);
+
+            g.appendChild(inputPort);
+            g.appendChild(outputPort);
+
+            g.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('port')) return;
+                selectBlock(block.id);
+                dragging = { block, offsetX: e.clientX - block.position.x, offsetY: e.clientY - block.position.y };
+                e.preventDefault();
+            });
+
+            blocksLayer.appendChild(g);
+        }
+
+        function createPort(x, y, type, blockId) {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.setAttribute('class', `port ${type}`);
+            g.setAttribute('data-block', blockId);
+            g.setAttribute('data-type', type);
+
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', x);
+            circle.setAttribute('cy', y);
+            circle.setAttribute('r', 6);
+
+            g.appendChild(circle);
+
+            g.addEventListener('mousedown', (e) => {
+                connecting = { blockId, type, x, y };
+                tempConnection.setAttribute('x1', x);
+                tempConnection.setAttribute('y1', y);
+                tempConnection.setAttribute('x2', x);
+                tempConnection.setAttribute('y2', y);
+                tempConnection.style.display = 'block';
+                e.stopPropagation();
+                e.preventDefault();
+            });
+
+            return g;
+        }
+
+        function renderConnection(conn) {
+            const fromBlock = graph.blocks.find(b => b.id === conn.from.block);
+            const toBlock = graph.blocks.find(b => b.id === conn.to.block);
+
+            if (!fromBlock || !toBlock) return;
+
+            const x1 = fromBlock.position.x + 120;
+            const y1 = fromBlock.position.y + 30;
+            const x2 = toBlock.position.x;
+            const y2 = toBlock.position.y + 30;
+
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('class', 'connection');
+            path.setAttribute('d', `M ${x1} ${y1} C ${x1 + 50} ${y1}, ${x2 - 50} ${y2}, ${x2} ${y2}`);
+
+            connectionsLayer.appendChild(path);
+        }
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (dragging) {
+                dragging.block.position.x = e.clientX - dragging.offsetX;
+                dragging.block.position.y = e.clientY - dragging.offsetY;
+                render();
+                updateST();
+                if (selectedBlock === dragging.block.id) {
+                    showProperties(dragging.block.id);
+                }
+            }
+            if (connecting) {
+                tempConnection.setAttribute('x2', e.clientX);
+                tempConnection.setAttribute('y2', e.clientY);
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            if (connecting) {
+                const target = e.target.closest('.port');
+                if (target) {
+                    const targetBlock = target.getAttribute('data-block');
+                    const targetType = target.getAttribute('data-type');
+
+                    if (connecting.type === 'output' && targetType === 'input') {
+                        graph.connections.push({
+                            from: { block: connecting.blockId, port: 'OUT' },
+                            to: { block: targetBlock, port: 'IN' }
+                        });
+                        render();
+                        updateST();
+                        setStatus(`连接：${connecting.blockId} → ${targetBlock}`);
+                    }
+                }
+                connecting = null;
+                tempConnection.style.display = 'none';
+            }
+            dragging = null;
+        });
+
+        function updateST() {
+            const st = generateST(graph);
+            stCodeArea.value = st;
+        }
+
+        function generateST(graph) {
+            let lines = [];
+            lines.push(`PROGRAM ${graph.name}`);
+
+            if (graph.blocks.length > 0) {
+                lines.push('VAR');
+                graph.blocks.forEach(b => {
+                    lines.push(`    ${b.id} : ${b.type};`);
+                });
+                lines.push('END_VAR');
+            }
+
+            lines.push('');
+
+            const sorted = topologicalSort(graph);
+            sorted.forEach(blockId => {
+                const block = graph.blocks.find(b => b.id === blockId);
+                const inputs = graph.connections.filter(c => c.to.block === blockId);
+                const args = inputs.map(c => {
+                    if (c.from.block === '__interface__') {
+                        return `${c.to.port} := ${c.from.port}`;
+                    }
+                    return `${c.to.port} := ${c.from.block}.${c.from.port}`;
+                });
+
+                const params = Object.entries(block.parameters).map(([k, v]) => {
+                    if (typeof v === 'string') return `${k} := '${v}'`;
+                    return `${k} := ${v}`;
+                });
+
+                const allArgs = [...args, ...params];
+                lines.push(`${blockId}(${allArgs.join(', ')});`);
+            });
+
+            lines.push('END_PROGRAM');
+            return lines.join('\n');
+        }
+
+        function topologicalSort(graph) {
+            const inDegree = {};
+            const adj = {};
+            graph.blocks.forEach(b => {
+                inDegree[b.id] = 0;
+                adj[b.id] = [];
+            });
+
+            graph.connections.forEach(c => {
+                if (c.from.block !== '__interface__' && c.to.block !== '__interface__') {
+                    adj[c.from.block].push(c.to.block);
+                    inDegree[c.to.block]++;
+                }
+            });
+
+            const queue = graph.blocks.filter(b => inDegree[b.id] === 0).map(b => b.id);
+            const result = [];
+
+            while (queue.length > 0) {
+                const node = queue.shift();
+                result.push(node);
+                adj[node].forEach(neighbor => {
+                    inDegree[neighbor]--;
+                    if (inDegree[neighbor] === 0) {
+                        queue.push(neighbor);
+                    }
+                });
+            }
+
+            return result;
+        }
+
+        function updateCounts() {
+            // 更新功能块统计
+            document.getElementById('total-block-count').textContent = graph.blocks.length;
+            document.getElementById('total-connection-count').textContent = graph.connections.length;
+            
+            // 更新变量计数
+            document.getElementById('input-var-count').textContent = graph.interface.input.length;
+            document.getElementById('output-var-count').textContent = graph.interface.output.length;
+            document.getElementById('inout-var-count').textContent = graph.interface.in_out.length;
+            document.getElementById('local-var-count').textContent = 0; // 局部变量暂未实现
+            
+            // 更新功能块类型统计
+            const typeStats = {};
+            graph.blocks.forEach(block => {
+                typeStats[block.type] = (typeStats[block.type] || 0) + 1;
+            });
+            
+            const statsContainer = document.getElementById('block-type-stats');
+            if (Object.keys(typeStats).length === 0) {
+                statsContainer.innerHTML = '<div class="tree-item" style="color: #666; font-size: 11px; padding: 4px 10px;">暂无功能块</div>';
+            } else {
+                statsContainer.innerHTML = Object.entries(typeStats)
+                    .map(([type, count]) => `
+                        <div class="tree-item" style="padding: 4px 10px 4px 20px; font-size: 12px;">
+                            <span class="icon"></span>
+                            <span>${type}: ${count}</span>
+                        </div>
+                    `)
+                    .join('');
+            }
+        }
+
+        function toggleSection(sectionId) {
+            const content = document.getElementById(`${sectionId}-content`);
+            const arrow = document.getElementById(`${sectionId}-arrow`);
+            
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                arrow.classList.remove('collapsed');
+            } else {
+                content.classList.add('collapsed');
+                arrow.classList.add('collapsed');
+            }
+        }
+
+        function selectPage(pageId) {
+            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('selected'));
+            event.currentTarget.classList.add('selected');
+            setStatus(`切换图页：${pageId}`);
+        }
+
+        function selectTreeItem(item) {
+            document.querySelectorAll('.tree-item').forEach(el => el.classList.remove('selected'));
+            event.currentTarget.classList.add('selected');
+            
+            if (item === 'interface' || item === 'input-vars' || item === 'output-vars' || item === 'inout-vars') {
+                showInterfaceEditor();
+            }
+        }
+
+        function showInterfaceEditor() {
+            let html = `
+                <div class="property-group">
+                    <div class="property-group-title">输入端口 (VAR_INPUT)</div>
+                    <div class="interface-list">
+            `;
+
+            graph.interface.input.forEach((port, idx) => {
+                html += `
+                    <div class="interface-item">
+                        <input type="text" value="${port.name}" onchange="updateInterfacePort('input', ${idx}, 'name', this.value)" />
+                        <select onchange="updateInterfacePort('input', ${idx}, 'type', this.value)">
+                            <option value="BOOL" ${port.type === 'BOOL' ? 'selected' : ''}>BOOL</option>
+                            <option value="DINT" ${port.type === 'DINT' ? 'selected' : ''}>DINT</option>
+                            <option value="REAL" ${port.type === 'REAL' ? 'selected' : ''}>REAL</option>
+                            <option value="STRING" ${port.type === 'STRING' ? 'selected' : ''}>STRING</option>
+                        </select>
+                        <button onclick="removeInterfacePort('input', ${idx})">×</button>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                    <button class="add-interface-btn" onclick="addInterfacePort('input')">+ 添加输入端口</button>
+                </div>
+                
+                <div class="property-group">
+                    <div class="property-group-title">输出端口 (VAR_OUTPUT)</div>
+                    <div class="interface-list">
+            `;
+
+            graph.interface.output.forEach((port, idx) => {
+                html += `
+                    <div class="interface-item">
+                        <input type="text" value="${port.name}" onchange="updateInterfacePort('output', ${idx}, 'name', this.value)" />
+                        <select onchange="updateInterfacePort('output', ${idx}, 'type', this.value)">
+                            <option value="BOOL" ${port.type === 'BOOL' ? 'selected' : ''}>BOOL</option>
+                            <option value="DINT" ${port.type === 'DINT' ? 'selected' : ''}>DINT</option>
+                            <option value="REAL" ${port.type === 'REAL' ? 'selected' : ''}>REAL</option>
+                            <option value="STRING" ${port.type === 'STRING' ? 'selected' : ''}>STRING</option>
+                        </select>
+                        <button onclick="removeInterfacePort('output', ${idx})">×</button>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                    <button class="add-interface-btn" onclick="addInterfacePort('output')">+ 添加输出端口</button>
+                </div>
+            `;
+
+            propertiesContent.innerHTML = html;
+        }
+
+        function addInterfacePort(direction) {
+            const name = prompt('端口名:');
+            if (name) {
+                graph.interface[direction].push({ name, type: 'DINT' });
+                updateST();
+                showInterfaceEditor();
+                setStatus(`添加${direction === 'input' ? '输入' : '输出'}端口：${name}`);
+            }
+        }
+
+        function updateInterfacePort(direction, idx, field, value) {
+            graph.interface[direction][idx][field] = value;
+            updateST();
+        }
+
+        function removeInterfacePort(direction, idx) {
+            graph.interface[direction].splice(idx, 1);
+            updateST();
+            showInterfaceEditor();
+        }
+
+        function loadExample() {
+            graph = {
+                version: "1.0",
+                type: "FC",
+                name: "PID_CONTROL",
+                interface: {
+                    input: [
+                        { name: "setpoint", type: "DINT" },
+                        { name: "measurement", type: "DINT" }
+                    ],
+                    output: [
+                        { name: "control_output", type: "DINT" }
+                    ],
+                    in_out: []
+                },
+                blocks: [
+                    { id: "pid1", type: "PID", position: { x: 200, y: 100 }, parameters: { kp: 10, ki: 1 } },
+                    { id: "limiter1", type: "LIMITER", position: { x: 400, y: 100 }, parameters: { min: 0, max: 100 } }
+                ],
+                connections: [
+                    { from: { block: "pid1", port: "OUT" }, to: { block: "limiter1", port: "IN" } }
+                ]
+            };
+            blockIdCounter = 2;
+            render();
+            updateST();
+            updateCounts();
+            setStatus('加载示例：PID_CONTROL');
+        }
+
+        function clearCanvas() {
+            if (confirm('确定要清空画布吗？')) {
+                graph = {
+                    version: "1.0",
+                    type: "FC",
+                    name: "NEW_PROGRAM",
+                    interface: { input: [], output: [], in_out: [] },
+                    blocks: [],
+                    connections: []
+                };
+                blockIdCounter = 0;
+                selectedBlock = null;
+                render();
+                updateST();
+                updateCounts();
+                propertiesContent.innerHTML = '<div class="empty-state">选择一个块以编辑属性</div>';
+                setStatus('画布已清空');
+            }
+        }
+
+        function exportJSON() {
+            const json = JSON.stringify(graph, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${graph.name}.fc.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setStatus('导出 JSON');
+        }
+
+        function importJSON() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        graph = JSON.parse(event.target.result);
+                        render();
+                        updateST();
+                        updateCounts();
+                        setStatus('导入 JSON');
+                    } catch (err) {
+                        alert('JSON 解析失败');
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        function copyST() {
+            stCodeArea.select();
+            document.execCommand('copy');
+            setStatus('ST 代码已复制');
+        }
+
+        function switchTab(tabId) {
+            // 更新标签状态
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelector(`.tab[data-tab="${tabId}"]`).classList.add('active');
+            
+            // 更新内容显示
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        }
+
+        function addLogEntry(message, type = 'info') {
+            const logContent = document.getElementById('operation-log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="log-time">[${time}]</span><span class="log-message">${message}</span>`;
+            
+            logContent.appendChild(entry);
+            logContent.scrollTop = logContent.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('operation-log').innerHTML = '';
+        }
+
+        function setStatus(msg) {
+            status.textContent = msg;
+            addLogEntry(msg, 'info');
+        }
+
+        updateST();
+        updateCounts();
+    </script>
+</body>
+</html>

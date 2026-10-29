@@ -4,8 +4,8 @@ VeriIDE = **Veri**fied **I**ntegrated **D**evelopment **E**nvironment。
 前后端分离的 Web 工程站：图形组态 → 代码编译 → 仿真验证 → 下装运行，
 并提供自定义算法块与算法库扩展。
 
-**当前状态：G2 W1-W2 完成（2026-10-29）。** 功能图 Schema + 图→ST 生成器已交付，72 项协议测试全绿（G1: 45 + G2: 27）。
-G0 前置能力已补齐（提交 `0155343`），G1 工程站骨架已完成，G2 图形组态方案见 [plan/phase6-g2-technical-plan.md](../plan/phase6-g2-technical-plan.md)。
+**当前状态：G5 W1 完成（2026-10-29）。** 库注册服务 + 块 manifest 协议 + 准入门禁已交付，194 项协议测试全绿（G1: 45 + G2: 36 + G3: 24 + G3.5: 32 + G4: 26 + G5: 31）。
+G0 前置能力已补齐（提交 `0155343`），G1 工程站骨架已完成，G2 图形组态已完成，G3 仿真验证已完成，G3.5 孪生模式已完成，G4 下装运行已完成，G5 库与扩展 W1 完成。
 
 ## 快速开始
 
@@ -49,6 +49,63 @@ python3 -m http.server 8080
 
 # 浏览器打开 http://localhost:8080
 ```
+
+## G5 W1 交付物
+
+- **块 manifest 协议**（`schema/block.schema.json`）：端口/类型/默认参数/图标/SIL 属性/semver/实现源哈希
+- **Manifest 模型**（`src/veri_ide/backend/registry/manifest.py`）：`BlockManifest` / `PortDef` / `InterfaceDef` / `ImplementationDef` / `AnalysisResult`
+- **库注册服务**（`src/veri_ide/backend/registry/service.py`）：`RegistryService` / 注册/查询/列出/搜索/卸载 + 内容寻址存储（SHA-256）
+- **Lock 文件管理**（`src/veri_ide/backend/registry/lock.py`）：`LockFile` / `LockEntry` / lib.lock.yaml 读写
+- **准入门禁**（`src/veri_ide/backend/registry/admission.py`）：`AdmissionGate` / WCET/栈深/纯性/循环上界检查
+- **协议测试门禁**（`tests/test_registry.py`）：31 项 pytest 用例
+
+## G4 W2 交付物
+
+- **后端 API 端点**（`src/veri_ide/api/server.py`）：`POST /deploy` / `POST /keys/generate` / `GET /keys` / `GET /keys/{name}` / `DELETE /keys/{name}`
+- **前端 API 集成**（`frontend/public/download-wizard.html`）：`apiCall()` / `loadKeys()` / `generateKey()` / `startDeploy()` 异步调用
+- **密钥管理 UI**：步骤 2 密钥下拉框 + 生成新密钥按钮 + 自动加载密钥列表
+- **协议测试门禁**（`tests/test_deploy_service.py` + `tests/test_key_manager.py`）：26 项 pytest 用例
+
+## G4 W1 交付物
+
+- **DeployService 下装服务**（`src/veri_ide/backend/deploy/service.py`）：`DeployService` / `DeployResult` / `TargetConfig` / 帧流生成 + 管道/文件发送
+- **密钥管理服务**（`src/veri_ide/backend/deploy/key_manager.py`）：`KeyManager` / 生成/存储/加载/删除 HMAC-SHA256 密钥
+- **下装向导 UI**（`frontend/public/download-wizard.html`）：5 步骤向导（目标配置/密钥选择/下装参数/执行/完成）
+- **协议测试门禁**（`tests/test_deploy_service.py` + `tests/test_key_manager.py`）：26 项 pytest 用例
+
+## G3.5 W2 交付物
+
+- **前端生模式 UI**（`frontend/public/waveform-viewer.html`）：被控对象编辑器 + 孪生仿真按钮 + 统计面板 + HTML 报告导出
+- **模式切换**：干跑模式（无 plant）/ 孪生模式（闭环仿真）指示器
+
+## G3.5 W1 交付物
+
+- **Plant 模型管理**（`src/veri_ide/backend/sim/plant.py`）：`PlantService` / `PlantModel` / `PlantChannel` / 解析/校验/生成 .plant 文件
+- **孪生模式仿真**（`src/veri_ide/backend/sim/service.py`）：`SimService.run_twin_simulation` / 先编译 ST→.sasm 再闭环仿真
+- **统计模块**（`src/veri_ide/backend/sim/statistics.py`）：`StatisticsService` / 均值/方差/峰值/稳态时间/上升时间/振荡检测
+- **协议测试门禁**（`tests/test_plant_service.py` + `tests/test_statistics.py`）：32 项 pytest 用例
+
+## G3 W2 交付物
+
+- **基线管理**（`src/veri_ide/backend/sim/baseline.py`）：`Baseline` / `BaselineManager` / `save_baseline` / `load_baseline` / `delete_baseline` / `list_baselines`
+- **偏差检测**（`src/veri_ide/backend/sim/baseline.py`）：`compute_deviation` / `find_max_deviation` / `check_threshold`
+- **协议测试门禁**（`tests/test_baseline.py`）：14 项 pytest 用例，覆盖基线 CRUD + 偏差计算 + 阈值检测
+
+## G3 W1 交付物
+
+- **sim-svc 仿真服务**（`src/veri_ide/backend/sim/service.py`）：`SimService` / `SimulationResult` / `run_simulation`
+- **波形视图**（`frontend/public/waveform-viewer.html`）：SVG 波形渲染 + 统计信息 + 工具栏
+- **协议测试门禁**（`tests/test_sim_service.py`）：10 项 pytest 用例
+
+## G2 W4 交付物
+
+- **功能图编辑器**（`frontend/public/graph-editor.html`）：SVG 画布 + 拖拽编辑 + 实时 ST 预览
+- **使用说明**（`frontend/public/GRAPH_EDITOR.md`）：功能/数据格式/已知限制/后续扩展
+
+## G2 W3 交付物
+
+- **ST→图反向解析器**（`src/veri_ide/backend/gen/st_to_graph.py`）：`parse_st_to_graph` / `normalize_graph_for_comparison`
+- **往返恒等测试**（`tests/test_roundtrip.py`）：9 项 pytest 用例，验证图→ST→图拓扑等价
 
 ## G2 W1-W2 交付物
 

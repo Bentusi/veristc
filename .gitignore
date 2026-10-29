@@ -134,3 +134,36 @@ __pycache__/
 .misra_reports/
 docs/veristc-paper.html
 .vorg.db
+
+# ================================================================
+# VeriIDE 工程站组件 (Phase 6)
+# ================================================================
+
+# Node.js 依赖
+veri-ide/node_modules/
+veri-ide/web/node_modules/
+
+# Tauri 构建产物
+veri-ide/src-tauri/target/
+veri-ide/src-tauri/WixTools/
+
+# Vite 构建输出
+veri-ide/web/dist/
+
+# Python 包信息
+veri-ide/src/veri_ide.egg-info/
+veri-ide/veri_ide.egg-info/
+
+# PySide6 桌面应用（已迁移到 Tauri，保留代码但忽略构建产物）
+veri-ide/src/veri_ide/desktop/__pycache__/
+veri-ide/src/veri_ide/desktop/*.pyc
+
+# 前端构建临时文件
+veri-ide/.pnpm-store/
+veri-ide/pnpm-lock.yaml
+
+# IDE 完成报告（可选：如需保留请注释掉）
+# veri-ide/G*_COMPLETION_REPORT.md
+
+# 前端原型 HTML（已迁移到 React 组件）
+# veri-ide/frontend/public/*.html

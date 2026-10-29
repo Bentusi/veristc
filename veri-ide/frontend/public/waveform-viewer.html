@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeriIDE - 波形视图（孪生模式）</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .toolbar {
+            background: #252526;
+            padding: 10px 20px;
+            border-bottom: 1px solid #3c3c3c;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .toolbar button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .toolbar button:hover {
+            background: #1177bb;
+        }
+        .toolbar button.secondary {
+            background: #3c3c3c;
+        }
+        .toolbar button.secondary:hover {
+            background: #555;
+        }
+        .toolbar input, .toolbar select {
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .toolbar label {
+            font-size: 13px;
+            color: #aaa;
+        }
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .plant-panel {
+            background: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            padding: 15px 20px;
+            display: none;
+        }
+        .plant-panel.show {
+            display: block;
+        }
+        .plant-panel h3 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #4ec9b0;
+        }
+        .plant-channels {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .plant-channel {
+            display: grid;
+            grid-template-columns: 60px 80px 100px 80px 80px 80px 80px 80px 80px 40px;
+            gap: 8px;
+            align-items: center;
+            font-size: 12px;
+        }
+        .plant-channel input, .plant-channel select {
+            background: #3c3c3c;
+            border: 1px solid #555;
+            color: #d4d4d4;
+            padding: 4px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .plant-channel button {
+            background: #d83b01;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .plant-channel button:hover {
+            background: #f14c0c;
+        }
+        .plant-actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+        }
+        .waveform-container {
+            flex: 1;
+            background: #1e1e1e;
+            overflow: auto;
+            padding: 20px;
+        }
+        .waveform {
+            margin-bottom: 20px;
+            background: #252526;
+            border: 1px solid #3c3c3c;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .waveform-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .waveform-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .waveform-stats {
+            font-size: 12px;
+            color: #888;
+        }
+        .waveform-stats-detail {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 8px;
+            padding: 8px;
+            background: #1e1e1e;
+            border-radius: 3px;
+            font-size: 11px;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 10px;
+        }
+        .stat-value {
+            color: #4ec9b0;
+            font-weight: 600;
+        }
+        svg {
+            width: 100%;
+            height: 150px;
+            background: #1e1e1e;
+        }
+        .axis {
+            stroke: #555;
+            stroke-width: 1;
+        }
+        .grid {
+            stroke: #333;
+            stroke-width: 1;
+            stroke-dasharray: 2,2;
+        }
+        .waveform-line {
+            fill: none;
+            stroke: #4ec9b0;
+            stroke-width: 2;
+        }
+        .waveform-line.baseline {
+            stroke: #569cd6;
+            stroke-dasharray: 4,2;
+        }
+        .data-point {
+            fill: #4ec9b0;
+            cursor: pointer;
+        }
+        .data-point:hover {
+            r: 6;
+            fill: #569cd6;
+        }
+        .tooltip {
+            position: absolute;
+            background: #2d2d30;
+            border: 1px solid #555;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
+        .status-bar {
+            background: #007acc;
+            color: white;
+            padding: 5px 20px;
+            font-size: 12px;
+        }
+        .mode-indicator {
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .mode-indicator.dry_run {
+            background: #3c3c3c;
+            color: #aaa;
+        }
+        .mode-indicator.twin {
+            background: #0e639c;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <button onclick="loadExample()">加载示例</button>
+        <button onclick="runDrySimulation()">干跑仿真</button>
+        <button onclick="togglePlantPanel()">孪生模式</button>
+        <button onclick="runTwinSimulation()" class="secondary">运行孪生仿真</button>
+        <button onclick="saveBaseline()" class="secondary">保存基线</button>
+        <button onclick="loadBaseline()" class="secondary">加载基线</button>
+        <button onclick="exportReport()" class="secondary">导出报告</button>
+        <button onclick="clearWaveforms()" class="secondary">清空</button>
+        <label>周期数:</label>
+        <input type="number" id="cycles" value="12" min="1" max="1000" style="width: 80px;" />
+        <label>变量:</label>
+        <input type="text" id="watchVars" value="pid1.OUT,setpoint,measurement" placeholder="逗号分隔" style="width: 200px;" />
+        <span id="modeIndicator" class="mode-indicator dry_run">干跑模式</span>
+    </div>
+    
+    <div class="plant-panel" id="plantPanel">
+        <h3>被控对象模型（.plant 配置）</h3>
+        <div class="plant-channels" id="plantChannels"></div>
+        <div class="plant-actions">
+            <button onclick="addPlantChannel()">添加通道</button>
+            <button onclick="loadDefaultPlant()">加载默认模型</button>
+            <button onclick="validatePlant()">校验</button>
+        </div>
+    </div>
+    
+    <div class="main">
+        <div class="waveform-container" id="waveform-container">
+            <div style="text-align: center; padding: 40px; color: #666;">
+                点击"加载示例"或"运行仿真"查看波形
+            </div>
+        </div>
+    </div>
+    
+    <div class="status-bar">
+        <span id="status">就绪</span>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        let waveforms = {};
+        let baseline = null;
+        let cycles = 12;
+        let simulationMode = 'dry_run';
+        let plantModel = {
+            name: 'custom',
+            description: '',
+            channels: []
+        };
+        let statistics = {};
+
+        function togglePlantPanel() {
+            const panel = document.getElementById('plantPanel');
+            panel.classList.toggle('show');
+            if (panel.classList.contains('show') && plantModel.channels.length === 0) {
+                loadDefaultPlant();
+            }
+        }
+
+        function loadDefaultPlant() {
+            plantModel = {
+                name: 'closed_loop',
+                description: 'First-order lag + actuator + constant setpoint',
+                channels: [
+                    { channel_id: 0, dir: 'INPUT', kind: 'LAG', gain: 0.125, offset: 0, min_val: 0, max_val: 1000, init_val: 0, drive: 1 },
+                    { channel_id: 1, dir: 'OUTPUT', kind: 'ACTUATOR', gain: 0, offset: 0, min_val: 0, max_val: 1000, init_val: 0, drive: -1 },
+                    { channel_id: 2, dir: 'INPUT', kind: 'CONST', gain: 0, offset: 0, min_val: 0, max_val: 1000, init_val: 500, drive: -1 }
+                ]
+            };
+            renderPlantChannels();
+            setStatus('已加载默认被控对象模型');
+        }
+
+        function addPlantChannel() {
+            const newId = plantModel.channels.length > 0 
+                ? Math.max(...plantModel.channels.map(c => c.channel_id)) + 1 
+                : 0;
+            plantModel.channels.push({
+                channel_id: newId,
+                dir: 'INPUT',
+                kind: 'CONST',
+                gain: 0,
+                offset: 0,
+                min_val: 0,
+                max_val: 1000,
+                init_val: 0,
+                drive: -1
+            });
+            renderPlantChannels();
+        }
+
+        function removePlantChannel(idx) {
+            plantModel.channels.splice(idx, 1);
+            renderPlantChannels();
+        }
+
+        function updatePlantChannel(idx, field, value) {
+            if (['channel_id', 'min_val', 'max_val', 'init_val', 'drive'].includes(field)) {
+                plantModel.channels[idx][field] = parseInt(value) || 0;
+            } else if (['gain', 'offset'].includes(field)) {
+                plantModel.channels[idx][field] = parseFloat(value) || 0;
+            } else {
+                plantModel.channels[idx][field] = value;
+            }
+        }
+
+        function renderPlantChannels() {
+            const container = document.getElementById('plantChannels');
+            container.innerHTML = '';
+            
+            plantModel.channels.forEach((ch, idx) => {
+                const row = document.createElement('div');
+                row.className = 'plant-channel';
+                row.innerHTML = `
+                    <input type="number" value="${ch.channel_id}" onchange="updatePlantChannel(${idx}, 'channel_id', this.value)" title="Channel ID" />
+                    <select onchange="updatePlantChannel(${idx}, 'dir', this.value)" title="Direction">
+                        <option value="INPUT" ${ch.dir === 'INPUT' ? 'selected' : ''}>INPUT</option>
+                        <option value="OUTPUT" ${ch.dir === 'OUTPUT' ? 'selected' : ''}>OUTPUT</option>
+                    </select>
+                    <select onchange="updatePlantChannel(${idx}, 'kind', this.value)" title="Kind">
+                        <option value="CONST" ${ch.kind === 'CONST' ? 'selected' : ''}>CONST</option>
+                        <option value="LAG" ${ch.kind === 'LAG' ? 'selected' : ''}>LAG</option>
+                        <option value="RAMP" ${ch.kind === 'RAMP' ? 'selected' : ''}>RAMP</option>
+                        <option value="ACTUATOR" ${ch.kind === 'ACTUATOR' ? 'selected' : ''}>ACTUATOR</option>
+                    </select>
+                    <input type="number" step="0.001" value="${ch.gain}" onchange="updatePlantChannel(${idx}, 'gain', this.value)" title="Gain" />
+                    <input type="number" step="0.1" value="${ch.offset}" onchange="updatePlantChannel(${idx}, 'offset', this.value)" title="Offset" />
+                    <input type="number" value="${ch.min_val}" onchange="updatePlantChannel(${idx}, 'min_val', this.value)" title="Min" />
+                    <input type="number" value="${ch.max_val}" onchange="updatePlantChannel(${idx}, 'max_val', this.value)" title="Max" />
+                    <input type="number" value="${ch.init_val}" onchange="updatePlantChannel(${idx}, 'init_val', this.value)" title="Init" />
+                    <input type="number" value="${ch.drive}" onchange="updatePlantChannel(${idx}, 'drive', this.value)" title="Drive" />
+                    <button onclick="removePlantChannel(${idx})">×</button>
+                `;
+                container.appendChild(row);
+            });
+        }
+
+        function validatePlant() {
+            const errors = [];
+            const channelIds = new Set();
+            
+            plantModel.channels.forEach((ch, idx) => {
+                if (channelIds.has(ch.channel_id)) {
+                    errors.push(`通道 ${idx}: ID 重复`);
+                }
+                channelIds.add(ch.channel_id);
+                
+                if (ch.dir === 'OUTPUT' && ch.kind !== 'ACTUATOR') {
+                    errors.push(`通道 ${ch.channel_id}: OUTPUT 必须是 ACTUATOR`);
+                }
+                
+                if (ch.kind === 'LAG' && (ch.gain <= 0 || ch.gain > 1)) {
+                    errors.push(`通道 ${ch.channel_id}: LAG gain 必须在 (0, 1]`);
+                }
+                
+                if (ch.min_val > ch.max_val) {
+                    errors.push(`通道 ${ch.channel_id}: min > max`);
+                }
+                
+                if (ch.init_val < ch.min_val || ch.init_val > ch.max_val) {
+                    errors.push(`通道 ${ch.channel_id}: init 超出 [min, max]`);
+                }
+            });
+            
+            if (errors.length === 0) {
+                alert('✓ 被控对象模型校验通过');
+                setStatus('被控对象模型校验通过');
+            } else {
+                alert('✗ 校验失败:\n' + errors.join('\n'));
+                setStatus('被控对象模型校验失败');
+            }
+        }
+
+        function loadExample() {
+            cycles = parseInt(document.getElementById('cycles').value) || 12;
+            
+            waveforms = {
+                'pid1.OUT': Array.from({length: cycles}, (_, i) => Math.min(100, i * 10)),
+                'limiter1.OUT': Array.from({length: cycles}, (_, i) => Math.min(100, i * 10)),
+                'setpoint': Array(cycles).fill(100),
+                'measurement': Array.from({length: cycles}, (_, i) => Math.min(100, i * 8)),
+            };
+
+            computeStatistics();
+            renderWaveforms();
+            setStatus('加载示例波形');
+        }
+
+        function runDrySimulation() {
+            cycles = parseInt(document.getElementById('cycles').value) || 12;
+            simulationMode = 'dry_run';
+            updateModeIndicator();
+            
+            waveforms = {
+                'var1': Array.from({length: cycles}, (_, i) => 50 + 30 * Math.sin(i * 0.5)),
+                'var2': Array.from({length: cycles}, (_, i) => 25 + 15 * Math.cos(i * 0.3)),
+            };
+
+            computeStatistics();
+            renderWaveforms();
+            setStatus('干跑仿真完成');
+        }
+
+        function runTwinSimulation() {
+            if (plantModel.channels.length === 0) {
+                alert('请先配置被控对象模型');
+                return;
+            }
+            
+            cycles = parseInt(document.getElementById('cycles').value) || 12;
+            simulationMode = 'twin';
+            updateModeIndicator();
+            
+            // Simulate twin mode with plant dynamics
+            waveforms = {
+                'pv': Array.from({length: cycles}, (_, i) => {
+                    const target = 500;
+                    return target * (1 - Math.exp(-i * 0.125));
+                }),
+                'mv': Array.from({length: cycles}, (_, i) => {
+                    return 500 * (1 - Math.exp(-i * 0.125));
+                }),
+                'setpoint': Array(cycles).fill(500),
+            };
+
+            computeStatistics();
+            renderWaveforms();
+            setStatus('孪生仿真完成（闭环）');
+        }
+
+        function updateModeIndicator() {
+            const indicator = document.getElementById('modeIndicator');
+            if (simulationMode === 'twin') {
+                indicator.className = 'mode-indicator twin';
+                indicator.textContent = '孪生模式';
+            } else {
+                indicator.className = 'mode-indicator dry_run';
+                indicator.textContent = '干跑模式';
+            }
+        }
+
+        function computeStatistics() {
+            statistics = {};
+            for (const [name, values] of Object.entries(waveforms)) {
+                if (values.length === 0) continue;
+                
+                const mean = values.reduce((a, b) => a + b, 0) / values.length;
+                const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+                const stdDev = Math.sqrt(variance);
+                const min = Math.min(...values);
+                const max = Math.max(...values);
+                const peak = Math.max(...values.map(v => Math.abs(v - mean)));
+                const finalValue = values[values.length - 1];
+                
+                // Settling time (2% threshold)
+                const threshold = Math.max(Math.abs(finalValue) * 0.02, 0.02);
+                let settlingTime = null;
+                for (let i = 0; i < values.length; i++) {
+                    let allWithin = true;
+                    for (let j = i; j < values.length; j++) {
+                        if (Math.abs(values[j] - finalValue) > threshold) {
+                            allWithin = false;
+                            break;
+                        }
+                    }
+                    if (allWithin) {
+                        settlingTime = i;
+                        break;
+                    }
+                }
+                
+                // Rise time (10% to 90%)
+                const range = max - min;
+                const threshold10 = min + 0.1 * range;
+                const threshold90 = min + 0.9 * range;
+                let riseTime = null;
+                let cross10 = null;
+                for (let i = 0; i < values.length; i++) {
+                    if (values[i] >= threshold10 && cross10 === null) {
+                        cross10 = i;
+                    }
+                    if (values[i] >= threshold90 && cross10 !== null) {
+                        riseTime = i;
+                        break;
+                    }
+                }
+                
+                statistics[name] = {
+                    mean, variance, stdDev, min, max, peak, finalValue, settlingTime, riseTime
+                };
+            }
+        }
+
+        function saveBaseline() {
+            if (Object.keys(waveforms).length === 0) {
+                alert('没有波形数据可保存');
+                return;
+            }
+
+            const name = prompt('基线名称:');
+            if (!name) return;
+
+            baseline = {
+                name: name,
+                cycles: cycles,
+                variables: JSON.parse(JSON.stringify(waveforms)),
+                created: new Date().toISOString(),
+            };
+
+            localStorage.setItem(`baseline_${name}`, JSON.stringify(baseline));
+            setStatus(`基线已保存：${name}`);
+        }
+
+        function loadBaseline() {
+            const names = Object.keys(localStorage)
+                .filter(k => k.startsWith('baseline_'))
+                .map(k => k.replace('baseline_', ''));
+
+            if (names.length === 0) {
+                alert('没有已保存的基线');
+                return;
+            }
+
+            const name = prompt(`选择基线 (${names.join(', ')}):`);
+            if (!name) return;
+
+            const stored = localStorage.getItem(`baseline_${name}`);
+            if (!stored) {
+                alert('基线不存在');
+                return;
+            }
+
+            baseline = JSON.parse(stored);
+            renderWaveforms();
+            setStatus(`基线已加载：${name}`);
+        }
+
+        function exportReport() {
+            if (Object.keys(waveforms).length === 0) {
+                alert('没有波形数据可导出');
+                return;
+            }
+
+            const report = generateHTMLReport();
+            const blob = new Blob([report], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `simulation_report_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.html`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setStatus('报告已导出');
+        }
+
+        function generateHTMLReport() {
+            const now = new Date().toLocaleString('zh-CN');
+            let html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>仿真报告</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { color: #333; border-bottom: 2px solid #0e639c; padding-bottom: 10px; }
+        h2 { color: #0e639c; margin-top: 30px; }
+        .meta { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .meta-item { display: inline-block; margin-right: 30px; }
+        .waveform { margin: 20px 0; page-break-inside: avoid; }
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 10px 0; }
+        .stat { background: #f9f9f9; padding: 10px; border-radius: 3px; }
+        .stat-label { font-size: 12px; color: #666; }
+        .stat-value { font-size: 18px; font-weight: bold; color: #0e639c; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #0e639c; color: white; }
+    </style>
+</head>
+<body>
+    <h1>VeriIDE 仿真报告</h1>
+    <div class="meta">
+        <div class="meta-item"><strong>生成时间:</strong> ${now}</div>
+        <div class="meta-item"><strong>仿真模式:</strong> ${simulationMode === 'twin' ? '孪生模式' : '干跑模式'}</div>
+        <div class="meta-item"><strong>周期数:</strong> ${cycles}</div>
+        <div class="meta-item"><strong>变量数:</strong> ${Object.keys(waveforms).length}</div>
+    </div>
+    
+    <h2>波形统计</h2>
+    <table>
+        <tr>
+            <th>变量</th>
+            <th>均值</th>
+            <th>标准差</th>
+            <th>最小值</th>
+            <th>最大值</th>
+            <th>峰值</th>
+            <th>稳态时间</th>
+            <th>上升时间</th>
+        </tr>`;
+            
+            for (const [name, stats] of Object.entries(statistics)) {
+                html += `
+        <tr>
+            <td>${name}</td>
+            <td>${stats.mean.toFixed(2)}</td>
+            <td>${stats.stdDev.toFixed(2)}</td>
+            <td>${stats.min.toFixed(2)}</td>
+            <td>${stats.max.toFixed(2)}</td>
+            <td>${stats.peak.toFixed(2)}</td>
+            <td>${stats.settlingTime !== null ? stats.settlingTime : '-'}</td>
+            <td>${stats.riseTime !== null ? stats.riseTime : '-'}</td>
+        </tr>`;
+            }
+            
+            html += `
+    </table>
+    
+    <h2>波形数据</h2>`;
+            
+            for (const [name, values] of Object.entries(waveforms)) {
+                html += `
+    <div class="waveform">
+        <h3>${name}</h3>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">均值</div>
+                <div class="stat-value">${statistics[name].mean.toFixed(2)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">标准差</div>
+                <div class="stat-value">${statistics[name].stdDev.toFixed(2)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">范围</div>
+                <div class="stat-value">${statistics[name].min.toFixed(0)} - ${statistics[name].max.toFixed(0)}</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">稳态时间</div>
+                <div class="stat-value">${statistics[name].settlingTime !== null ? statistics[name].settlingTime : '-'}</div>
+            </div>
+        </div>
+        <table>
+            <tr><th>周期</th><th>值</th></tr>`;
+                
+                values.forEach((v, i) => {
+                    html += `<tr><td>${i}</td><td>${v.toFixed(2)}</td></tr>`;
+                });
+                
+                html += `
+        </table>
+    </div>`;
+            }
+            
+            html += `
+</body>
+</html>`;
+            
+            return html;
+        }
+
+        function clearWaveforms() {
+            waveforms = {};
+            baseline = null;
+            statistics = {};
+            renderWaveforms();
+            setStatus('波形已清空');
+        }
+
+        function renderWaveforms() {
+            const container = document.getElementById('waveform-container');
+            
+            if (Object.keys(waveforms).length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 40px; color: #666;">点击"加载示例"或"运行仿真"查看波形</div>';
+                return;
+            }
+
+            container.innerHTML = '';
+
+            for (const [varName, values] of Object.entries(waveforms)) {
+                const waveform = document.createElement('div');
+                waveform.className = 'waveform';
+
+                const header = document.createElement('div');
+                header.className = 'waveform-header';
+
+                const title = document.createElement('div');
+                title.className = 'waveform-title';
+                title.textContent = varName;
+
+                const stats = document.createElement('div');
+                stats.className = 'waveform-stats';
+                const min = Math.min(...values);
+                const max = Math.max(...values);
+                const avg = values.reduce((a, b) => a + b, 0) / values.length;
+                stats.textContent = `min: ${min.toFixed(2)}, max: ${max.toFixed(2)}, avg: ${avg.toFixed(2)}`;
+
+                header.appendChild(title);
+                header.appendChild(stats);
+                waveform.appendChild(header);
+
+                // Detailed statistics
+                if (statistics[varName]) {
+                    const statsDetail = document.createElement('div');
+                    statsDetail.className = 'waveform-stats-detail';
+                    const s = statistics[varName];
+                    statsDetail.innerHTML = `
+                        <div class="stat-item">
+                            <span class="stat-label">标准差</span>
+                            <span class="stat-value">${s.stdDev.toFixed(2)}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">峰值</span>
+                            <span class="stat-value">${s.peak.toFixed(2)}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">稳态时间</span>
+                            <span class="stat-value">${s.settlingTime !== null ? s.settlingTime : '-'}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">上升时间</span>
+                            <span class="stat-value">${s.riseTime !== null ? s.riseTime : '-'}</span>
+                        </div>
+                    `;
+                    waveform.appendChild(statsDetail);
+                }
+
+                const svg = createWaveformSVG(varName, values, baseline?.variables[varName]);
+                waveform.appendChild(svg);
+
+                container.appendChild(waveform);
+            }
+        }
+
+        function createWaveformSVG(varName, values, baselineValues) {
+            const width = 800;
+            const height = 150;
+            const padding = 20;
+
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const range = max - min || 1;
+
+            // Draw grid
+            for (let i = 0; i <= 4; i++) {
+                const y = padding + (height - 2 * padding) * i / 4;
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('class', 'grid');
+                line.setAttribute('x1', padding);
+                line.setAttribute('y1', y);
+                line.setAttribute('x2', width - padding);
+                line.setAttribute('y2', y);
+                svg.appendChild(line);
+            }
+
+            // Draw baseline
+            if (baselineValues) {
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('class', 'waveform-line baseline');
+                const d = baselineValues.map((v, i) => {
+                    const x = padding + (width - 2 * padding) * i / (baselineValues.length - 1);
+                    const y = height - padding - (v - min) / range * (height - 2 * padding);
+                    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+                }).join(' ');
+                path.setAttribute('d', d);
+                svg.appendChild(path);
+            }
+
+            // Draw waveform
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('class', 'waveform-line');
+            const d = values.map((v, i) => {
+                const x = padding + (width - 2 * padding) * i / (values.length - 1);
+                const y = height - padding - (v - min) / range * (height - 2 * padding);
+                return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+            }).join(' ');
+            path.setAttribute('d', d);
+            svg.appendChild(path);
+
+            // Draw data points
+            values.forEach((v, i) => {
+                const x = padding + (width - 2 * padding) * i / (values.length - 1);
+                const y = height - padding - (v - min) / range * (height - 2 * padding);
+                
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('class', 'data-point');
+                circle.setAttribute('cx', x);
+                circle.setAttribute('cy', y);
+                circle.setAttribute('r', 4);
+                circle.addEventListener('mouseenter', (e) => showTooltip(e, i, v));
+                circle.addEventListener('mouseleave', hideTooltip);
+                svg.appendChild(circle);
+            });
+
+            return svg;
+        }
+
+        function showTooltip(e, cycle, value) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.textContent = `周期 ${cycle}: ${value.toFixed(2)}`;
+            tooltip.style.display = 'block';
+            tooltip.style.left = e.pageX + 10 + 'px';
+            tooltip.style.top = e.pageY - 30 + 'px';
+        }
+
+        function hideTooltip() {
+            document.getElementById('tooltip').style.display = 'none';
+        }
+
+        function setStatus(msg) {
+            document.getElementById('status').textContent = msg;
+        }
+    </script>
+</body>
+</html>

@@ -6,11 +6,18 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..backend.build.service import build_project, find_veristc_binary
 from ..backend.project.service import create_project, open_project
 from ..backend.pre.merge import write_merged_file
+from ..backend.deploy.service import DeployService, DeployResult, TargetConfig
+from ..backend.deploy.key_manager import KeyManager, KeyManagerError
+
+
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "public"
 
 
 app = FastAPI(
@@ -27,6 +34,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve frontend static files
+if _FRONTEND_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_FRONTEND_DIR)), name="static")
 
 
 class BuildRequest(BaseModel):
@@ -60,6 +71,51 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     veristc_available: bool
+
+
+# Deploy endpoints
+
+class DeployRequest(BaseModel):
+    """Deploy request payload."""
+    sasm_file: str
+    target: TargetConfig
+    key_hex: str
+    download_at: int = 1
+    health_cycles: int = 3
+
+
+class DeployResponse(BaseModel):
+    """Deploy result."""
+    success: bool
+    stages: list[str]
+    status_frames: list[dict]
+    errors: list[str]
+
+
+class KeyGenerateRequest(BaseModel):
+    """Key generation request."""
+    name: str
+
+
+class KeyResponse(BaseModel):
+    """Key response."""
+    name: str
+    key_hex: Optional[str] = None
+    exists: bool = False
+
+
+class KeyListResponse(BaseModel):
+    """Key list response."""
+    keys: list[str]
+
+
+class KeyInfoResponse(BaseModel):
+    """Key info response."""
+    name: str
+    path: str
+    size: int
+    created: float
+    modified: float
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -143,15 +199,104 @@ def build_code(request: BuildRequest):
 
 @app.get("/")
 def root():
-    """Root endpoint."""
-    return {
-        "message": "VeriIDE API",
-        "version": "0.1.0",
-        "endpoints": {
-            "health": "/health",
-            "build": "/build",
-        }
-    }
+    """Serve the main frontend page."""
+    index = _FRONTEND_DIR / "index.html"
+    if index.is_file():
+        return FileResponse(str(index), media_type="text/html")
+    return {"message": "VeriIDE API", "version": "0.1.0"}
+
+
+@app.post("/deploy", response_model=DeployResponse)
+def deploy_code(request: DeployRequest):
+    """Deploy .sasm file to target."""
+    try:
+        service = DeployService()
+        key_bytes = bytes.fromhex(request.key_hex)
+        
+        result = service.deploy(
+            sasm_file=request.sasm_file,
+            target=request.target,
+            key=key_bytes,
+            download_at=request.download_at,
+            health_cycles=request.health_cycles,
+        )
+        
+        return DeployResponse(
+            success=result.success,
+            stages=result.stages,
+            status_frames=result.status_frames,
+            errors=result.errors,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/keys/generate", response_model=KeyResponse)
+def generate_key(request: KeyGenerateRequest):
+    """Generate a new HMAC key."""
+    try:
+        manager = KeyManager()
+        name = manager.generate_key(request.name)
+        key_hex = manager.load_key_hex(name)
+        return KeyResponse(name=name, key_hex=key_hex, exists=True)
+    except KeyManagerError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/keys", response_model=KeyListResponse)
+def list_keys():
+    """List all keys."""
+    try:
+        manager = KeyManager()
+        keys = manager.list_keys()
+        return KeyListResponse(keys=keys)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/keys/{name}", response_model=KeyResponse)
+def get_key(name: str):
+    """Get key info."""
+    try:
+        manager = KeyManager()
+        if not manager.key_exists(name):
+            raise HTTPException(status_code=404, detail=f"Key not found: {name}")
+        key_hex = manager.load_key_hex(name)
+        return KeyResponse(name=name, key_hex=key_hex, exists=True)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/keys/{name}")
+def delete_key(name: str):
+    """Delete a key."""
+    try:
+        manager = KeyManager()
+        if not manager.key_exists(name):
+            raise HTTPException(status_code=404, detail=f"Key not found: {name}")
+        manager.delete_key(name)
+        return {"message": f"Key deleted: {name}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/keys/{name}/info", response_model=KeyInfoResponse)
+def get_key_info(name: str):
+    """Get key metadata."""
+    try:
+        manager = KeyManager()
+        info = manager.get_key_info(name)
+        return KeyInfoResponse(**info)
+    except KeyManagerError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8000):

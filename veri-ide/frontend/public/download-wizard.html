@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VeriIDE - 下装向导</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #1e1e1e;
+            --bg-secondary: #252526;
+            --bg-tertiary: #2d2d30;
+            --bg-hover: #3e3e42;
+            --border-color: #3e3e42;
+            --text-primary: #cccccc;
+            --text-secondary: #858585;
+            --text-muted: #6e6e6e;
+            --accent-blue: #007acc;
+            --accent-blue-hover: #1c97ea;
+            --accent-green: #4ec9b0;
+            --accent-red: #f48771;
+            --accent-yellow: #dcdcaa;
+            --accent-orange: #ce9178;
+            --success-bg: #1e4a3f;
+            --success-border: #4ec9b0;
+            --error-bg: #4a1e1e;
+            --error-border: #f48771;
+            --warning-bg: #4a3f1e;
+            --warning-border: #dcdcaa;
+            --info-bg: #1e3a5f;
+            --info-border: #007acc;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-size: 13px;
+        }
+
+        /* Top Toolbar */
+        .toolbar {
+            background: var(--bg-secondary);
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            height: 40px;
+        }
+
+        .toolbar-brand {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--accent-blue);
+            margin-right: auto;
+        }
+
+        .toolbar-btn {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+
+        .toolbar-btn:hover {
+            background: var(--bg-hover);
+            border-color: var(--text-secondary);
+        }
+
+        .toolbar-btn.primary {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .toolbar-btn.primary:hover {
+            background: var(--accent-blue-hover);
+        }
+
+        .toolbar-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Main Layout */
+        .main-layout {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Left Sidebar - Step Navigation */
+        .sidebar-left {
+            width: 240px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+
+        .step-list {
+            padding: 8px 0;
+        }
+
+        .step-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-left: 3px solid transparent;
+            transition: all 0.15s;
+        }
+
+        .step-item:hover {
+            background: var(--bg-hover);
+        }
+
+        .step-item.active {
+            background: var(--info-bg);
+            border-left-color: var(--accent-blue);
+        }
+
+        .step-item.completed {
+            border-left-color: var(--accent-green);
+        }
+
+        .step-number {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .step-item.active .step-number {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .step-item.completed .step-number {
+            background: var(--accent-green);
+            border-color: var(--accent-green);
+            color: white;
+        }
+
+        .step-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .step-title {
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 2px;
+        }
+
+        .step-desc {
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Center Content */
+        .content-center {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .content-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+        }
+
+        .content-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .content-subtitle {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .content-body {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        /* Right Sidebar - Properties */
+        .sidebar-right {
+            width: 320px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .properties-section {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .properties-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        .property-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            font-size: 12px;
+        }
+
+        .property-label {
+            color: var(--text-secondary);
+        }
+
+        .property-value {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Form Styles */
+        .form-section {
+            margin-bottom: 24px;
+        }
+
+        .form-section-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        .form-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group.half {
+            flex: 0.5;
+        }
+
+        .form-label {
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            color: var(--text-primary);
+        }
+
+        .form-label .required {
+            color: var(--accent-red);
+            margin-left: 2px;
+        }
+
+        .form-input,
+        .form-select {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 3px;
+            font-size: 13px;
+            font-family: inherit;
+            transition: border-color 0.15s;
+        }
+
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .form-hint {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 24px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 3px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            transition: all 0.15s;
+        }
+
+        .btn:hover {
+            background: var(--bg-hover);
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-blue-hover);
+        }
+
+        .btn-secondary {
+            background: transparent;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Progress Section */
+        .progress-container {
+            margin: 24px 0;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+            transition: width 0.3s ease;
+            border-radius: 4px;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        /* Status Log */
+        .status-log {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+        }
+
+        .status-entry {
+            padding: 4px 0;
+            display: flex;
+            gap: 8px;
+        }
+
+        .status-time {
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .status-message {
+            flex: 1;
+        }
+
+        .status-entry.info .status-message { color: var(--text-primary); }
+        .status-entry.success .status-message { color: var(--accent-green); }
+        .status-entry.error .status-message { color: var(--accent-red); }
+        .status-entry.warning .status-message { color: var(--accent-yellow); }
+
+        /* Result Panel */
+        .result-panel {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            padding: 20px;
+            margin-top: 16px;
+        }
+
+        .result-panel.success {
+            border-color: var(--success-border);
+            background: var(--success-bg);
+        }
+
+        .result-panel.error {
+            border-color: var(--error-border);
+            background: var(--error-bg);
+        }
+
+        .result-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .result-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .result-panel.success .result-icon {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .result-panel.error .result-icon {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .result-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .result-details {
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .result-details dt {
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        .result-details dd {
+            margin-left: 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+
+        /* Bottom Status Bar */
+        .status-bar {
+            background: var(--accent-blue);
+            color: white;
+            padding: 4px 16px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            height: 24px;
+        }
+
+        .status-bar-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        /* Hidden */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-hover);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-brand">VeriIDE</div>
+        <button class="toolbar-btn" onclick="resetWizard()">重置向导</button>
+        <button class="toolbar-btn" onclick="showHelp()">帮助</button>
+    </div>
+
+    <!-- Main Layout -->
+    <div class="main-layout">
+        <!-- Left Sidebar: Step Navigation -->
+        <div class="sidebar-left">
+            <div class="sidebar-header">下装流程</div>
+            <div class="step-list">
+                <div class="step-item active" data-step="1" onclick="goToStep(1)">
+                    <div class="step-number">1</div>
+                    <div class="step-info">
+                        <div class="step-title">目标配置</div>
+                        <div class="step-desc">选择后端与目标路径</div>
+                    </div>
+                </div>
+                <div class="step-item" data-step="2" onclick="goToStep(2)">
+                    <div class="step-number">2</div>
+                    <div class="step-info">
+                        <div class="step-title">密钥选择</div>
+                        <div class="step-desc">HMAC-SHA256 密钥</div>
+                    </div>
+                </div>
+                <div class="step-item" data-step="3" onclick="goToStep(3)">
+                    <div class="step-number">3</div>
+                    <div class="step-info">
+                        <div class="step-title">下装参数</div>
+                        <div class="step-desc">周期与切换配置</div>
+                    </div>
+                </div>
+                <div class="step-item" data-step="4" onclick="goToStep(4)">
+                    <div class="step-number">4</div>
+                    <div class="step-info">
+                        <div class="step-title">执行下装</div>
+                        <div class="step-desc">发送帧流并监控</div>
+                    </div>
+                </div>
+                <div class="step-item" data-step="5" onclick="goToStep(5)">
+                    <div class="step-number">5</div>
+                    <div class="step-info">
+                        <div class="step-title">完成</div>
+                        <div class="step-desc">查看下装结果</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Content -->
+        <div class="content-center">
+            <div class="content-header">
+                <div class="content-title" id="contentTitle">目标配置</div>
+                <div class="content-subtitle" id="contentSubtitle">配置下装目标的后端类型与文件路径</div>
+            </div>
+
+            <div class="content-body">
+                <!-- Step 1: Target Configuration -->
+                <div id="step1" class="step-panel">
+                    <div class="form-section">
+                        <div class="form-section-title">后端配置</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">后端类型 <span class="required">*</span></label>
+                                <select id="backend" class="form-select">
+                                    <option value="file">文件</option>
+                                    <option value="pipe">管道</option>
+                                </select>
+                                <div class="form-hint">选择下装传输方式</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">角色</label>
+                                <select id="role" class="form-select">
+                                    <option value="active">Active</option>
+                                    <option value="standby">Standby</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <div class="form-section-title">目标路径</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">.sasm 文件路径 <span class="required">*</span></label>
+                                <input type="text" id="targetPath" class="form-input" placeholder="/path/to/target.sasm" />
+                                <div class="form-hint">编译生成的 SafeASM 二进制文件</div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Agent 二进制路径</label>
+                                <input type="text" id="agentBinary" class="form-input" value="veristc-agent" placeholder="veristc-agent" />
+                                <div class="form-hint">目标端 veristc-agent 可执行文件路径</div>
+                            </div>
+                            <div class="form-group half">
+                                <label class="form-label">节点 ID</label>
+                                <input type="number" id="nodeId" class="form-input" value="0" min="0" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-primary" onclick="nextStep()">下一步</button>
+                    </div>
+                </div>
+
+                <!-- Step 2: Key Selection -->
+                <div id="step2" class="step-panel hidden">
+                    <div class="form-section">
+                        <div class="form-section-title">密钥管理</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">选择已有密钥</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <select id="keySelect" class="form-select" style="flex: 1;">
+                                        <option value="">-- 选择密钥 --</option>
+                                    </select>
+                                    <button class="btn btn-secondary" onclick="generateKey()">生成新密钥</button>
+                                </div>
+                                <div class="form-hint">从本地密钥库选择 32 字节 HMAC-SHA256 密钥</div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">或手动输入密钥 (64 字符 hex)</label>
+                                <input type="text" id="keyInput" class="form-input" placeholder="0102030405060708091011121314151617181920212223242526272829303132" maxlength="64" />
+                                <div class="form-hint">直接输入 64 位十六进制字符串（32 字节）</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" onclick="prevStep()">上一步</button>
+                        <button class="btn btn-primary" onclick="nextStep()">下一步</button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Deploy Parameters -->
+                <div id="step3" class="step-panel hidden">
+                    <div class="form-section">
+                        <div class="form-section-title">周期配置</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">周期数</label>
+                                <input type="number" id="cycles" class="form-input" value="10" min="1" max="100000" />
+                                <div class="form-hint">仿真运行周期数</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">周期时长 (ms)</label>
+                                <input type="number" id="periodMs" class="form-input" value="100" min="0" />
+                                <div class="form-hint">每个周期的时长</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-section">
+                        <div class="form-section-title">切换配置</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">切换周期 (download_at)</label>
+                                <input type="number" id="downloadAt" class="form-input" value="1" min="1" />
+                                <div class="form-hint">在第几个周期执行镜像切换</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">健康检查周期数</label>
+                                <input type="number" id="healthCycles" class="form-input" value="3" min="1" />
+                                <div class="form-hint">切换后观察多少个周期以确认健康</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" onclick="prevStep()">上一步</button>
+                        <button class="btn btn-primary" onclick="nextStep()">下一步</button>
+                    </div>
+                </div>
+
+                <!-- Step 4: Execute Deploy -->
+                <div id="step4" class="step-panel hidden">
+                    <div style="text-align: center; padding: 40px 0;">
+                        <button id="startDeployBtn" class="btn btn-primary" style="padding: 12px 32px; font-size: 14px;" onclick="startDeploy()">
+                            开始下装
+                        </button>
+                    </div>
+
+                    <div id="progressContainer" class="progress-container hidden">
+                        <div class="progress-bar">
+                            <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+                        </div>
+                        <div id="progressText" class="progress-text">准备中...</div>
+                    </div>
+
+                    <div id="statusLog" class="status-log hidden"></div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-secondary" onclick="prevStep()">上一步</button>
+                    </div>
+                </div>
+
+                <!-- Step 5: Complete -->
+                <div id="step5" class="step-panel hidden">
+                    <div id="resultPanel" class="result-panel">
+                        <div class="result-header">
+                            <div class="result-icon" id="resultIcon">✓</div>
+                            <div class="result-title" id="resultTitle">下装完成</div>
+                        </div>
+                        <dl class="result-details" id="resultDetails"></dl>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-primary" onclick="resetWizard()">重新下装</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Sidebar: Properties -->
+        <div class="sidebar-right">
+            <div class="properties-section">
+                <div class="properties-title">当前配置</div>
+                <div class="property-row">
+                    <span class="property-label">后端类型</span>
+                    <span class="property-value" id="propBackend">文件</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">目标路径</span>
+                    <span class="property-value" id="propPath">-</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">角色</span>
+                    <span class="property-value" id="propRole">Active</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">节点 ID</span>
+                    <span class="property-value" id="propNodeId">0</span>
+                </div>
+            </div>
+
+            <div class="properties-section">
+                <div class="properties-title">密钥信息</div>
+                <div class="property-row">
+                    <span class="property-label">密钥名称</span>
+                    <span class="property-value" id="propKeyName">-</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">密钥长度</span>
+                    <span class="property-value" id="propKeyLen">-</span>
+                </div>
+            </div>
+
+            <div class="properties-section">
+                <div class="properties-title">下装参数</div>
+                <div class="property-row">
+                    <span class="property-label">周期数</span>
+                    <span class="property-value" id="propCycles">10</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">周期时长</span>
+                    <span class="property-value" id="propPeriod">100 ms</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">切换周期</span>
+                    <span class="property-value" id="propDownloadAt">1</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">健康检查</span>
+                    <span class="property-value" id="propHealth">3 周期</span>
+                </div>
+            </div>
+
+            <div class="properties-section">
+                <div class="properties-title">协议信息</div>
+                <div class="property-row">
+                    <span class="property-label">帧协议</span>
+                    <span class="property-value">DLF1 v1</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">校验方式</span>
+                    <span class="property-value">CRC32 + HMAC</span>
+                </div>
+                <div class="property-row">
+                    <span class="property-label">最大载荷</span>
+                    <span class="property-value">4096 B</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Status Bar -->
+    <div class="status-bar">
+        <div class="status-bar-item" id="statusBarText">就绪</div>
+        <div class="status-bar-item" style="margin-left: auto;">
+            <span id="currentStepLabel">步骤 1/5: 目标配置</span>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentStep = 1;
+        let deployResult = null;
+        let keys = [];
+
+        async function apiCall(path, options = {}) {
+            const response = await fetch(`${API_BASE}${path}`, {
+                headers: { 'Content-Type': 'application/json' },
+                ...options,
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({ detail: response.statusText }));
+                throw new Error(error.detail || 'API 请求失败');
+            }
+            return response.json();
+        }
+
+        function updateProperties() {
+            document.getElementById('propBackend').textContent = document.getElementById('backend').value === 'file' ? '文件' : '管道';
+            document.getElementById('propPath').textContent = document.getElementById('targetPath').value || '-';
+            document.getElementById('propRole').textContent = document.getElementById('role').value === 'active' ? 'Active' : 'Standby';
+            document.getElementById('propNodeId').textContent = document.getElementById('nodeId').value;
+            document.getElementById('propCycles').textContent = document.getElementById('cycles').value;
+            document.getElementById('propPeriod').textContent = document.getElementById('periodMs').value + ' ms';
+            document.getElementById('propDownloadAt').textContent = document.getElementById('downloadAt').value;
+            document.getElementById('propHealth').textContent = document.getElementById('healthCycles').value + ' 周期';
+
+            const keySelect = document.getElementById('keySelect').value;
+            const keyInput = document.getElementById('keyInput').value;
+            document.getElementById('propKeyName').textContent = keySelect || (keyInput ? '手动输入' : '-');
+            document.getElementById('propKeyLen').textContent = keyInput ? `${keyInput.length / 2} 字节` : '-';
+        }
+
+        // Add input listeners to update properties
+        ['backend', 'targetPath', 'role', 'nodeId', 'cycles', 'periodMs', 'downloadAt', 'healthCycles', 'keySelect', 'keyInput'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updateProperties);
+            document.getElementById(id).addEventListener('change', updateProperties);
+        });
+
+        async function loadKeys() {
+            try {
+                const data = await apiCall('/keys');
+                keys = data.keys;
+                updateKeySelect();
+            } catch (error) {
+                console.error('Failed to load keys:', error);
+            }
+        }
+
+        function updateKeySelect() {
+            const select = document.getElementById('keySelect');
+            select.innerHTML = '<option value="">-- 选择密钥 --</option>';
+            keys.forEach(key => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = key;
+                select.appendChild(option);
+            });
+        }
+
+        async function generateKey() {
+            const name = prompt('密钥名称:');
+            if (!name) return;
+
+            try {
+                const result = await apiCall('/keys/generate', {
+                    method: 'POST',
+                    body: JSON.stringify({ name }),
+                });
+                keys.push(result.name);
+                updateKeySelect();
+                document.getElementById('keySelect').value = result.name;
+                updateProperties();
+                alert(`密钥已生成：${result.name}`);
+            } catch (error) {
+                alert(`生成失败：${error.message}`);
+            }
+        }
+
+        async function startDeploy() {
+            const btn = document.getElementById('startDeployBtn');
+            btn.disabled = true;
+
+            const progressContainer = document.getElementById('progressContainer');
+            const statusLog = document.getElementById('statusLog');
+            progressContainer.classList.remove('hidden');
+            statusLog.classList.remove('hidden');
+
+            const sasmFile = document.getElementById('targetPath').value;
+            const backend = document.getElementById('backend').value;
+            const agentBinary = document.getElementById('agentBinary').value;
+            const role = document.getElementById('role').value;
+            const nodeId = parseInt(document.getElementById('nodeId').value);
+            const keySelect = document.getElementById('keySelect').value;
+            const keyInput = document.getElementById('keyInput').value;
+            const cycles = parseInt(document.getElementById('cycles').value);
+            const periodMs = parseInt(document.getElementById('periodMs').value);
+            const downloadAt = parseInt(document.getElementById('downloadAt').value);
+            const healthCycles = parseInt(document.getElementById('healthCycles').value);
+
+            let keyHex = keyInput;
+            if (!keyHex && keySelect) {
+                try {
+                    const keyData = await apiCall(`/keys/${keySelect}`);
+                    keyHex = keyData.key_hex;
+                } catch (error) {
+                    alert(`获取密钥失败：${error.message}`);
+                    btn.disabled = false;
+                    return;
+                }
+            }
+
+            if (!keyHex) {
+                alert('请选择或输入密钥');
+                btn.disabled = false;
+                return;
+            }
+
+            if (!sasmFile) {
+                alert('请输入目标路径');
+                btn.disabled = false;
+                return;
+            }
+
+            const target = {
+                backend,
+                path: sasmFile,
+                agent_binary: agentBinary,
+                cycles,
+                period_ms: periodMs,
+                role,
+                node_id: nodeId,
+            };
+
+            addStatusEntry('Starting deployment...', 'info');
+
+            try {
+                const result = await apiCall('/deploy', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        sasm_file: sasmFile,
+                        target,
+                        key_hex: keyHex,
+                        download_at: downloadAt,
+                        health_cycles: healthCycles,
+                    }),
+                });
+
+                deployResult = result;
+
+                const stages = result.stages || [];
+                for (let i = 0; i < stages.length; i++) {
+                    const progress = ((i + 1) / stages.length) * 100;
+                    document.getElementById('progressFill').style.width = progress + '%';
+                    document.getElementById('progressText').textContent = stages[i];
+                    addStatusEntry(stages[i], 'info');
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                }
+
+                if (result.status_frames) {
+                    result.status_frames.forEach(frame => {
+                        addStatusEntry(`Event: ${frame.event}`, 'success');
+                    });
+                }
+
+                if (result.errors && result.errors.length > 0) {
+                    result.errors.forEach(err => {
+                        addStatusEntry(`Error: ${err}`, 'error');
+                    });
+                }
+
+                setTimeout(() => goToStep(5), 500);
+
+            } catch (error) {
+                addStatusEntry(`Deployment failed: ${error.message}`, 'error');
+                btn.disabled = false;
+            }
+        }
+
+        function addStatusEntry(message, type) {
+            const log = document.getElementById('statusLog');
+            const entry = document.createElement('div');
+            entry.className = `status-entry ${type}`;
+            const time = new Date().toLocaleTimeString();
+            entry.innerHTML = `<span class="status-time">[${time}]</span><span class="status-message">${message}</span>`;
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function goToStep(step) {
+            if (step < 1 || step > 5) return;
+
+            if (step === 2) {
+                loadKeys();
+            }
+
+            document.querySelectorAll('.step-panel').forEach(p => p.classList.add('hidden'));
+            document.querySelectorAll('.step-item').forEach(s => {
+                s.classList.remove('active');
+                if (parseInt(s.dataset.step) < step) {
+                    s.classList.add('completed');
+                } else {
+                    s.classList.remove('completed');
+                }
+            });
+
+            document.getElementById(`step${step}`).classList.remove('hidden');
+            document.querySelector(`.step-item[data-step="${step}"]`).classList.add('active');
+
+            currentStep = step;
+            updateStepLabel();
+            updateContentHeader(step);
+            updateProperties();
+        }
+
+        function updateContentHeader(step) {
+            const titles = ['目标配置', '密钥选择', '下装参数', '执行下装', '完成'];
+            const subtitles = [
+                '配置下装目标的后端类型与文件路径',
+                '选择或生成 HMAC-SHA256 密钥（32 字节）',
+                '配置周期数、切换时机与健康检查参数',
+                '发送帧流到目标端并监控下装进度',
+                '查看下装结果与状态帧'
+            ];
+            document.getElementById('contentTitle').textContent = titles[step - 1];
+            document.getElementById('contentSubtitle').textContent = subtitles[step - 1];
+        }
+
+        function nextStep() {
+            if (currentStep < 5) {
+                goToStep(currentStep + 1);
+            }
+        }
+
+        function prevStep() {
+            if (currentStep > 1) {
+                goToStep(currentStep - 1);
+            }
+        }
+
+        function updateStepLabel() {
+            const labels = ['目标配置', '密钥选择', '下装参数', '执行下装', '完成'];
+            document.getElementById('currentStepLabel').textContent = `步骤 ${currentStep}/5: ${labels[currentStep - 1]}`;
+        }
+
+        function resetWizard() {
+            currentStep = 1;
+            deployResult = null;
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressText').textContent = '准备中...';
+            document.getElementById('statusLog').innerHTML = '';
+            document.getElementById('progressContainer').classList.add('hidden');
+            document.getElementById('statusLog').classList.add('hidden');
+            document.getElementById('startDeployBtn').disabled = false;
+            document.getElementById('resultPanel').className = 'result-panel';
+            document.getElementById('resultDetails').innerHTML = '';
+            goToStep(1);
+            setStatus('向导已重置');
+        }
+
+        function showHelp() {
+            alert('下装向导帮助:\n\n1. 目标配置：选择后端类型和目标路径\n2. 密钥选择：选择或输入 HMAC 密钥\n3. 下装参数：配置周期数和切换参数\n4. 执行下装：开始下装并监控进度\n5. 完成：查看下装结果');
+        }
+
+        function setStatus(msg) {
+            document.getElementById('statusBarText').textContent = msg;
+        }
+
+        // Initialize
+        goToStep(1);
+    </script>
+</body>
+</html>
