@@ -15,6 +15,12 @@ from ..backend.project.service import create_project, open_project
 from ..backend.pre.merge import write_merged_file
 from ..backend.deploy.service import DeployService, DeployResult, TargetConfig
 from ..backend.deploy.key_manager import KeyManager, KeyManagerError
+from ..backend.collaboration.router import router as collaboration_router
+from ..backend.monitor.router import router as monitor_router
+from ..backend.library.router import router as library_router
+from ..backend.device.router import router as device_router
+from ..backend.graph.router import router as graph_router
+from ..backend.sim.router import router as sim_router
 
 
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "public"
@@ -38,6 +44,24 @@ app.add_middleware(
 # Serve frontend static files
 if _FRONTEND_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND_DIR)), name="static")
+
+# Include collaboration router
+app.include_router(collaboration_router)
+
+# Include monitor router
+app.include_router(monitor_router)
+
+# Include library router
+app.include_router(library_router)
+
+# Include device configuration router
+app.include_router(device_router)
+
+# Include graphical logic configuration router
+app.include_router(graph_router)
+
+# Include simulation router
+app.include_router(sim_router)
 
 
 class BuildRequest(BaseModel):

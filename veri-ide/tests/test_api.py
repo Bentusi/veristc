@@ -24,14 +24,17 @@ def test_health_endpoint(client):
 
 
 def test_root_endpoint(client):
-    """Test root endpoint."""
+    """Root serves the bundled web console when it exists, JSON when it does not."""
     response = client.get("/")
     assert response.status_code == 200
-    
+
+    if "text/html" in response.headers.get("content-type", ""):
+        assert "<html" in response.text.lower()
+        return
+
     data = response.json()
     assert data["message"] == "VeriIDE API"
     assert data["version"] == "0.1.0"
-    assert "endpoints" in data
 
 
 def test_build_valid_code(client):

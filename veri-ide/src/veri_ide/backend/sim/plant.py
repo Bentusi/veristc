@@ -117,6 +117,117 @@ class PlantValidationError(Exception):
     pass
 
 
+#: Raw value range when a point configures no amplitude limits: the whole
+#: sint32 window, so the simulator clamps nothing it was never told about.
+RAW_MIN = -2147483648
+RAW_MAX = 2147483647
+
+#: A digital point is exactly two values.
+BOOL_RANGE = (0, 1)
+
+
+def _raw_int(value: Any, what: str, problems: list[str]) -> int:
+    """Integerise a configured value: `.plant` carries raw sint32, nothing else."""
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        problems.append(f"{what} is not a number: {value!r}")
+        return 0
+
+
+def plant_from_external_variables(station_id: str, rows: list[dict]) -> PlantModel:
+    """
+    Derive the object table a station simulates against from its point config.
+
+    Stage 1 owns the physics statement here: direction, amplitude limits and the
+    fault preset are exactly what `spec/simulation-spec.md` section 1 asks a
+    channel row for, so a hand-kept `.plant` would only drift from it.
+
+    A mapped input becomes a `CONST` holding its preset until something drives
+    it; a mapped output becomes an `ACTUATOR` that echoes whatever the program
+    writes. First-order lag and ramp dynamics are not derivable from a point
+    table -- those stay the plant editor's job.
+
+    Unmapped variables are left out: they declare storage in `VAR_GLOBAL` but
+    reach no channel, so the program's IOMAP lists them nowhere and the
+    simulator would have nothing to match a row against.
+    """
+    problems: list[str] = []
+    channels: list[PlantChannel] = []
+    seen: dict[int, str] = {}
+
+    for row in rows:
+        name = row.get("name", "?")
+        if not row.get("mapped") or row.get("channel") is None:
+            continue
+        channel = _raw_int(row["channel"], f"{name}: channel", problems)
+        if not 0 <= channel <= 63:
+            problems.append(f"{name}: channel {channel} outside 0..63")
+            continue
+        if channel in seen:
+            problems.append(f"channel {channel} bound by both {seen[channel]} and {name}")
+            continue
+        seen[channel] = name
+
+        direction = row.get("direction")
+        if direction == "input":
+            kind = ChannelKind.CONST
+        elif direction == "output":
+            kind = ChannelKind.ACTUATOR
+        else:
+            problems.append(f"{name}: unknown direction {direction!r}")
+            continue
+
+        limits = (RAW_MIN, RAW_MAX) if row.get("st_type") != "BOOL" else BOOL_RANGE
+        lower, upper = limits
+        if row.get("safety_min") is not None:
+            lower = _raw_int(row["safety_min"], f"{name}: safety_min", problems)
+        if row.get("safety_max") is not None:
+            upper = _raw_int(row["safety_max"], f"{name}: safety_max", problems)
+        if lower > upper:
+            problems.append(f"{name}: safety_min {lower} > safety_max {upper}")
+            lower, upper = min(lower, upper), max(lower, upper)
+
+        init_val = 0
+        if kind == ChannelKind.CONST and row.get("fault_hold") == "preset":
+            init_val = _raw_int(row.get("preset_value"), f"{name}: preset_value", problems)
+        init_val = min(max(init_val, lower), upper)
+
+        channels.append(
+            PlantChannel(
+                channel_id=channel,
+                dir=ChannelDir.INPUT if direction == "input" else ChannelDir.OUTPUT,
+                kind=kind,
+                gain=0,
+                offset=0,
+                min_val=lower,
+                max_val=upper,
+                init_val=init_val,
+                drive=-1,
+            )
+        )
+
+    if not rows:
+        problems.append(f"station {station_id} declares no configuration variables")
+    elif not channels:
+        problems.append(f"station {station_id} maps no channel, so there is nothing to simulate")
+    if problems:
+        raise PlantValidationError("; ".join(problems))
+
+    model = PlantModel(
+        name=f"{station_id}_config",
+        description=(
+            f"Derived from station {station_id}: mapped points as held inputs and "
+            "echoing actuators, limits from the point configuration"
+        ),
+        channels=sorted(channels, key=lambda ch: ch.channel_id),
+    )
+    errors = PlantService().validate_plant_model(model)
+    if errors:
+        raise PlantValidationError("derived table rejected: " + "; ".join(errors))
+    return model
+
+
 class PlantService:
     """Service for managing plant models."""
 

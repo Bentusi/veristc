@@ -2,14 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://veristc.dev/schema/fc.schema.json",
   "title": "Function Chart (FC)",
-  "description": "Graphical representation of algorithm block interconnections",
+  "description": "One graphical logic page: algorithm blocks, their interconnections, graph-stage constants and the variable interface. A project chains several FC documents (one per page); pages are joined by interface ports that share a name and `scope: intermediate`.",
   "type": "object",
   "required": ["version", "type", "name", "blocks", "connections"],
   "properties": {
     "version": {
       "type": "string",
-      "const": "1.0",
-      "description": "Schema version"
+      "enum": ["1.0", "1.1"],
+      "description": "Schema version (1.1 adds page, constants and port bindings)"
     },
     "type": {
       "type": "string",
@@ -20,6 +20,25 @@
       "type": "string",
       "pattern": "^[A-Z_][A-Z0-9_]*$",
       "description": "Program name (uppercase identifier)"
+    },
+    "page": {
+      "type": "object",
+      "required": ["id"],
+      "description": "The sheet this document is drawn on",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "label": {"type": "string", "default": ""},
+        "index": {"type": "integer", "minimum": 0, "default": 0},
+        "sheet": {
+          "type": "string",
+          "enum": ["A4", "A3", "A2", "A1"],
+          "default": "A3",
+          "description": "Paper size; the drawing frame zones are derived from it, not stored"
+        }
+      }
     },
     "interface": {
       "type": "object",
@@ -42,6 +61,12 @@
       },
       "default": {}
     },
+    "constants": {
+      "type": "array",
+      "description": "Graph-stage constants: sources of a fixed value, joined to pins by a wire like any other output",
+      "items": {"$ref": "#/definitions/constant"},
+      "default": []
+    },
     "blocks": {
       "type": "array",
       "items": {"$ref": "#/definitions/block"},
@@ -54,50 +79,107 @@
     }
   },
   "definitions": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "stType": {
+      "type": "string",
+      "enum": [
+        "BOOL", "BYTE", "WORD", "DWORD",
+        "SINT", "INT", "DINT", "LINT",
+        "REAL", "LREAL", "TIME",
+        "QBOOL", "QINT", "QDINT", "QREAL",
+        "STRING"
+      ]
+    },
+    "position": {
+      "type": "object",
+      "required": ["x", "y"],
+      "properties": {
+        "x": {"type": "number"},
+        "y": {"type": "number"}
+      }
+    },
     "port": {
       "type": "object",
       "required": ["name", "type"],
       "properties": {
-        "name": {
-          "type": "string",
-          "pattern": "^[a-z_][a-z0-9_]*$"
-        },
-        "type": {
-          "type": "string",
-          "enum": ["BOOL", "DINT", "REAL", "STRING"]
-        },
+        "name": {"$ref": "#/definitions/identifier"},
+        "type": {"$ref": "#/definitions/stType"},
         "default": {
           "type": ["string", "number", "boolean"]
-        }
+        },
+        "scope": {
+          "type": "string",
+          "enum": ["external", "intermediate", "local"],
+          "default": "external",
+          "description": "external = comes from / goes to a station's configuration variable table; intermediate = the same variable on several pages, which is how pages are joined; local = page-private"
+        },
+        "bind": {
+          "type": "object",
+          "required": ["variable"],
+          "additionalProperties": false,
+          "description": "The station configuration variable this port is associated with",
+          "properties": {
+            "station": {"$ref": "#/definitions/identifier"},
+            "variable": {"$ref": "#/definitions/identifier"}
+          }
+        },
+        "unit": {"type": "string", "default": ""},
+        "description": {"type": "string", "default": ""},
+        "position": {"$ref": "#/definitions/position"},
+        "page": {"$ref": "#/definitions/identifier"}
+      }
+    },
+    "constant": {
+      "type": "object",
+      "required": ["id", "type", "value", "position"],
+      "properties": {
+        "id": {"$ref": "#/definitions/identifier"},
+        "type": {"$ref": "#/definitions/stType"},
+        "value": {"type": ["string", "number", "boolean"]},
+        "position": {"$ref": "#/definitions/position"},
+        "page": {"$ref": "#/definitions/identifier"}
       }
     },
     "block": {
       "type": "object",
       "required": ["id", "type", "position"],
       "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z_][a-z0-9_]*$",
-          "description": "Block instance name"
-        },
+        "id": {"$ref": "#/definitions/identifier"},
         "type": {
           "type": "string",
-          "description": "Block type (e.g., PID, LIMITER, RS, SR)"
+          "description": "Block type as written in ST (e.g. PID, LIMITER, RS, SR)"
         },
-        "position": {
-          "type": "object",
-          "required": ["x", "y"],
-          "properties": {
-            "x": {"type": "number"},
-            "y": {"type": "number"}
-          }
+        "library_id": {
+          "type": "string",
+          "description": "Library entry the pins are read from; defaults to `type`",
+          "default": ""
         },
+        "position": {"$ref": "#/definitions/position"},
         "parameters": {
           "type": "object",
           "additionalProperties": {
             "type": ["string", "number", "boolean"]
           },
           "default": {}
+        },
+        "page": {"$ref": "#/definitions/identifier"}
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "required": ["block", "port"],
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "type": "string",
+          "description": "Block id, constant id, or '__interface__' for a page port"
+        },
+        "port": {
+          "type": "string",
+          "description": "Pin name; for '__interface__' it is the interface port name"
         }
       }
     },
@@ -105,34 +187,9 @@
       "type": "object",
       "required": ["from", "to"],
       "properties": {
-        "from": {
-          "type": "object",
-          "required": ["block", "port"],
-          "properties": {
-            "block": {
-              "type": "string",
-              "description": "Source block ID or '__interface__' for input ports"
-            },
-            "port": {
-              "type": "string",
-              "description": "Source port name"
-            }
-          }
-        },
-        "to": {
-          "type": "object",
-          "required": ["block", "port"],
-          "properties": {
-            "block": {
-              "type": "string",
-              "description": "Target block ID or '__interface__' for output ports"
-            },
-            "port": {
-              "type": "string",
-              "description": "Target port name"
-            }
-          }
-        }
+        "from": {"$ref": "#/definitions/endpoint"},
+        "to": {"$ref": "#/definitions/endpoint"},
+        "page": {"$ref": "#/definitions/identifier"}
       }
     }
   }

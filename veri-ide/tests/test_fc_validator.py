@@ -112,7 +112,10 @@ def test_validate_fc_invalid_block_id():
         "name": "TEST",
         "blocks": [
             {
-                "id": "Block1",
+                # Identifiers may start with a letter or an underscore and hold
+                # letters, digits and underscores -- this has both a leading
+                # digit and a hyphen.
+                "id": "1bad-block",
                 "type": "PID",
                 "position": {"x": 0, "y": 0},
             }
@@ -144,7 +147,8 @@ def test_validate_fc_invalid_port_type():
         "type": "FC",
         "name": "TEST",
         "interface": {
-            "input": [{"name": "in1", "type": "INT"}],
+            # INT is a legal SafeST type; FLOAT is not a type at all.
+            "input": [{"name": "in1", "type": "FLOAT"}],
         },
         "blocks": [],
         "connections": [],

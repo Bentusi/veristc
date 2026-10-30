@@ -6,12 +6,15 @@ import tempfile
 from pathlib import Path
 
 from veri_ide.backend.sim.plant import (
+    RAW_MAX,
+    RAW_MIN,
     PlantChannel,
     PlantModel,
     PlantService,
     PlantValidationError,
     ChannelDir,
     ChannelKind,
+    plant_from_external_variables,
 )
 
 
@@ -364,3 +367,75 @@ class TestPlantService:
 
         errors = service.validate_plant_model(model)
         assert errors == []
+
+
+def _point(name, direction, st_type, channel, **kwargs):
+    row = {
+        "name": name,
+        "direction": direction,
+        "st_type": st_type,
+        "mapped": channel is not None,
+        "channel": channel,
+        "safety_min": None,
+        "safety_max": None,
+        "fault_hold": "",
+        "preset_value": None,
+    }
+    row.update(kwargs)
+    return row
+
+
+class TestPlantFromStationConfig:
+    """The station's point table is the object table's only source."""
+
+    def test_inputs_hold_and_outputs_echo(self):
+        model = plant_from_external_variables("ST1", [
+            _point("SW_A", "input", "BOOL", 12),
+            _point("PUMP", "output", "BOOL", 20),
+        ])
+        assert [ch.to_plant_line() for ch in model.channels] == [
+            "12 INPUT CONST 0 0 0 1 0 -1",
+            "20 OUTPUT ACTUATOR 0 0 0 1 0 -1",
+        ]
+        assert PlantService().validate_plant_model(model) == []
+
+    def test_limits_and_fault_preset_come_from_the_point(self):
+        model = plant_from_external_variables("ST1", [
+            _point("PV", "input", "DINT", 0, safety_min=0, safety_max=1000,
+                   fault_hold="preset", preset_value=250.4),
+            _point("ACT", "output", "DINT", 8, safety_min=0, safety_max=1000),
+        ])
+        pv, act = model.channels
+        assert (pv.min_val, pv.max_val, pv.init_val) == (0, 1000, 250)
+        assert (act.min_val, act.max_val, act.init_val) == (0, 1000, 0)
+
+    def test_unconfigured_analogue_gets_the_whole_raw_window(self):
+        """No limits means nothing to clamp, not an invented range."""
+        model = plant_from_external_variables("ST1", [_point("SP", "input", "DINT", 2)])
+        assert (model.channels[0].min_val, model.channels[0].max_val) == (RAW_MIN, RAW_MAX)
+
+    def test_unmapped_variables_are_left_out(self):
+        """They declare storage but reach no channel, so no row can name one."""
+        model = plant_from_external_variables("ST1", [
+            _point("SW_A", "input", "BOOL", 12),
+            _point("UNUSED", "input", "BOOL", None),
+        ])
+        assert [ch.channel_id for ch in model.channels] == [12]
+
+    def test_a_table_that_cannot_be_simulated_is_refused(self):
+        for rows in ([], [_point("SW_A", "input", "BOOL", None)]):
+            with pytest.raises(PlantValidationError):
+                plant_from_external_variables("ST1", rows)
+
+    def test_two_points_on_one_channel_are_refused(self):
+        with pytest.raises(PlantValidationError, match="bound by both"):
+            plant_from_external_variables("ST1", [
+                _point("A", "input", "DINT", 0),
+                _point("B", "input", "DINT", 0),
+            ])
+
+    def test_inverted_limits_are_refused(self):
+        with pytest.raises(PlantValidationError, match="safety_min"):
+            plant_from_external_variables("ST1", [
+                _point("A", "input", "DINT", 0, safety_min=500, safety_max=100),
+            ])

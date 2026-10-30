@@ -40,6 +40,31 @@
           "type": "string",
           "enum": ["input", "output"],
           "description": "I/O direction (default: input for ai.toml, output for ao.toml)"
+        },
+        "st_type": {
+          "type": "string",
+          "description": "SafeST data type written into the generated IOMAP entry; with direction it fixes the module kind (AI/AO/DI/DO)"
+        },
+        "point_name": {
+          "type": "string",
+          "description": "Hardware point tag, unique within one station"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Engineering unit shown on pins and in the variable table"
+        },
+        "has_quality": {
+          "type": "boolean",
+          "description": "Channel carries a quality bit. Section 3 of .sasm has no quality field, so this is station configuration consumed by simulation and monitoring only"
+        },
+        "fault_hold": {
+          "type": "string",
+          "enum": ["", "last_value", "preset"],
+          "description": "Behaviour when the channel faults: keep last cycle value, fall back to a preset value, or leave it to the runtime default"
+        },
+        "preset_value": {
+          "type": "number",
+          "description": "Fallback value used when fault_hold is 'preset'"
         }
       },
       "additionalProperties": false
