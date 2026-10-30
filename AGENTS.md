@@ -21,7 +21,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   ├── run_channel_e2e.sh            单组 RPS 4 通道保护黄金时间线 e2e
 │   ├── run_algo_e2e.sh               RS/SR/PID/FBY 算法块多实例黄金时间线 e2e
 │   ├── run_algo_fb_e2e.sh            原生 FUNCTION_BLOCK 算法块多实例 e2e
-│   ├── run_sim_e2e.sh                闭环仿真 e2e（.plant 对象 + sim 主程序 + 黄金时间线 + watch 帧）
+│   ├── run_sim_e2e.sh                闭环仿真 e2e（.plant 对象 + sim 主程序 + 黄金时间线 + watch 帧 + 激励/强制）
 │   ├── dl_frames.py                    下装帧参考发送端（Python，与 C 接收端相互独立）
 │   ├── run_download_e2e.sh             下装 e2e（管道送帧 → 周期边界切换 → 拒绝矩阵 → 健康回滚）
 │   └── run_nuclear_e2e.sh            核电 ST→SASM→VM 端到端验证
@@ -37,7 +37,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 ├── spec/                           ← 顶层 Spec 文档（开发可读，跨组件协议唯一源）
 │   ├── safest-spec.md                SafeST 语言规范（BNF + 类型系统）
 │   ├── safeasm-spec.md               SafeASM 指令集 + 二进制格式
-│   ├── simulation-spec.md            仿真协议：`.plant` 被控对象表 + `sim` 命令行 + watch 帧
+│   ├── simulation-spec.md            仿真协议：`.plant` 被控对象表 + `sim` 命令行 + watch 帧 + 激励（`--force`/`--script`）
 │   ├── download-spec.md              下装帧协议：帧字节布局 + 两道校验 + 拒绝码 + agent 命令行
 │   └── semantics-preservation.md     ST→ASM 映射 + 正确性定理说明
 ├── veri-stc/                       ← 编译器组件（形式化核，Coq 实现+证明 → OCaml）
@@ -96,20 +96,27 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 │   │   └── rtthread/                           RT-Thread 移植（需外部 SDK）
 │   ├── agent/                        目标端 agent（G0/W5）
 │   │   └── agent_main.c                  veristc-agent：装载 + 周期执行 + 下装服务 + 状态上报
-│   ├── sim/                          仿真后端（G0/W3+W4：软件 I/O + 被控对象 + watch 帧）
+│   ├── sim/                          仿真后端（G0/W3+W4 + 阶段 3 激励：软件 I/O + 被控对象 + watch 帧 + 强制）
 │   │   ├── plant.c/.h                        `.plant` 解析 + 确定性步进（CONST/LAG/RAMP/ACTUATOR）
 │   │   ├── sim_io.c/.h                       VM_Interface 软件实现 + 虚拟时钟
 │   │   ├── watch.c/.h                        `--watch` JSONL 帧：段 7 名字 → 地址 → 数值（协议 §4）
+│   │   ├── force.c/.h                        `--force`/`--script` 激励表 + 落点规则 + 启动即拒（协议 §5）
 │   │   ├── sim_main.c                        `sim` 主程序：走 io_mapping_cycle 全路径
 │   │   └── plants/closed_loop.plant          演示对象表（一阶惯性 + 恒值设定 + 执行器）
 │   ├── tests/
 │   │   ├── vm-tests/                         C VM 单元测试与核电端到端测试
 │   │   └── fuzz/                             .sasm 加载器模糊测试 + corpus
-│   ├── run_vm_checks.sh                VM/SVM 单元+周期+CRC+符号表+量程+下装帧检查（97 项，最细回归指纹）
+│   ├── run_vm_checks.sh                VM/SVM 单元+周期+CRC+符号表+量程+下装帧检查（99 项，最细回归指纹）
 │   ├── run_misra_check.sh              MISRA-C 静态检查（逐文件用例式输出，可传文件参数）
 │   ├── run_sanitizer.sh                ASan/UBSan 内存安全检测
 │   └── run_fuzzer.sh                   .sasm 加载器模糊测试
-└── veri-ide/                       ← 工程站组件（VeriIDE Web IDE，Phase 6 规划中，现仅 README）
+└── veri-ide/                       ← 工程站组件（VeriIDE：Tauri 2.x + React 18 + Vite + FastAPI 侧车）
+    ├── src/veri_ide/api/server.py      侧车入口（127.0.0.1:8000，路由无 /api 前缀）
+    ├── src/veri_ide/backend/           按域切分：device / graph / sim / library / monitor / deploy / build / registry / collaboration
+    ├── src/veri_ide/schema/            FC 图页 + iomap 的 JSON Schema（跨组件协议仍只在顶层 spec/）
+    ├── web/src/                        pages/{Device,GraphEditor,Library,Monitor,Download}Page + components/graph 检查器与仿真面板
+    ├── src-tauri/                      桌面壳：托管侧车进程、文件对话框
+    └── tests/                          pytest 后端回归（383 项）
 ```
 
 三组件的依赖规则（不可违反）：
@@ -137,8 +144,11 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
   - 双机热备（状态快照 + 脏页同步 + 无扰切换 + 增量下装）
   - 两个主程序分工：`svm` 只跑 VM（不建映射表），`sim` 走 `io_mapping_cycle` 全路径并
     用 `.plant` 被控对象表充当软件 I/O 硬件；`sim --watch 名字表` 逐周期把「符号名 → 段 7
-    地址 → 数值」以 stdout JSONL 帧发出，这就是工程站仿真按钮要消费的数据面 —— 协议见
-    `spec/simulation-spec.md`（`.plant` 格式 + `sim` 命令行 + watch 帧）
+    地址 → 数值」以 stdout JSONL 帧发出，这就是工程站仿真按钮要消费的数据面。激励走
+    `--force 名字=值`（自周期 1 起保持）与 `--script 文件`（一行一条 `周期 名字 值`），
+    落点由符号自身决定：绑定 INPUT 通道的注入被控对象，其余覆盖段 7 全局槽位；帧的第八键
+    `forced` 标明该值来自程序之外 —— 协议见 `spec/simulation-spec.md`（`.plant` 格式 +
+    `sim` 命令行 + watch 帧 + 激励 §5）
   - 第三个主程序 `veristc-agent`（G0/W5）＝ 目标端常驻服务：装载 `.sasm` → 逐周期执行 →
     从文件/管道吸收**下装帧**（HMAC-SHA256 先验、CRC32 后验，两道独立闸）→ 在周期边界把整个 VM
     重绑到新镜像（冷启动语义：栈与线性内存清零）→ 健康检查不过即回切上一个版本槽；状态以
@@ -178,7 +188,7 @@ veristc/                            ← 仓库根：三组件 + 跨组件集成
 | 3 | 第 21-25 周 | 双机热备 + 增量下装 | Phase 1 | ✅ 完成 |
 | 4 | 第 26-29 周 | 工程化完善（测试+文档） | Phase 1-3 | ✅ 完成 |
 | 5 | 第 30 周起 | 恢复 IEC 风格无状态 FUNCTION + CALL/RETURN + 后续证明 | Phase 1 | 🚧 进行中 |
-| 6 | 待定（估 28-32 周） | VeriIDE Web 工程站：图形组态→编译→仿真→下装闭环 + 算法块库 | Phase 1-3 | 🚧 G0 完成 / G1 规划中 |
+| 6 | 待定（估 28-32 周） | VeriIDE Web 工程站：图形组态→编译→仿真→下装闭环 + 算法块库 | Phase 1-3 | 🚧 G0-G2 完成，G3 进行至 3-E，G4/G5 已有骨架 |
 
 Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨架，📝 方案已写）→ G2（图形组态）→ G3（仿真验证）→ G4（下装运行）→ G5（库与扩展）。
 详细实现指引：`plan/phase6-veriide.prompt.md`（总览）、`plan/phase6-g0-technical-plan.md`（G0）、`plan/phase6-g1-technical-plan.md`（G1）。
@@ -236,6 +246,17 @@ Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨
   `loader.c` 的 `read_f64` **逐条采信文件值**并拒绝非有限值（NaN/±Inf → 加载失败）。
   当前 SafeST 无量程语法，发射值恒为 `1.0 / 0.0`；工程量程属 G0/W3 仿真侧 `.plant` 表
   （协议见 `spec/safeasm-spec.md` §4.4 与验证规则 V10b）
+- **REAL 字面量真值链（v1.5.4）**：Coq `lexer.v` 按 `mant / 10^k` **一次除法**求值十进制字面量
+  （有效数字 ≤ 15、小数位 ≤ 22、`E+n`/`E-n` 另加相应预算），前提不成立即判词法失败（退出码 21），
+  **绝不二次舍入**；`-1.5` 由 `parser.v` 折进字面量本身（符号位翻转，精确）。因 `PrimFloat.float`
+  在 Coq 内拿不到 IEEE-754 位，`encoder.v` 的 `F32_CONST/F64_CONST` 立即数仍写占位零，但偏移与宽度
+  由同源同构的 `encode_code_float_rows` 导出，主机侧 `patch_code_floats` 逐条核对「该字节确为
+  0x43/0x44」「其后宽度仍为全零」「行序不重叠」后覆盖真值，任一不符即拒绝产出（`-c` 与 `-g` 共用
+  `encode_patched_image`，两份制品同源）。binary64→binary32 收窄由 `f32_bits_of_float` 以
+  round-to-nearest-even 手工完成（OCaml 标准库无 `Float32`），与 C 的 `(float)` 转换逐位相同。
+  **当前缺口**：`svm` 的 `F32_CONST`/`LOCAL_SET`/`LOCAL_GET` 单槽路径已验证可用，但 PROGRAM 体走
+  `global_codegen.v` 的 `compile_expr_g`，对二元/一元运算统一发 I32 指令 ⇒ REAL **算术**仍不可用
+  （特性探针 p07 XFAIL 的根因）；LREAL 在运行站没有 `F64_LOAD/STORE`，只能作常量。
 - **IOMAP（段 3）地址单一真值**：`[4-7]` `mem_offset` 由 Coq `global_codegen.v` 的
   `resolve_io_map` **按名**向 `build_global_env`（段 7 用的同一张表）取该全局变量的槽位地址。
   此前它按 1024 起步自行编号，而变量在 4096 起步 ⇒ 运行站写入映射的位置与程序读写的变量
@@ -257,10 +278,10 @@ Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨
 
 **组件内测试**（改动只落在一个组件时，跑这些最快）：
 
-- `veri-runtime/run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、原生 FB 多实例/VAR_IN_OUT 别名/svobj 元数据、实例字段封装与派生名拒绝（KIND=access / 展开后重名 / 字面 `#` 不可书写）、dump/SIL3/CRC、1000ms 周期+损坏 CRC 与全零 CRC 拒绝（G0/W5 起 stored_crc==0 也判 -2）、Debug 段符号表（派生名字→地址解析、地址落在全局槽区间、`-l`/`-i` 条数一致、字节级确定性）、IOMAP 量程（编译器发射的 scale/bias 经加载器逐条采信、非有限值拒绝、`svm -m` 的地址必出现在 `svm -l`）、
+- `veri-runtime/run_vm_checks.sh`：VM 单元测试、SVM 单周期运行、完整 `FUNCTION` 控制流/嵌套 `CALL`/纯性与递归拒绝、原生 FB 多实例/VAR_IN_OUT 别名/svobj 元数据、实例字段封装与派生名拒绝（KIND=access / 展开后重名 / 字面 `#` 不可书写）、dump/SIL3/CRC、1000ms 周期+损坏 CRC 与全零 CRC 拒绝（G0/W5 起 stored_crc==0 也判 -2）、Debug 段符号表（派生名字→地址解析、地址落在全局槽区间、`-l`/`-i` 条数一致、字节级确定性）、IOMAP 量程（编译器发射的 scale/bias 经加载器逐条采信、非有限值拒绝、`svm -m` 的地址必出现在 `svm -l`）、REAL 字面量立即数经加载器与解释器原样落槽（`svm <sasm> <位模式> <局部槽>`）、
   下装帧协议（SHA-256/HMAC 对公开测试向量、多帧重组、逐类畸形帧拒绝）、全量镜像下装链路
-  （收帧→装槽→周期边界重绑→回滚，用真实 `.sasm` 制品）—— **97 项，最细的回归指纹**
-- `veri-stc/tests/compiler-tests/run_compiler_tests.sh`：编译器正/负用例 + 机器可读 CLI 断言（基线 accepted=42, failed=0；第 3 步覆盖退出码、`--json` 与 IOMAP 未绑定名拒绝）
+  （收帧→装槽→周期边界重绑→回滚，用真实 `.sasm` 制品）—— **99 项，最细的回归指纹**
+- `veri-stc/tests/compiler-tests/run_compiler_tests.sh`：编译器正/负用例 + 机器可读 CLI 断言（基线 accepted=49, failed=0；第 3 步覆盖退出码、`--json`、IOMAP 未绑定名拒绝与 REAL 字面量落盘位模式）
 - `veri-runtime/run_misra_check.sh`：MISRA-C 静态合规检查（cppcheck；缺失即判 FAIL，不静默跳过）
 - `veri-runtime/run_sanitizer.sh`：ASan/UBSan 内存安全检测（含下装帧与镜像切换的 ASan 变体）
 - `veri-runtime/run_fuzzer.sh`：`.sasm` 加载器模糊测试
@@ -274,7 +295,7 @@ Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨
 - `integration/run_algo_e2e.sh`：RS/SR/PID/FBY 算法块多实例 12 周期黄金时间线验证
 - `integration/run_algo_fb_e2e.sh`：原生 FUNCTION_BLOCK 版算法块（VAR_OUTPUT 多输出、VAR 实例持久状态、VAR_IN_OUT 别名、IF 控制流）12 周期黄金时间线验证
 - `integration/run_download_e2e.sh`：下装端到端——Python 发送端经管道送帧 → agent 收帧 → 周期边界切换（判据是**程序输出形状真的换了**，不是状态帧自证）、六类拒绝用例（篡改/CRC/截断/超限/序号缺口/错钥，每条都核对"活动镜像不动"）、健康检查回滚（新镜像超自身周期预算 ⇒ 回切旧槽后继续扫描）、agent 命令行与退出码协议 + 状态帧 JSON 可解析（34 项）
-- `integration/run_sim_e2e.sh`：闭环仿真——积分控制器 + 一阶惯性被控对象 12 周期黄金时间线、两次运行逐字节确定、`.plant` 协议拒绝（重名/方向/越界/非有限/字段数/驱动断链）、程序与对象表一致性拒绝（通道缺失/方向不符/无映射段）、watch 帧与 `svm -l`/黄金时间线逐条交叉核对 + 名字表启动即拒（26 项）
+- `integration/run_sim_e2e.sh`：闭环仿真——积分控制器 + 一阶惯性被控对象 12 周期黄金时间线、两次运行逐字节确定、`.plant` 协议拒绝（重名/方向/越界/非有限/字段数/驱动断链）、程序与对象表一致性拒绝（通道缺失/方向不符/无映射段）、watch 帧与 `svm -l`/黄金时间线逐条交叉核对 + 名字表启动即拒、激励（`--force`/`--script` 逐周期注入与覆盖、被强制符号仍作为帧列返回、执行器收到的是强制值而非程序值、`forced` 标记逐周期齐备、未知名/实例基名/类型不符/越界/重名/缺 `=`/脚本重名/超周期/字段数错/同名既 force 又 script 共十类启动即拒、两次激励运行逐字节确定）（41 项）
 
 ### 变更后验证路由（Skill: verify-route）
 
@@ -301,12 +322,15 @@ Phase 6 子阶段：G0（前置能力补齐，✅ 完成）→ G1（工程站骨
 | `veri-stc/tests/st-examples/algo_blocks_fb.st` | `./integration/run_algo_fb_e2e.sh` | FB 版算法块用例变更 |
 | `veri-stc/tests/st-examples/qualified_access_field.st` | `./veri-runtime/run_vm_checks.sh` | 点号访问/名字分离用例变更 |
 | `veri-stc/tests/st-examples/io_cal.st` | `./veri-runtime/run_vm_checks.sh` | IOMAP 量程黄金制品（`svm -m` 断言）变更 |
-| `veri-stc/tests/st-examples/sim_closed_loop.st` 或 `*.golden.timeline` | `./integration/run_sim_e2e.sh` | 闭环黄金时间线变更 |
+| `veri-stc/tests/st-examples/sim_closed_loop.st` 或 `*.golden.timeline` 或 `*.stim` | `./integration/run_sim_e2e.sh` | 闭环黄金时间线或其激励脚本变更 |
 | `veri-runtime/sim/plants/*.plant` | `./integration/run_sim_e2e.sh` | 被控对象表变更（黄金时间线随之变） |
 | `veri-stc/tests/compiler-tests/**/*.st` | `./veri-stc/tests/compiler-tests/run_compiler_tests.sh && ./veri-runtime/run_vm_checks.sh` | 正/负编译用例变更（负例还需 run_vm_checks 校验诊断内容） |
+| `spec/simulation-spec.md` | `make build-sim && ./integration/run_sim_e2e.sh` | 仿真协议变更（实现侧由 `veri-runtime/sim/**` 行覆盖） |
 | `spec/download-spec.md`、`integration/dl_frames.py` | `./integration/run_download_e2e.sh` | 下装协议或其参考实现变更 |
 | `Makefile`、`Makefile.common`、`veri-*/Makefile`、`run_*.sh`、`integration/*.sh` | `./integration/run_tests.sh` | 构建/验证基础设施变更 → 全量回归 |
-| `veri-ide/**`、`*.md`、`*.json`、`*.yml` | 无需验证 | 工程站尚无实现（Phase 6 G1 起引入协议测试门禁）；文档/配置 |
+| `veri-ide/src/**`、`veri-ide/tests/**` | `cd veri-ide && .venv/bin/python -m pytest tests/ -q` | 工程站后端（FastAPI）变更 |
+| `veri-ide/web/src/**` | `cd veri-ide/web && pnpm exec tsc --noEmit && pnpm build` | 工程站前端变更；界面行为仍需浏览器实测断言 |
+| `*.md`、`*.json`、`*.yml` | 无需验证 | 文档/配置 |
 
 **补充规则**（C 源文件变更时可叠加）：
 - 任何 `veri-runtime/**/*.c` 变更 → 建议追加 `./veri-runtime/run_misra_check.sh`
@@ -353,8 +377,8 @@ make build-fuzzer           # .sasm 加载器模糊测试二进制
 
 # 测试
 ./integration/run_tests.sh              # 全量（10 组）
-./veri-runtime/run_vm_checks.sh         # 仅 VM/SVM（97 项）
-./integration/run_sim_e2e.sh            # 仅闭环仿真（26 项）/ 也可 make sim-demo 肉眼看
+./veri-runtime/run_vm_checks.sh         # 仅 VM/SVM（99 项）
+./integration/run_sim_e2e.sh            # 仅闭环仿真（41 项）/ 也可 make sim-demo 肉眼看
 ./integration/run_download_e2e.sh       # 仅下装 e2e（34 项）
 ./integration/run_nuclear_e2e.sh        # 仅核电端到端
 ./veri-runtime/run_fuzzer.sh 100000      # 模糊测试（默认 100000 次）
