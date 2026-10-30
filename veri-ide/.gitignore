@@ -10,7 +10,8 @@ venv/
 ENV/
 
 # Build artifacts
-build/
+# 锚定到本组件根：src/veri_ide/backend/build/ 是构建编排的源码包，不是产物目录。
+/build/
 *.sasm
 *.svobj
 *.merged.st
