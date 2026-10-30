@@ -7,11 +7,15 @@
  *     -t MS         周期时长，虚拟毫秒（默认 100）
  *     -q            只打印汇总，不打印逐周期时间线
  *     --watch NAMES 每周期输出一行 JSONL watch 帧（逗号分隔符号名，含派生名 实例#字段）
+ *     --force LIST  立即强制：逗号分隔 name=value，自周期 1 起保持（sim/force.h）
+ *     --script FILE 周期脚本：一行一条 cycle name value
  *     -h            帮助
  *
- * 每周期走完整 I/O 扫描路径：
- *   io_mapping_read_all()（被控对象 -> VM 内存）-> vm_run() ->
- *   io_mapping_write_all()（VM 内存 -> 执行器）-> plant_step()
+ * 每周期走完整 I/O 扫描路径，外加激励的两个落点（协议 §3 与 §5.3）：
+ *   注入 INPUT 通道 -> io_mapping_read_all()（被控对象 -> VM 内存）-> vm_run() ->
+ *   强制全局槽位 -> io_mapping_write_all()（VM 内存 -> 执行器）-> plant_step()
+ * 拆成三步而不是调 io_mapping_cycle()，就是为了把强制写在"程序算完、写回之前"：
+ * 只写一次的话，下一周期就被同一块的算法改回去了。无激励时逐周期与 io_mapping_cycle 等价。
  * 这是 svm 从不经过的分支：svm 只执行 VM，I/O 与热备在它那里是缺席的。
  *
  * --watch 时 stdout 只走帧（配置回显改道 stderr），帧协议见 sim/watch.h。
@@ -30,6 +34,7 @@
 #include "../core/vm.h"
 #include "../io/io_mapping.h"
 #include "../rtos/abstract.h"
+#include "force.h"
 #include "plant.h"
 #include "sim_io.h"
 #include "watch.h"
@@ -42,6 +47,7 @@ static VM s_vm;
 static IOMappingTable s_iomap;
 static PlantTable s_plant;
 static WatchSet s_watch;
+static ForceTable s_force;
 static uint8_t s_file_data[SIM_MAX_FILE_SIZE];
 static uint32_t s_file_len;
 
@@ -54,6 +60,10 @@ static void usage(const char *prog)
         "  -q          summary only, no per-cycle timeline\n"
         "  --watch N   per-cycle JSONL watch frames for comma-separated\n"
         "              symbol names (e.g. --watch pv,mv,pid1#U)\n"
+        "  --force L   hold symbols: comma-separated name=value from cycle 1\n"
+        "              (e.g. --force \"pv=250,rs1#Q=FALSE\")\n"
+        "  --script F  per-cycle stimulus file, one record per line:\n"
+        "              cycle name value\n"
         "  -h          show this help\n",
         prog);
 }
@@ -179,12 +189,42 @@ static void print_cycle_line(const IOMappingTable *iomap, uint32_t cycle,
     (void)printf(" status=%d\n", status);
 }
 
+/* io_mapping_cycle() 的三步展开，中间多一个强制落点（协议 §5.3）。
+   返回值与 io_mapping_cycle 逐项一致：读失败 -1，VM 错则取 vm_run 的码，
+   写失败覆盖前两者。 */
+static int sim_cycle(IOMappingTable *iomap, VM *vm, PlantTable *plant,
+                     ForceTable *force, uint32_t cycle)
+{
+    int ret;
+    int vm_ret;
+    int io_ret;
+
+    force_begin_cycle(force, cycle);
+    force_apply_plant(force, plant);
+
+    ret = io_mapping_read_all(iomap, vm);
+
+    vm_ret = vm_run(vm);
+    if (vm_ret != VM_OK) {
+        ret = vm_ret;
+    }
+
+    force_apply_memory(force, vm);
+
+    io_ret = io_mapping_write_all(iomap, vm);
+    if (io_ret != 0) { ret = io_ret; }
+
+    return ret;
+}
+
 int main(int argc, char **argv)
 {
     uint32_t cycles = 10U;
     uint32_t period_ms = 100U;
     int quiet = 0;
     const char *watch_csv = NULL;
+    const char *force_csv = NULL;
+    const char *script_path = NULL;
     const char *paths[2] = { NULL, NULL };
     uint32_t npaths = 0U;
 
@@ -205,6 +245,18 @@ int main(int argc, char **argv)
                 return 2;
             }
             watch_csv = argv[i];
+        } else if (strcmp(argv[i], "--force") == 0) {
+            if (++i >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            force_csv = argv[i];
+        } else if (strcmp(argv[i], "--script") == 0) {
+            if (++i >= argc) {
+                usage(argv[0]);
+                return 2;
+            }
+            script_path = argv[i];
         } else if (strcmp(argv[i], "-q") == 0) {
             quiet = 1;
         } else if (strcmp(argv[i], "-h") == 0) {
@@ -254,6 +306,11 @@ int main(int argc, char **argv)
         (void)fprintf(stderr, "sim: watch request rejected\n");
         return 2;
     }
+    if (force_build(&s_force, force_csv, script_path, cycles, s_file_data,
+                    s_file_len, &s_iomap, &s_vm, &s_plant) != 0) {
+        (void)fprintf(stderr, "sim: stimulus rejected\n");
+        return 2;
+    }
 
     sim_io_install(&s_plant, period_ms);
     if (g_vm_interface.init(NULL) != 0) {
@@ -270,10 +327,15 @@ int main(int argc, char **argv)
 
     for (uint32_t c = 0U; c < cycles; c++) {
         uint32_t t_ms = sim_io_ticks();
-        int rc = io_mapping_cycle(&s_iomap, &s_vm);
+        int rc = sim_cycle(&s_iomap, &s_vm, &s_plant, &s_force, c + 1U);
 
         if (s_watch.count > 0U) {
-            watch_cycle_frame(&s_watch, &s_vm, &s_iomap, c + 1U, t_ms, rc);
+            uint8_t flags[WATCH_MAX_NAMES];
+
+            for (uint32_t i = 0U; i < s_watch.count; i++) {
+                flags[i] = (uint8_t)force_is_forced(&s_force, s_watch.vars[i].name);
+            }
+            watch_cycle_frame(&s_watch, &s_vm, &s_iomap, flags, c + 1U, t_ms, rc);
         } else if (quiet == 0) {
             print_cycle_line(&s_iomap, c + 1U, rc);
         }

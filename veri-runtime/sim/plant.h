@@ -108,6 +108,16 @@ int plant_read_raw(const PlantTable *table, uint32_t channel_id, int32_t *value)
  */
 int plant_write_raw(PlantTable *table, uint32_t channel_id, int32_t value);
 
+/**
+ * plant_inject - 把传感器通道的 raw 状态钉在给定值（激励，协议 §5.3）
+ * @return 0 = 成功, -1 = 通道不存在或方向不是 INPUT
+ *
+ * 与 plant_write_raw 分两个入口：程序写的是执行器，激励写的是物理侧，
+ * 两者混在一个函数里就会让"程序在写传感器"这种配置错误悄悄通过。
+ * 值仍按 [min,max] 钳位 —— 调用方在启动时已拒绝越界激励，这里是第二道闸。
+ */
+int plant_inject(PlantTable *table, uint32_t channel_id, int32_t value);
+
 #ifdef __cplusplus
 }
 #endif

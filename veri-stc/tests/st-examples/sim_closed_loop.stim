@@ -1,0 +1,12 @@
+# .stim -- per-cycle stimulus for sim_closed_loop.sasm (spec/simulation-spec.md §5.4)
+#
+# columns: cycle name value
+#
+# `sp` is bound to an INPUT channel, so each record lands on the plant side
+# (raw counts, the physical range of channel 2 is [0,1000]); `cnt#N` is a block
+# field, so it lands on the global slot and overrides what the block computed.
+# A record holds until the next record for the same name takes over.
+
+1 sp 800
+2 cnt#N 77
+4 sp 100

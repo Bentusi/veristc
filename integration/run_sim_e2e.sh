@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # 闭环仿真端到端验证（G0 产出物 3 + 4）：
-#   [1/6] 编译 ST + 构建 sim
-#   [2/6] 12 周期时间线 vs 黄金文件（被控对象 <-> 控制器 真实闭环）
-#   [3/6] 确定性：两次仿真逐字节一致、两次编译逐字节一致
-#   [4/6] .plant 协议：畸形配置一律拒绝启动，不静默降级
-#   [5/6] 程序与对象表一致性：通道缺失/方向不符即拒绝
-#   [6/6] watch 帧：名字 -> 段 7 地址 -> 数值，逐周期与黄金时间线/`svm -l` 交叉核对
+#   [1/7] 编译 ST + 构建 sim
+#   [2/7] 12 周期时间线 vs 黄金文件（被控对象 <-> 控制器 真实闭环）
+#   [3/7] 确定性：两次仿真逐字节一致、两次编译逐字节一致
+#   [4/7] .plant 协议：畸形配置一律拒绝启动，不静默降级
+#   [5/7] 程序与对象表一致性：通道缺失/方向不符即拒绝
+#   [6/7] watch 帧：名字 -> 段 7 地址 -> 数值，逐周期与黄金时间线/`svm -l` 交叉核对
+#   [7/7] 激励与强制：周期脚本逐周期生效、forced 标记、执行器收到强制值、拒绝矩阵
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,14 +24,14 @@ V=build/bin/veristc
 SIM=build/bin/sim
 SVM=build/bin/svm
 
-step "1/6" "compile ${ST} and build sim"
+step "1/7" "compile ${ST} and build sim"
 assert_ok "make build-sim" make build-sim
 assert_ok "make build-smoke" make build-smoke
 mkdir -p "$(dirname "$OUT")"
 assert_ok "compile closed loop" "$V" -c "$ST" -o "$OUT"
 assert_file_exists "$SIM" "sim binary present"
 
-step "2/6" "run 12 cycles, diff against golden timeline"
+step "2/7" "run 12 cycles, diff against golden timeline"
 "$SIM" -n 12 -t 100 "$OUT" "$PLANT" > /tmp/sim.run.out
 grep "cycle=" /tmp/sim.run.out > /tmp/sim.run.timeline
 if diff -u "$GOLDEN" /tmp/sim.run.timeline > /tmp/sim.run.diff 2>&1; then
@@ -48,7 +49,7 @@ assert_contains "/tmp/sim.run.out" "violations=0 read_errors=0 write_errors=0" \
 # （程序->对象），二者都不是常量。
 assert_not_contains "/tmp/sim.run.out" "ch0=0 ch1=0" "plant output is not stuck at zero"
 
-step "3/6" "determinism"
+step "3/7" "determinism"
 "$SIM" -n 12 -t 100 "$OUT" "$PLANT" > /tmp/sim.run2.out
 assert_ok "second run byte-identical" cmp /tmp/sim.run.out /tmp/sim.run2.out
 "$V" -c "$ST" -o /tmp/sim-a.sasm
@@ -56,7 +57,7 @@ assert_ok "second run byte-identical" cmp /tmp/sim.run.out /tmp/sim.run2.out
 assert_ok "recompile byte-identical" cmp /tmp/sim-a.sasm /tmp/sim-b.sasm
 assert_ok "matches production artifact" cmp /tmp/sim-a.sasm "$OUT"
 
-step "4/6" ".plant contract rejects malformed tables"
+step "4/7" ".plant contract rejects malformed tables"
 mk_plant() { printf '%s\n' "$@" > /tmp/sim-bad.plant; }
 
 mk_plant '0 INPUT LAG 0.125 0 0 1000 0 1' \
@@ -96,7 +97,7 @@ mk_plant '0 INPUT LAG nan 0 0 1000 0 1' \
 assert_exit_code 2 "non-finite gain rejected" \
     "$SIM" -n 1 -q "$OUT" /tmp/sim-bad.plant
 
-step "5/6" "program and plant must agree on the channel set"
+step "5/7" "program and plant must agree on the channel set"
 mk_plant '5 INPUT CONST 0 0 0 1000 0 -1' \
          '6 OUTPUT ACTUATOR 0 0 0 1000 0 -1' \
          '7 INPUT CONST 0 0 0 1000 500 -1'
@@ -113,7 +114,7 @@ assert_exit_code 2 "direction mismatch rejected" \
 assert_exit_code 2 "program without I/O mapping rejected" \
     "$SIM" -n 1 -q build/sasm/core_assign.sasm "$PLANT"
 
-step "6/6" "watch frames: section 7 name -> address -> value, per cycle"
+step "6/7" "watch frames: section 7 name -> address -> value, per cycle"
 WATCH_NAMES='sp,pv,mv,integ,cnt#N,cnt#ACC'
 "$SIM" -n 12 -t 100 --watch "$WATCH_NAMES" "$OUT" "$PLANT" \
     > /tmp/sim.watch.out 2> /tmp/sim.watch.err
@@ -238,5 +239,98 @@ assert_exit_code 2 "instance base name (FB, no single value) rejected" \
     "$SIM" -n 1 --watch cnt "$OUT" "$PLANT"
 assert_exit_code 2 "duplicate watch name rejected" \
     "$SIM" -n 1 --watch sp,sp "$OUT" "$PLANT"
+
+STIM=veri-stc/tests/st-examples/sim_closed_loop.stim
+step "7/7" "stimulus: per-cycle injection and forcing (v0.3)"
+
+"$SIM" -q -n 6 -t 100 --watch sp,pv,mv,cnt#N --script "$STIM" "$OUT" "$PLANT" \
+    2>/dev/null | grep '^{"frame"' > /tmp/sim.stim.frames
+"$SIM" -q -n 6 -t 100 --watch sp,pv,mv,cnt#N --script "$STIM" "$OUT" "$PLANT" \
+    2>/dev/null | grep '^{"frame"' > /tmp/sim.stim.frames2
+assert_ok "second stimulus run byte-identical" cmp /tmp/sim.stim.frames /tmp/sim.stim.frames2
+
+if command -v python3 > /dev/null 2>&1; then
+    assert_ok "stimulus stream" python3 - /tmp/sim.stim.frames <<'PY'
+import json, sys
+
+# 注入落在物理侧：sp 钉在 800 之后，控制器算出的 err/mv 与一阶惯性对象的 pv
+# 全部随之改变，而未被激励的符号仍带 forced=false —— 标记不能漏报也不能误报。
+GOLDEN = {
+    1: {"sp": (800, True), "pv": (0, False), "mv": (800, False), "cnt#N": (1, False)},
+    2: {"sp": (800, True), "pv": (100, False), "mv": (1000, False), "cnt#N": (77, True)},
+    3: {"sp": (800, True), "pv": (212, False), "mv": (1000, False), "cnt#N": (77, True)},
+    4: {"sp": (100, True), "pv": (310, False), "mv": (790, False), "cnt#N": (77, True)},
+    5: {"sp": (100, True), "pv": (370, False), "mv": (520, False), "cnt#N": (77, True)},
+    6: {"sp": (100, True), "pv": (388, False), "mv": (232, False), "cnt#N": (77, True)},
+}
+
+fails = []
+rows = [json.loads(l) for l in open(sys.argv[1])]
+cycles = [r for r in rows if r["frame"] == "cycle"]
+if len(cycles) != 6:
+    fails.append("expected 6 cycle frames, got %d" % len(cycles))
+for frame in cycles:
+    got = {v["name"]: (v["value"], v["forced"]) for v in frame["values"]}
+    want = GOLDEN.get(frame["cycle"])
+    if want is None:
+        fails.append("unexpected cycle %d" % frame["cycle"])
+        continue
+    for name, pair in want.items():
+        if got.get(name) != pair:
+            fails.append("cycle %d %s: got %r, want %r" %
+                         (frame["cycle"], name, got.get(name), pair))
+# 每列八个键恒在（协议 §4.3），forced 是 v0.3 加的第八个
+for frame in cycles:
+    for v in frame["values"]:
+        if set(v) != {"name", "addr", "type", "size", "value",
+                      "channel", "raw", "forced"}:
+            fails.append("cycle %d %s keys are %r" %
+                         (frame["cycle"], v["name"], sorted(v)))
+        if v["forced"] not in (True, False):
+            fails.append("cycle %d %s forced is %r, not a bool" %
+                         (frame["cycle"], v["name"], v["forced"]))
+print("\n".join("  " + f for f in fails))
+sys.exit(1 if fails else 0)
+PY
+else
+    skip "python3 absent: stimulus stream check not run"
+fi
+
+# 立即强制：mv 绑 OUTPUT 通道，写在 vm_run 之后，因此本周期就被推给执行器
+"$SIM" -q -n 3 -t 100 --watch mv --force mv=42 "$OUT" "$PLANT" \
+    2>/dev/null | grep '^{"frame"' > /tmp/sim.force.frames
+assert_contains /tmp/sim.force.frames '"name":"mv","addr":' \
+    "the forced symbol still comes back as a frame column"
+assert_contains /tmp/sim.force.frames '"raw":42' \
+    "the actuator received the forced value, not the computed one"
+
+if [ "$(grep -c '"forced":true' /tmp/sim.force.frames)" -eq 3 ]; then
+    echo "  every cycle of the forced output carries the mark ... OK"
+    _TF_PASS=$((_TF_PASS + 1))
+else
+    echo "  every cycle of the forced output carries the mark ... FAIL"
+    _TF_FAIL=$((_TF_FAIL + 1))
+fi
+
+assert_exit_code 2 "force on an unknown symbol rejected" \
+    "$SIM" -n 1 --force ghost=1 "$OUT" "$PLANT"
+assert_exit_code 2 "force on an instance base name rejected" \
+    "$SIM" -n 1 --force cnt=1 "$OUT" "$PLANT"
+assert_exit_code 2 "force value of the wrong type rejected" \
+    "$SIM" -n 1 --force sp=1.5 "$OUT" "$PLANT"
+assert_exit_code 2 "injection outside the physical range rejected" \
+    "$SIM" -n 1 --force sp=5000 "$OUT" "$PLANT"
+assert_exit_code 2 "duplicate --force name rejected" \
+    "$SIM" -n 1 --force sp=1,sp=2 "$OUT" "$PLANT"
+assert_exit_code 2 "--force item without = rejected" \
+    "$SIM" -n 1 --force sp "$OUT" "$PLANT"
+assert_exit_code 2 "duplicate script record rejected" \
+    "$SIM" -n 1 --script /dev/stdin "$OUT" "$PLANT" <<< $'1 sp 800\n1 sp 900\n'
+assert_exit_code 2 "script cycle beyond the run rejected" \
+    "$SIM" -n 2 --script /dev/stdin "$OUT" "$PLANT" <<< $'9 sp 800\n'
+assert_exit_code 2 "script row with the wrong field count rejected" \
+    "$SIM" -n 2 --script /dev/stdin "$OUT" "$PLANT" <<< $'sp 800\n'
+assert_exit_code 2 "same name forced and scripted rejected" \
+    "$SIM" -n 2 --force sp=500 --script "$STIM" "$OUT" "$PLANT"
 
 check_failures "Closed-Loop Simulation E2E"

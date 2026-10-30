@@ -25,7 +25,8 @@ SVM_BIN     = $(BUILD_BIN)/svm
 HS_SNAPSHOT_SRC = hotstandby/snapshot.c
 
 SIM_DIR      = sim
-SIM_SRCS     = $(SIM_DIR)/plant.c $(SIM_DIR)/sim_io.c $(SIM_DIR)/watch.c
+SIM_SRCS     = $(SIM_DIR)/plant.c $(SIM_DIR)/sim_io.c $(SIM_DIR)/watch.c \
+               $(SIM_DIR)/force.c
 SIM_MAIN_SRC = $(SIM_DIR)/sim_main.c
 SIM_BIN      = $(BUILD_BIN)/sim
 
@@ -155,14 +156,15 @@ $(SVM_BIN): $(SVM_SRC) core/sasm_dump.c core/sasm_dump.h \
 		-L$(BUILD_LIB) -lvm_core -lm
 
 # ================================================================
-# 仿真后端：软件 I/O + 被控对象 + watch 帧，走 io_mapping_cycle 全路径
-# core/sasm_info.c 提供段 7 符号解析（watch 的地址唯一来源）
+# 仿真后端：软件 I/O + 被控对象 + watch 帧 + 激励强制，走完整 I/O 扫描路径
+# core/sasm_info.c 提供段 7 符号解析（watch 与 force 的地址唯一来源）
 # ================================================================
 
 build-sim: vm-io $(SIM_BIN)
 
 $(SIM_BIN): $(SIM_MAIN_SRC) $(SIM_SRCS) $(SIM_DIR)/plant.h $(SIM_DIR)/sim_io.h \
-            $(SIM_DIR)/watch.h core/sasm_info.c core/sasm_info.h \
+            $(SIM_DIR)/watch.h $(SIM_DIR)/force.h \
+            core/sasm_info.c core/sasm_info.h \
             $(CORE_LIB) $(IO_LIB)
 	@mkdir -p $(BUILD_BIN)
 	$(CC) $(CFLAGS) -Werror -o $@ $(SIM_MAIN_SRC) $(SIM_SRCS) core/sasm_info.c \

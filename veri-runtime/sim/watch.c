@@ -14,29 +14,24 @@
 
 #define WATCH_TYPE_TAGS 25U
 
-#define CL_I32 0U
-#define CL_U32 1U
-#define CL_I64 2U
-#define CL_F32 3U
-#define CL_F64 4U
-#define CL_NOVAL 5U   /* ARRAY / FB：没有「一个值」可读 */
-
 static const uint8_t watch_class_of_tag[WATCH_TYPE_TAGS] = {
     /* BOOL   INT    DINT   REAL   LINT   LREAL  TIME   QUALITY */
-    CL_U32,  CL_I32,  CL_I32,  CL_F32,  CL_I64,  CL_F64,  CL_I32,  CL_I32,
+    WATCH_CL_U32,  WATCH_CL_I32,  WATCH_CL_I32,  WATCH_CL_F32,
+    WATCH_CL_I64,  WATCH_CL_F64,  WATCH_CL_I32,  WATCH_CL_I32,
     /* BYTE   WORD   DWORD  SINT */
-    CL_U32,  CL_U32,  CL_U32,  CL_I32,
+    WATCH_CL_U32,  WATCH_CL_U32,  WATCH_CL_U32,  WATCH_CL_I32,
     /* QBOOL  QBYTE  QWORD  QDWORD QSINT  QINT   QDINT  QLINT */
-    CL_U32,  CL_U32,  CL_U32,  CL_U32,  CL_I32,  CL_I32,  CL_I32,  CL_I64,
+    WATCH_CL_U32,  WATCH_CL_U32,  WATCH_CL_U32,  WATCH_CL_U32,
+    WATCH_CL_I32,  WATCH_CL_I32,  WATCH_CL_I32,  WATCH_CL_I64,
     /* QREAL  QLREAL QTIME */
-    CL_F32,  CL_F64,  CL_I32,
+    WATCH_CL_F32,  WATCH_CL_F64,  WATCH_CL_I32,
     /* ARRAY  FB */
-    CL_NOVAL, CL_NOVAL
+    WATCH_CL_NOVAL, WATCH_CL_NOVAL
 };
 
-static uint8_t watch_class(uint8_t tag)
+uint8_t watch_class_of(uint8_t tag)
 {
-    if (tag >= WATCH_TYPE_TAGS) { return CL_NOVAL; }
+    if (tag >= WATCH_TYPE_TAGS) { return WATCH_CL_NOVAL; }
     return watch_class_of_tag[tag];
 }
 
@@ -71,10 +66,6 @@ static void watch_json_string(const char *s, uint32_t len)
     (void)putchar('"');
 }
 
-/* 一个全局槽恒是 4 字节单字（global_codegen 的 assign_global_offsets 每个声明
-   +4），所以 64 位量根本没有「第二个槽」可读 —— 直说，不做半吊子解码。 */
-#define WATCH_SLOT_BYTES 4U
-
 /* ------------------------------------------------------------------
    启动期：拆分名字表 + 解析地址 + 绑定通道
    ------------------------------------------------------------------ */
@@ -96,13 +87,13 @@ static int watch_bind_one(WatchVar *var, const uint8_t *buf, uint32_t len,
                       "Debug section) while resolving %s\n", var->name);
         return -1;
     }
-    cls = watch_class(info.type_tag);
-    if (cls == CL_NOVAL) {
+    cls = watch_class_of(info.type_tag);
+    if (cls == WATCH_CL_NOVAL) {
         (void)fprintf(stderr, "watch: %s is %s, not a scalar variable\n",
                       var->name, info.type_name);
         return -1;
     }
-    if ((cls == CL_I64) || (cls == CL_F64)) {
+    if ((cls == WATCH_CL_I64) || (cls == WATCH_CL_F64)) {
         (void)fprintf(stderr,
                       "watch: %s is %s; one global slot is one int32 word, "
                       "so 64-bit values have no storage to read\n",
@@ -210,7 +201,7 @@ int watch_build(WatchSet *set, const char *csv, const uint8_t *buf,
 static void watch_emit_value(const WatchVar *var, const VM *vm)
 {
     uint8_t bytes[WATCH_SLOT_BYTES];
-    uint8_t cls = watch_class(var->type_tag);
+    uint8_t cls = watch_class_of(var->type_tag);
 
     if ((var->addr > vm->memory_size) ||
         (WATCH_SLOT_BYTES > vm->memory_size - var->addr)) {
@@ -220,13 +211,13 @@ static void watch_emit_value(const WatchVar *var, const VM *vm)
     (void)memcpy(bytes, vm->memory + var->addr, WATCH_SLOT_BYTES);
 
     switch (cls) {
-    case CL_I32:
+    case WATCH_CL_I32:
         (void)printf("%d", (int)watch_le32(bytes));
         break;
-    case CL_U32:
+    case WATCH_CL_U32:
         (void)printf("%u", (unsigned int)watch_le32(bytes));
         break;
-    case CL_F32: {
+    case WATCH_CL_F32: {
         float f = 0.0f;
         uint32_t bits = watch_le32(bytes);
         (void)memcpy(&f, &bits, sizeof f);
@@ -241,7 +232,7 @@ static void watch_emit_value(const WatchVar *var, const VM *vm)
 }
 
 static void watch_emit_slot(const WatchVar *var, const VM *vm,
-                            const IOMappingTable *iomap)
+                            const IOMappingTable *iomap, int forced)
 {
     (void)printf("{\"name\":");
     watch_json_string(var->name, (uint32_t)strlen(var->name));
@@ -251,19 +242,21 @@ static void watch_emit_slot(const WatchVar *var, const VM *vm,
     watch_emit_value(var, vm);
 
     if (var->entry < 0) {
-        (void)printf(",\"channel\":null,\"raw\":null}");
-        return;
+        (void)printf(",\"channel\":null,\"raw\":null");
+    } else {
+        /* raw 取映射层末次与物理侧交换的那一层：INPUT 是读入的原始值，
+           OUTPUT 是按 scale/bias 逆变换后写出的原始值。 */
+        (void)printf(",\"channel\":%u,\"raw\":%d",
+                     iomap->entries[var->entry].channel_id,
+                     iomap->entries[var->entry].raw_value);
     }
-    /* raw 取映射层末次与物理侧交换的那一层：INPUT 是读入的原始值，
-       OUTPUT 是按 scale/bias 逆变换后写出的原始值。 */
-    (void)printf(",\"channel\":%u,\"raw\":%d}",
-                 iomap->entries[var->entry].channel_id,
-                 iomap->entries[var->entry].raw_value);
+    /* 第八键（协议 §4.3）：值来自程序之外时必须有标记，看漏一次强制值就是误判 */
+    (void)printf(",\"forced\":%s}", (forced != 0) ? "true" : "false");
 }
 
 void watch_cycle_frame(const WatchSet *set, const VM *vm,
-                       const IOMappingTable *iomap, uint32_t cycle,
-                       uint32_t t_ms, int status)
+                       const IOMappingTable *iomap, const uint8_t *forced,
+                       uint32_t cycle, uint32_t t_ms, int status)
 {
     (void)printf("{\"frame\":\"cycle\",\"cycle\":%u,\"t_ms\":%u,"
                  "\"status\":%d,\"violations\":%u,\"values\":[",
@@ -271,7 +264,8 @@ void watch_cycle_frame(const WatchSet *set, const VM *vm,
 
     for (uint32_t i = 0U; i < set->count; i++) {
         if (i > 0U) { (void)putchar(','); }
-        watch_emit_slot(&set->vars[i], vm, iomap);
+        watch_emit_slot(&set->vars[i], vm, iomap,
+                        (forced != NULL) ? (forced[i] != 0U) : 0);
     }
     (void)printf("]}\n");
 }

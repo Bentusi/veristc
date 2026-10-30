@@ -366,6 +366,17 @@ int plant_write_raw(PlantTable *table, uint32_t channel_id, int32_t value)
     return 0;
 }
 
+int plant_inject(PlantTable *table, uint32_t channel_id, int32_t value)
+{
+    if (table == NULL) { return -1; }
+
+    PlantChannel *ch = plant_find(table, channel_id);
+    if ((ch == NULL) || (ch->direction != IO_DIR_INPUT)) { return -1; }
+
+    ch->state = (double)clamp_state(ch, (double)value);
+    return 0;
+}
+
 void plant_step(PlantTable *table)
 {
     if (table == NULL) { return; }
