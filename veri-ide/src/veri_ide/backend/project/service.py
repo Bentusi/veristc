@@ -2,6 +2,7 @@
 
 import shutil
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,12 @@ import git
 import yaml
 
 from .schema import validate_project_yaml
+
+# Every artifact of a project is a text file that belongs to Git; `build/` holds
+# derived binaries (.merged.st / .sasm) and is the only ignored directory.
+SOURCE_DIRS = ("logic", "iomap", "device", "blocks", "sim")
+BUILD_DIR = "build"
+GITIGNORE = "# Derived artifacts — rebuilt by veristc, never versioned\nbuild/\n"
 
 
 @dataclass
@@ -50,9 +57,9 @@ def create_project(name: str, target_path: Path, safety_level: str = "SIL2",
 
     # Create directory structure
     target_path.mkdir(parents=True, exist_ok=True)
-    (target_path / "logic").mkdir()
-    (target_path / "iomap").mkdir()
-    (target_path / "build").mkdir()
+    for directory in SOURCE_DIRS:
+        (target_path / directory).mkdir()
+    (target_path / BUILD_DIR).mkdir()
 
     # Create project.yaml
     project_data = {
@@ -60,13 +67,18 @@ def create_project(name: str, target_path: Path, safety_level: str = "SIL2",
         "safety_level": safety_level,
         "svm_version": svm_version,
         "logic_files": [],
+        "created_at": datetime.now().isoformat(timespec="seconds"),
     }
     with open(target_path / "project.yaml", "w", encoding="utf-8") as f:
         yaml.dump(project_data, f, default_flow_style=False, allow_unicode=True)
 
-    # Initialize Git repository
+    (target_path / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
+
+    # Initialize Git repository. Only project.yaml and .gitignore carry content
+    # at this point; the empty source directories are created by the layout and
+    # get their first commit when a page, station or block is saved into them.
     repo = git.Repo.init(target_path)
-    repo.index.add(["project.yaml", "logic/", "iomap/", "build/"])
+    repo.index.add(["project.yaml", ".gitignore"])
     repo.index.commit("Initial project structure")
 
     return ProjectMeta(
@@ -189,3 +201,45 @@ def delete_project(project_path: Path) -> None:
         raise FileNotFoundError(f"Project not found: {project_path}")
 
     shutil.rmtree(project_path)
+
+
+def is_project_dir(path: Path) -> bool:
+    """A directory is a VeriIDE project when it carries a project.yaml."""
+    path = Path(path)
+    return path.is_dir() and (path / "project.yaml").is_file()
+
+
+def default_parent_dir() -> Path:
+    """Where the launcher offers to create projects: ~/VeriIDE."""
+    return Path.home() / "VeriIDE"
+
+
+def project_tree(project_path: Path) -> dict[str, list[str]]:
+    """Text artifacts on disk, grouped by layout directory.
+
+    Only the tracked source directories are listed; `build/` is derived and the
+    launcher has no reason to show it.
+    """
+    project_path = Path(project_path)
+    tree: dict[str, list[str]] = {
+        "root": sorted(p.name for p in project_path.glob("*") if p.is_file() and p.name != ".gitignore"),
+    }
+    for directory in SOURCE_DIRS:
+        base = project_path / directory
+        tree[directory] = (
+            sorted(str(p.relative_to(base)) for p in base.rglob("*") if p.is_file())
+            if base.is_dir()
+            else []
+        )
+    return tree
+
+
+def count_artifacts(project_path: Path) -> dict[str, int]:
+    """How much is configured in a project -- what a recent-list row shows."""
+    tree = project_tree(project_path)
+    return {
+        "pages": len([f for f in tree["logic"] if f.endswith(".FC.json")]),
+        "st_files": len([f for f in tree["logic"] if f.endswith(".st")]),
+        "stations": len(tree["iomap"]),
+        "blocks": len([f for f in tree["blocks"] if f.endswith(".st")]),
+    }

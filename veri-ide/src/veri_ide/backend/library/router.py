@@ -82,6 +82,8 @@ class BlockResponse(BaseModel):
     icon_svg: str
     tags: list[str]
     sha256: str
+    scope: str = "user"
+    path: str = ""
 
 
 class LibraryResponse(BaseModel):

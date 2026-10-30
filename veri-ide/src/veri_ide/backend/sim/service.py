@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..build.service import runtime_bin
+
 
 @dataclass
 class SimulationResult:
@@ -37,7 +39,9 @@ class SimService:
 
     def _find_sim_binary(self) -> str:
         """Find sim binary."""
+        packaged = runtime_bin("sim")
         paths = [
+            *([packaged] if packaged is not None else []),
             Path(__file__).parent.parent.parent.parent.parent / "build" / "bin" / "sim",
             Path("/home/wei/veristc/build/bin/sim"),
         ]
@@ -48,7 +52,9 @@ class SimService:
 
     def _find_veristc_binary(self) -> str:
         """Find veristc binary."""
+        packaged = runtime_bin("veristc")
         paths = [
+            *([packaged] if packaged is not None else []),
             Path(__file__).parent.parent.parent.parent.parent / "build" / "bin" / "veristc",
             Path("/home/wei/veristc/build/bin/veristc"),
         ]

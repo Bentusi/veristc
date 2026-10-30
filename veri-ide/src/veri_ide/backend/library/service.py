@@ -2,8 +2,8 @@
 算法块与算法库管理服务
 
 提供功能：
-- 算法块 CRUD
-- 算法库管理（分类/版本）
+- 算法块 CRUD（每个块落盘为 `<Type>.block.yaml` + `<Type>.st`）
+- 全局用户库（`~/.veride/library/`）与工程内 `blocks/` 两级作用域
 - 内容寻址存储（SHA-256）
 - 导入/导出（JSON）
 - 共享库支持
@@ -13,8 +13,10 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
+from ..project.recent import get_recent_store
 from .models import (
     AlgorithmBlock,
     BlockCategory,
@@ -24,31 +26,89 @@ from .models import (
     LibraryInfo,
     PortDirection,
 )
+from .store import BlockStore, global_library_dir, project_blocks_dir, st_type_name
 
 
 class LibraryService:
-    """算法库服务"""
-    
-    def __init__(self):
-        # TODO: 后续替换为持久化存储
+    """算法库服务：内存索引 + 两级磁盘作用域"""
+
+    def __init__(self, library_dir: Optional[Path] = None):
+        self._store = BlockStore(library_dir or global_library_dir())
+        self._project_store: Optional[BlockStore] = None
         self._blocks: dict[str, AlgorithmBlock] = {}
         self._libraries: dict[str, LibraryInfo] = {}
-        
-        # 初始化内置算法块
-        self._init_builtin_blocks()
-    
-    def _init_builtin_blocks(self):
-        """初始化内置算法块"""
-        builtin_blocks = [
-            self._create_pid_block(),
-            self._create_rs_block(),
-            self._create_fby_block(),
-            self._create_limiter_block(),
+
+        if not self._store.load():
+            self._seed_builtin_blocks()
+        self.set_project_dir(None)
+
+    def _seed_builtin_blocks(self):
+        """首次运行时把出厂块写成文本文件，之后它们和用户块完全同级。"""
+        for factory in (
+            self._create_pid_block,
+            self._create_rs_block,
+            self._create_fby_block,
+            self._create_limiter_block,
+        ):
+            block = factory()
+            block.sha256 = self._compute_sha256(block)
+            self._store.save(block)
+
+    def _stores(self) -> list[tuple[BlockStore, str]]:
+        scopes = [(self._store, "user")]
+        if self._project_store is not None:
+            scopes.append((self._project_store, "project"))
+        return scopes
+
+    def _reload(self) -> None:
+        """从磁盘重建索引；工程块按 ST 类型名遮蔽同名全局块。"""
+        merged: dict[str, AlgorithmBlock] = {}
+        by_type: dict[str, str] = {}
+        for store, scope in self._stores():
+            for block in store.load():
+                block.scope = scope
+                shadowed = by_type.get(st_type_name(block))
+                if shadowed is not None:
+                    merged.pop(shadowed, None)
+                merged[block.id] = block
+                by_type[st_type_name(block)] = block.id
+        self._blocks = merged
+
+    def set_project_dir(self, project_path: Optional[Path]) -> None:
+        """打开工程时载入它的 blocks/，关闭时退回全局库。"""
+        directory = project_blocks_dir(project_path)
+        self._project_store = BlockStore(directory) if directory else None
+        self._reload()
+
+    def save_project_blocks(self, project_path: Path) -> list[str]:
+        """把工程作用域的块写回 `<project>/blocks/`。"""
+        store = self._project_store or BlockStore(project_blocks_dir(project_path))
+        written = [
+            str(store.save(block))
+            for block in self._blocks.values()
+            if block.scope == "project"
         ]
-        
-        for block in builtin_blocks:
-            self._blocks[block.id] = block
-    
+        self._project_store = store
+        self._reload()
+        return written
+
+    def _store_for(self, block: AlgorithmBlock) -> BlockStore:
+        if block.scope == "project":
+            if self._project_store is None:
+                raise ValueError("没有打开的工程，无法写入工程作用域的算法块")
+            return self._project_store
+        return self._store
+
+    def _project_label(self, block: AlgorithmBlock) -> str:
+        """Which project a project-scoped block came from, for the recent list.
+
+        The row outlives the project: a `blocks/` block is only in the library while
+        its own project is open, so the name is what makes the history readable.
+        """
+        if block.scope != "project" or self._project_store is None:
+            return ""
+        return self._project_store.directory.parent.name
+
     def _create_pid_block(self) -> AlgorithmBlock:
         """创建 PID 控制器算法块"""
         return AlgorithmBlock(
@@ -256,43 +316,58 @@ END_FUNCTION_BLOCK""",
         return result
     
     def add_block(self, block: AlgorithmBlock) -> AlgorithmBlock:
-        """添加算法块"""
+        """添加算法块并落盘到当前作用域"""
         # 计算 SHA-256
         block.sha256 = self._compute_sha256(block)
-        
+
         # 检查是否已存在（SHA-256 相同）
         for existing in self._blocks.values():
             if existing.sha256 == block.sha256:
                 return existing
-        
+
         # 生成唯一 ID（如果未提供）
         if not block.id:
             block.id = f"{block.name}_{uuid.uuid4().hex[:8]}"
-        
-        self._blocks[block.id] = block
-        return block
-    
+
+        block.scope = "project" if self._project_store is not None else "user"
+        store = self._project_store or self._store
+        store.save(block)
+        self._reload()
+
+        get_recent_store().touch_block(block, self._project_label(block))
+        return self._blocks.get(block.id, block)
+
     def update_block(self, block_id: str, **kwargs) -> Optional[AlgorithmBlock]:
-        """更新算法块"""
+        """更新算法块并重写磁盘"""
         block = self._blocks.get(block_id)
         if not block:
             return None
-        
+
         for key, value in kwargs.items():
             if hasattr(block, key):
                 setattr(block, key, value)
-        
+
         block.updated_at = datetime.now()
         block.sha256 = self._compute_sha256(block)
-        
-        return block
-    
+
+        # ST 里的 POU 名就是文件名，改名即换文件对：先删旧对再按新名写。
+        store = self._store_for(block)
+        store.delete(block)
+        store.save(block)
+        self._reload()
+
+        get_recent_store().touch_block(block, self._project_label(block))
+        return self._blocks.get(block_id, block)
+
     def delete_block(self, block_id: str) -> bool:
-        """删除算法块"""
-        if block_id in self._blocks:
-            del self._blocks[block_id]
-            return True
-        return False
+        """删除算法块及其磁盘文件"""
+        block = self._blocks.get(block_id)
+        if not block:
+            return False
+        self._store_for(block).delete(block)
+        self._reload()
+        get_recent_store().forget_block(block_id)
+        return True
     
     def import_block(self, block_data: dict) -> ImportResult:
         """导入算法块（从 JSON）"""
@@ -334,16 +409,12 @@ END_FUNCTION_BLOCK""",
                         is_duplicate=True,
                     )
             
-            # 生成唯一 ID
-            if not block.id:
-                block.id = f"{block.name}_{uuid.uuid4().hex[:8]}"
-            
-            self._blocks[block.id] = block
+            imported = self.add_block(block)
             
             return ImportResult(
                 success=True,
-                block_id=block.id,
-                message=f"成功导入: {block.name}",
+                block_id=imported.id,
+                message=f"成功导入: {imported.name}",
             )
         
         except Exception as e:

@@ -734,6 +734,10 @@ class DeviceProject:
             )
         self._stations = {s.station.station_id: s for s in services}
 
+    def reset(self, services: list[DeviceService]) -> None:
+        """Replace the station set -- opening a project without station data."""
+        self._stations = {s.station.station_id: s for s in services}
+
 
 def _toml_value(value) -> str:
     if isinstance(value, bool):

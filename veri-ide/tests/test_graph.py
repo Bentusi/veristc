@@ -617,8 +617,8 @@ def test_save_and_load_round_trip(tmp_path):
         ]
     )
     written = project.save_project(tmp_path)
-    assert len(written) == 3
-    assert (tmp_path / "graph" / "P1.fc.json").is_file()
+    assert len(written) == 2
+    assert (tmp_path / "logic" / "P1.FC.json").is_file()
 
     loaded = GraphProject(pages=[new_page("OTHER")])
     loaded.load_project(tmp_path)
@@ -626,13 +626,13 @@ def test_save_and_load_round_trip(tmp_path):
     assert loaded.pages()[1]["label"] == "second"
     assert loaded.merged_fc()["constants"][0]["value"] == 1.5
 
-    again = tmp_path / "graph" / "P1.fc.json"
+    again = tmp_path / "logic" / "P1.FC.json"
     before = again.read_text(encoding="utf-8")
     loaded.save_project(tmp_path)
     assert again.read_text(encoding="utf-8") == before
 
 
-def test_load_missing_index_fails(tmp_path):
+def test_load_missing_pages_fails(tmp_path):
     with pytest.raises(FileNotFoundError):
         GraphProject().load_project(tmp_path)
 

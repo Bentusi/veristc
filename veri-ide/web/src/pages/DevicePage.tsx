@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useProject } from "../project/ProjectProvider";
 import { HardwareTree } from "../components/device/HardwareTree";
 import { MappingTable } from "../components/device/MappingTable";
 import { BindingProperties } from "../components/device/BindingProperties";
@@ -52,7 +53,7 @@ export function DevicePage() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  const [projectPath, setProjectPath] = useState("");
+  const { current, save: saveProject } = useProject();
   const [newModule, setNewModule] = useState({
     module_id: "",
     kind: "AI",
@@ -111,7 +112,7 @@ export function DevicePage() {
         setOffline(true);
         setNotice(`后端未就绪：${(error as Error).message}`);
       });
-  }, []);
+  }, [current?.path]);
 
   const freeByKind = useMemo(() => {
     const grouped: Record<string, number[]> = { AI: [], AO: [], DI: [], DO: [] };
@@ -207,18 +208,16 @@ export function DevicePage() {
   };
 
   const saveToDevice = () =>
-    projectPath
-      ? mutate(() => call("/save", json({ project_path: projectPath }))).then(() =>
-          setNotice(`已写入 ${projectPath}/device/stations.toml 与各站 iomap`),
-        )
-      : setNotice("请先填写工程目录");
+    current
+      ? mutate(() => saveProject()).then(() => setNotice(`已写入 ${current.path}`))
+      : setNotice("尚未打开工程：先在首页新建或打开一个工程文件夹");
 
   const loadFromDevice = () =>
-    projectPath
-      ? mutate(() => call("/load", json({ project_path: projectPath }))).then(() =>
-          setNotice(`已从 ${projectPath} 读取站与映射`),
+    current
+      ? mutate(() => call("/load", json({}))).then(() =>
+          setNotice(`已从 ${current.name} 的文件夹重新载入站与映射`),
         )
-      : setNotice("请先填写工程目录");
+      : setNotice("尚未打开工程：先在首页新建或打开一个工程文件夹");
 
   const errorCount = issues.filter((i) => i.severity === "error").length;
   const warningCount = issues.length - errorCount;
@@ -257,21 +256,24 @@ export function DevicePage() {
               : "校验通过"}
         </span>
 
-        <input
-          value={projectPath}
-          onChange={(e) => setProjectPath(e.target.value)}
-          placeholder="工程目录，用于读写站配置与映射"
-          className="w-64 bg-ide-bg border border-ide-border rounded px-2 py-1.5 text-xs"
-        />
+        <span
+          data-testid="device-project"
+          className="text-xs px-2 py-1.5 rounded bg-ide-bg border border-ide-border text-ide-textDim max-w-[36ch] truncate"
+          title={current?.path ?? ""}
+        >
+          {current ? `${current.name} · ${current.path}` : "未打开工程"}
+        </span>
         <button
           onClick={saveToDevice}
-          className="px-3 py-1.5 bg-ide-hover text-ide-text text-xs rounded hover:bg-ide-selected"
+          disabled={!current}
+          className="px-3 py-1.5 bg-ide-hover text-ide-text text-xs rounded hover:bg-ide-selected disabled:opacity-40"
         >
           写入工程
         </button>
         <button
           onClick={loadFromDevice}
-          className="px-3 py-1.5 bg-ide-hover text-ide-text text-xs rounded hover:bg-ide-selected"
+          disabled={!current}
+          className="px-3 py-1.5 bg-ide-hover text-ide-text text-xs rounded hover:bg-ide-selected disabled:opacity-40"
         >
           从工程载入
         </button>

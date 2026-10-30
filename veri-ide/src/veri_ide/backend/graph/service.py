@@ -3,8 +3,8 @@ Multi-page logic graph container.
 
 A project is one program drawn on several sheets. Each page is an FC document
 (`schema/fc.schema.json`); the project keeps them ordered, merges them into the
-single graph the checker and the ST generator work on, and persists them as
-`graph/<page>.fc.json` plus `graph/project.json`.
+single graph the checker and the ST generator work on, and persists each one as
+`logic/<page>.FC.json` next to the ST files it compiles into.
 
 Merging is where the cross-page semantics live: a variable that carries the
 same name on two pages is one variable, not two, which is what makes an
@@ -23,8 +23,7 @@ from ..gen.validator import validate_fc_json
 from .checker import DIRECTIONS, Finding, check_graph, summarize
 
 
-GRAPH_DIR = "graph"
-INDEX_FILE = "project.json"
+LOGIC_DIR = "logic"
 
 
 class GraphError(ValueError):
@@ -318,38 +317,35 @@ class GraphProject:
         return {"name": self.name, "pages": [self._pages[p] for p in self._order]}
 
     def save_project(self, project_path: Path) -> list[str]:
+        """Write one `logic/<page>.FC.json` per page; the files are the project."""
         project_path = Path(project_path)
-        graph_dir = project_path / GRAPH_DIR
-        graph_dir.mkdir(parents=True, exist_ok=True)
+        logic_dir = project_path / LOGIC_DIR
+        logic_dir.mkdir(parents=True, exist_ok=True)
         written = []
         for page_id in self._order:
-            target = graph_dir / f"{page_id}.fc.json"
+            target = logic_dir / f"{page_id}.FC.json"
             target.write_text(_dump(self._pages[page_id]), encoding="utf-8")
             written.append(str(target))
-        index = graph_dir / INDEX_FILE
-        index.write_text(_dump({"name": self.name, "pages": list(self._order)}), encoding="utf-8")
-        written.append(str(index))
         return written
 
     def load_project(self, project_path: Path) -> None:
-        """Replace the page set with what is stored under `graph/`."""
-        project_path = Path(project_path)
-        graph_dir = project_path / GRAPH_DIR
-        index_file = graph_dir / INDEX_FILE
-        if not index_file.is_file():
-            raise FileNotFoundError(f"No graph project index under {graph_dir}")
+        """Replace the page set with the `logic/*.FC.json` documents on disk.
 
-        index = json.loads(index_file.read_text(encoding="utf-8"))
-        pages: list[dict] = []
-        for page_id in index.get("pages", []):
-            source = graph_dir / f"{page_id}.fc.json"
-            if not source.is_file():
-                raise FileNotFoundError(f"Graph page file is missing: {source}")
-            pages.append(json.loads(source.read_text(encoding="utf-8")))
-        if not pages:
-            raise FileNotFoundError(f"Graph project {index_file} lists no pages")
+        Draw order comes from `page.index` inside each file, so the folder is
+        self-describing: no index to keep in sync with the pages it lists.
+        """
+        logic_dir = Path(project_path) / LOGIC_DIR
+        logic_dir = Path(project_path) / LOGIC_DIR
+        documents = [json.loads(p.read_text(encoding="utf-8")) for p in logic_dir.glob("*.FC.json")]
+        if not documents:
+            raise FileNotFoundError(f"No graph page under {logic_dir}")
 
-        self.__init__(name=index.get("name", pages[0].get("name", "MAIN")), pages=pages)
+        documents.sort(key=lambda d: (d.get("page", {}).get("index", 0), d.get("page", {}).get("id", "")))
+        self.__init__(name=documents[0].get("name", "MAIN"), pages=documents)
+
+    def reset(self, name: str = "MAIN") -> None:
+        """Empty the page set -- what opening a project without pages does."""
+        self.__init__(name=name)
 
 
 def _dump(data: Any) -> str:

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from .models import ChannelBinding, HardwareModule, IoVariable, Station
 from .service import get_device_project
+from ..project.workspace import resolve_project_path
 from ..sim.plant import PlantValidationError, plant_from_external_variables
 
 
@@ -70,7 +71,7 @@ class BindingRequest(BaseModel):
 
 
 class ProjectRequest(BaseModel):
-    project_path: str
+    project_path: str = ""
 
 
 def _service(station_id: str):
@@ -249,14 +250,17 @@ def plant_text(station_id: str) -> str:
 @router.post("/save")
 def save(request: ProjectRequest) -> dict:
     try:
-        return get_device_project().save_project(Path(request.project_path))
-    except OSError as exc:
+        return get_device_project().save_project(resolve_project_path(request.project_path))
+    except (OSError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/load")
 def load(request: ProjectRequest) -> list[dict]:
-    project = Path(request.project_path)
+    try:
+        project = resolve_project_path(request.project_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     if not project.is_dir():
         raise HTTPException(status_code=404, detail=f"Project directory not found: {project}")
     try:

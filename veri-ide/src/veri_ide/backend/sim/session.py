@@ -27,7 +27,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from ..build.service import Diagnostic, find_veristc_binary, parse_ndjson_diagnostics
+from ..build.service import (
+    Diagnostic,
+    find_veristc_binary,
+    parse_ndjson_diagnostics,
+    runtime_bin,
+)
 
 #: `spec/simulation-spec.md` 4.6 -- more names than this and `sim` refuses to start.
 WATCH_NAMES_PER_RUN = 16
@@ -85,7 +90,9 @@ def _check_stimulus_name(name: str) -> str:
 def find_sim_binary(explicit: Optional[Path] = None) -> Path:
     """The `sim` executable of the runtime build tree."""
     candidates = [explicit] if explicit is not None else []
-    candidates.extend([_repo_build_bin() / "sim", Path("build/bin/sim")])
+    candidates.extend(
+        [runtime_bin("sim"), _repo_build_bin() / "sim", Path("build/bin/sim")]
+    )
     for candidate in candidates:
         if candidate is not None and candidate.is_file():
             return candidate

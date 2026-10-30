@@ -1,6 +1,7 @@
 """Build service — compile VeriIDE projects to SafeASM."""
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,6 +9,22 @@ from typing import Optional
 
 from ..pre.merge import write_merged_file
 from ..project.schema import validate_project
+
+
+def runtime_bin(name: str) -> Optional[Path]:
+    """A tool from `VERIDE_BIN_DIR`, the directory a packaged VeriIDE ships with.
+
+    A bundle carries `veristc` and `sim` beside its own Python environment, so
+    where to look for them is stated by the launcher instead of being guessed
+    from the current working directory. Returns None when the variable is unset
+    or does not hold the tool -- the development case, where the repository's
+    build tree is still searched afterwards.
+    """
+    directory = os.environ.get("VERIDE_BIN_DIR")
+    if not directory:
+        return None
+    candidate = Path(directory) / name
+    return candidate if candidate.is_file() else None
 
 
 @dataclass
@@ -70,6 +87,10 @@ def find_veristc_binary() -> Path:
     Raises:
         FileNotFoundError: If veristc not found in expected locations
     """
+    packaged = runtime_bin("veristc")
+    if packaged is not None:
+        return packaged
+
     # Check common locations
     candidates = [
         Path("build/bin/veristc"),  # Relative to repo root

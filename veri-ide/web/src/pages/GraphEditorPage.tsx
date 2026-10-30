@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useProject } from "../project/ProjectProvider";
 import { Sheet } from "../components/graph/Sheet";
 import { PageTabs } from "../components/graph/PageTabs";
 import { CheckerPanel, type PanelTab } from "../components/graph/CheckerPanel";
@@ -95,17 +96,17 @@ export function GraphEditorPage() {
   const [forces, setForces] = useState<ForceRow[]>([]);
   const [script, setScript] = useState<ScriptRow[]>([]);
   const [panel, setPanel] = useState<PanelTab>("check");
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(0.62);
   const [focus, setFocus] = useState<Position | null>(null);
   const [filter, setFilter] = useState("");
-  const [projectPath, setProjectPath] = useState("");
+  const { current: project } = useProject();
   const dirty = useRef(false);
   const rev = useRef(0);
 
   const fail = useCallback((error: unknown) => {
-    setNotice(error instanceof Error ? error.message : String(error));
+    setNotice({ text: error instanceof Error ? error.message : String(error), error: true });
   }, []);
 
   const refreshPages = useCallback(async () => {
@@ -153,7 +154,7 @@ export function GraphEditorPage() {
         fail(error);
       }
     })();
-  }, [fail, loadPage]);
+  }, [fail, loadPage, project?.path]);
 
   useEffect(() => {
     if (!station) {
@@ -425,30 +426,32 @@ export function GraphEditorPage() {
     }
   };
 
+  const noProject = { text: "尚未打开工程：先在首页新建或打开一个工程文件夹", error: true };
+
   const save = async () => {
-    if (!projectPath) {
-      setNotice("请先填写工程目录");
+    if (!project) {
+      setNotice(noProject);
       return;
     }
     try {
-      await call("/graph/save", json({ project_path: projectPath }));
-      setNotice(`已保存到 ${projectPath}/graph`);
+      await call("/graph/save", json({}));
+      setNotice({ text: `图页已写入 ${project.path}/logic`, error: false });
     } catch (error) {
       fail(error);
     }
   };
 
   const load = async () => {
-    if (!projectPath) {
-      setNotice("请先填写工程目录");
+    if (!project) {
+      setNotice(noProject);
       return;
     }
     try {
-      const rows = await call<PageRow[]>("/graph/load", json({ project_path: projectPath }));
+      const rows = await call<PageRow[]>("/graph/load", json({}));
       setPages(rows);
       dirty.current = false;
       if (rows[0]) await loadPage(rows[0].id);
-      setNotice(null);
+      setNotice({ text: `已从 ${project.path}/logic 读入 ${rows.length} 页`, error: false });
     } catch (error) {
       fail(error);
     }
@@ -517,22 +520,31 @@ export function GraphEditorPage() {
           +
         </button>
         <div className="w-px h-4 bg-ide-border mx-1" />
-        <input
-          value={projectPath}
-          onChange={(event) => setProjectPath(event.target.value)}
-          placeholder="工程目录"
-          className="w-44 bg-ide-bg border border-ide-border rounded px-2 py-1 font-mono text-[11px]"
-        />
-        <button onClick={save} className={button}>
+        <span
+          data-testid="graph-project"
+          className="px-2 py-1 rounded bg-ide-bg border border-ide-border text-ide-textDim text-[11px] max-w-[34ch] truncate"
+          title={project?.path ?? ""}
+        >
+          {project ? `${project.name} · logic/` : "未打开工程"}
+        </span>
+        <button onClick={save} disabled={!project} className={`${button} disabled:opacity-40`}>
           保存
         </button>
-        <button onClick={load} className={button}>
+        <button onClick={load} disabled={!project} className={`${button} disabled:opacity-40`}>
           载入
         </button>
       </div>
 
       {notice && (
-        <div className="px-3 py-1.5 bg-red-900/40 border-b border-red-700 text-xs text-red-200 font-mono">{notice}</div>
+        <div
+          className={`px-3 py-1.5 border-b text-xs font-mono ${
+            notice.error
+              ? "bg-red-900/40 border-red-700 text-red-200"
+              : "bg-ide-sidebar border-ide-border text-ide-textDim"
+          }`}
+        >
+          {notice.text}
+        </div>
       )}
 
       <PageTabs

@@ -4,51 +4,98 @@ VeriIDE = **Veri**fied **I**ntegrated **D**evelopment **E**nvironment。
 前后端分离的 Web 工程站：图形组态 → 代码编译 → 仿真验证 → 下装运行，
 并提供自定义算法块与算法库扩展。
 
-**当前状态：G5 W1 完成（2026-10-29）。** 库注册服务 + 块 manifest 协议 + 准入门禁已交付，194 项协议测试全绿（G1: 45 + G2: 36 + G3: 24 + G3.5: 32 + G4: 26 + G5: 31）。
+**当前状态：阶段 3-E 完成（2026-10-30）。** 设备组态 → 图形组态 → 仿真（含引脚数值、
+强制与按周期注入）已闭环，386 项 pytest 协议测试全绿。G4 下装与 G5 库管理已有骨架。
 G0 前置能力已补齐（提交 `0155343`），G1 工程站骨架已完成，G2 图形组态已完成，G3 仿真验证已完成，G3.5 孪生模式已完成，G4 下装运行已完成，G5 库与扩展 W1 完成。
 
-## 快速开始
+## 运行
 
-### 使用 CLI
+三个进程：FastAPI 侧车（`127.0.0.1:8000`）、Vite 前端（`:1420`）、Tauri 桌面壳。
+桌面壳负责拉起侧车，前端只与 8000 通信。
 
 ```bash
-# 安装
+# 一次性准备
 cd veri-ide
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-# 创建工程
-veride create myproj
-cd myproj
-
-# 编辑 logic/main.st 和 project.yaml
-cat > logic/main.st << 'EOF'
-PROGRAM main
-VAR
-    counter : DINT;
-END_VAR
-counter := counter + 1;
-END_PROGRAM
-EOF
-
-# 编译
-veride build .
-# 输出：build/output.sasm
+python3 -m venv .venv && .venv/bin/pip install -e .
+cd web && pnpm install
+cd .. && make -C .. all          # 产出 build/bin/{veristc,sim}，编译与仿真要用
 ```
 
-### 使用 Web 编辑器
+入口是 `./run.sh`（不带参数即体检：venv、`build/bin/{veristc,sim}` 的实际解析结果、
+打包产物、端口占用）：
 
 ```bash
-# 启动后端 API 服务
-veride watch --host 127.0.0.1 --port 8000
-
-# 另开终端，启动前端静态服务
-cd frontend/public
-python3 -m http.server 8080
-
-# 浏览器打开 http://localhost:8080
+cd veri-ide && ./run.sh dev        # 桌面壳（开发模式）：钩子拉起 Vite，main.rs 拉起侧车
+cd veri-ide && ./run.sh backend    # 只要 UI：侧车 + Vite，浏览器打开 http://localhost:1420
+cd veri-ide && ./run.sh appimage   # 跑打包版，且从 /tmp 启动 —— 证明它不依赖本仓库
+cd veri-ide && ./run.sh stop       # 收掉本脚本起的后台进程（按进程组，不留孤儿）
 ```
+
+`dev` 等价于在 `src-tauri` 里执行 `../web/node_modules/.bin/tauri dev`，必须在
+`src-tauri` 跑：Tauri CLI 只向下查找 `tauri.conf.json`，从 `web/` 启动会报
+「Couldn't recognize the current folder as a Tauri project」。而这两个钩子实际在**组件根目录**
+（`src-tauri` 的上一级）执行，所以配置里写成 `pnpm --dir web ...`；裸 `pnpm dev` 在那里没有
+`package.json`，会报 `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`。
+
+开发模式下侧车用 `veri-ide/.venv/bin/python3`（`$PYTHON` 可覆盖），`veristc`/`sim`
+由仓库 `build/bin/` 解析；打包模式两者都来自随包内容，见下节。
+
+桌面壳加载窗口的时机早于侧车监听端口，所以 `web/src/main.tsx` 先轮询 `/health`，
+通了才挂载应用；侧车约 18 秒内没有应答时页面给出明确提示，而不是空白。
+Ctrl-C 结束 `dev` 时，Vite 与侧车同属一个进程组，一起退出；用 `kill <pid>` 单杀桌面壳
+则会把侧车留在 8000 端口上 —— 下一次启动的「白屏」多半就是它，`./run.sh check` 会指出来。
+
+## 打包
+
+```bash
+cd veri-ide && ./package.sh
+# → src-tauri/target/release/bundle/appimage/VeriIDE_0.1.0_amd64.AppImage
+```
+
+打包版自带可运行的三样东西，不依赖本仓库 checkout：
+
+| 随包内容 | 落点 | 解析方式 |
+|---------|------|---------|
+| Python 侧车（`.venv` 副本 + `veri_ide` 实体） | `<resource_dir>/python/` | `main.rs` 直接执行 `python/bin/python3` |
+| `veristc`、`sim` | `<resource_dir>/bin/` | 启动时导出 `VERIDE_BIN_DIR`，四个工具查找器优先采信它 |
+| 前端 `dist` | 内嵌二进制 | Tauri 资源协议 |
+
+`payload/` 由脚本装配、不入库（见 `.gitignore`）；`bundle.resources` 用**目录键**
+`"payload/python"`，写成 `"payload/python/**"` 会把匹配到的文件平铺进目标目录，
+虚拟环境随之散架。三个坑见 `package.sh` 头部注释。
+
+注意：随包的是本机 `.venv` 的副本，其 `pyvenv.cfg` 仍指向系统 Python 3.14 的标准库，
+因此打包版只能在同版本 Python 的 Linux 主机上运行 —— 真正的独立运行时属于后续工程化项。
+
+## 验证
+
+| 范围 | 命令 |
+|------|------|
+| 后端（侧车全部域） | `cd veri-ide && .venv/bin/python -m pytest tests/ -q` |
+| 前端类型与构建 | `cd veri-ide/web && pnpm exec tsc --noEmit && pnpm build` |
+| 仿真数据链 | `./integration/run_sim_e2e.sh`（仓库根） |
+
+## 工程生命周期与启动页交付物
+
+- **工程脚手架**（`src/veri_ide/backend/project/service.py`）：`create_project` 在磁盘上建出
+  `project.yaml` + `logic/ iomap/ device/ blocks/ sim/ build/`，`build/` 由 `.gitignore` 排除，
+  并 `git init` + 首次提交；`is_project_dir` / `project_tree` / `count_artifacts` 供启动页读数
+- **工作区单一真值**（`src/veri_ide/backend/project/workspace.py`）：`open_workspace` 一次读入
+  设备/图页/工程块三域并给空工程落地下种子制品（站 `ST1` + 页 `PAGE1`），`save_workspace` 一次写回，
+  `resolve_project_path` 让各阶段页面不再手输工程目录
+- **最近列表**（`src/veri_ide/backend/project/recent.py`）：`~/.veride/recent.json`（`VERIDE_HOME` 可改），
+  工程行读盘重算 `站/图页/块` 计数并把丢失目录标为 `exists: false`；工程作用域的块行不受
+  「当前库有没有它」影响，始终带所属工程名
+- **算法块即文本**（`src/veri_ide/backend/library/store.py`）：`<Type>.block.yaml` + `<Type>.st` 成对读写，
+  `<Type>` 取 ST 里声明的 POU 名（`st_type_name`）；全局用户库 `~/.veride/library/` 与工程 `blocks/`
+  两 scope，同名遮蔽；4 个内置块首次运行落盘
+- **HTTP 端点**（`src/veri_ide/backend/project/router.py`）：`GET /project/state` /
+  `POST /project/create|open|save|close|forget` / `GET /project/current`
+- **启动页**（`web/src/pages/HomePage.tsx`）：新建工程 / 打开工程 / 新建算法块三张引导卡 + 两条最近列表 +
+  面板内校验（工程名与 ST 类型名为标识符，ST 声明名与类型名一致）
+- **工程上下文**（`web/src/project/ProjectProvider.tsx`）：标题栏常驻当前工程，
+  设备组态页与图形组态页的读写都指向它（`data-testid="device-project"` / `"graph-project"`）
+- **协议测试门禁**（`tests/test_project_api.py` + `tests/test_library_store.py`）：19 项 pytest 用例
 
 ## G5 W1 交付物
 
@@ -182,6 +229,24 @@ veri-ide/
 ├── cli/             veride：无 UI 命令行入口，与 build-svc 共用内核（CI 用）
 └── tests/           协议测试 + 往返恒等测试
 ```
+
+## 工程文件夹布局
+
+一个工程 = 磁盘上的一个文件夹，除 `build/` 外全部文本化，可直接用 Git 审改：
+
+```
+<project>/
+├── project.yaml           工程名 / SIL / 目标 VM 版本 / 创建时间
+├── .gitignore             只排除 build/
+├── device/stations.toml   站清单（设备类型、周期、通信）
+├── iomap/<station>.toml   该站的通道映射与点属性（量程/偏置/单位/质量/故障保持）
+├── logic/<PAGE>.FC.json   图页，自描述（含 page.index 排序），无索引文件
+├── blocks/<Type>.block.yaml + <Type>.st   工程内算法块，同名遮蔽全局用户库
+├── sim/                   预留：仿真工作目录（当前仿真仍写临时目录）
+└── build/                 .sasm 等派生制品，不入库
+```
+
+全局状态在 `~/.veride/`（`VERIDE_HOME` 覆盖）：`library/` 为用户算法块库，`recent.json` 为最近工程与最近算法块。
 
 ## 不可妥协的设计约束
 

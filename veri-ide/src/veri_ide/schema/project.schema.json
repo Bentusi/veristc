@@ -28,6 +28,10 @@
     "description": {
       "type": "string",
       "description": "Optional project description"
+    },
+    "created_at": {
+      "type": "string",
+      "description": "Local timestamp of project creation (ISO 8601, second precision)"
     }
   },
   "additionalProperties": false

@@ -9,6 +9,7 @@ from veri_ide.backend.build.service import (
     build_project,
     parse_ndjson_diagnostics,
     find_veristc_binary,
+    runtime_bin,
     Diagnostic,
     BuildResult,
 )
@@ -215,3 +216,24 @@ def test_build_project_syntax_error(temp_dir):
     # Should have error diagnostic
     error_diags = [d for d in result.diagnostics if d.severity == "error"]
     assert len(error_diags) > 0
+
+
+class TestPackagedToolDirectory:
+    """A bundle says where its tools are, instead of leaving it to the cwd."""
+
+    def test_unset_variable_leaves_the_lookup_to_the_build_tree(self, monkeypatch):
+        monkeypatch.delenv("VERIDE_BIN_DIR", raising=False)
+        assert runtime_bin("veristc") is None
+
+    def test_directory_without_the_tool_is_not_a_hit(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("VERIDE_BIN_DIR", str(tmp_path / "absent"))
+        assert runtime_bin("sim") is None
+
+    def test_bundled_tool_wins_over_the_build_tree(self, tmp_path, monkeypatch):
+        bundled = tmp_path / "bin"
+        bundled.mkdir()
+        tool = bundled / "veristc"
+        tool.write_text("#!/bin/sh\n")
+        monkeypatch.setenv("VERIDE_BIN_DIR", str(bundled))
+        assert find_veristc_binary() == tool
+        assert runtime_bin("veristc") == tool

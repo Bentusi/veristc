@@ -12,6 +12,8 @@ ENV/
 # Build artifacts
 # 锚定到本组件根：src/veri_ide/backend/build/ 是构建编排的源码包，不是产物目录。
 /build/
+# Assembled by package.sh from .venv + build/bin on every run.
+src-tauri/payload/
 *.sasm
 *.svobj
 *.merged.st
@@ -31,3 +33,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# run.sh logs and PID files
+.run/

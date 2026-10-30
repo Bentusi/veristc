@@ -102,7 +102,11 @@ class AlgorithmBlock:
     # 元数据
     tags: list[str] = field(default_factory=list)
     sha256: str = ""             # 内容哈希（用于去重和验证）
-    
+
+    # 磁盘落点：全局用户库 / 当前工程 blocks/ / 内置块
+    scope: str = "user"          # builtin / user / project
+    path: str = ""               # <Type>.block.yaml 的绝对路径
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -122,6 +126,8 @@ class AlgorithmBlock:
             "icon_svg": self.icon_svg,
             "tags": self.tags,
             "sha256": self.sha256,
+            "scope": self.scope,
+            "path": self.path,
         }
 
 

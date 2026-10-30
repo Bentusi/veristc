@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from ..backend.build.service import build_project, find_veristc_binary
 from ..backend.project.service import create_project, open_project
+from ..backend.project.router import router as project_router
 from ..backend.pre.merge import write_merged_file
 from ..backend.deploy.service import DeployService, DeployResult, TargetConfig
 from ..backend.deploy.key_manager import KeyManager, KeyManagerError
@@ -44,6 +45,9 @@ app.add_middleware(
 # Serve frontend static files
 if _FRONTEND_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(_FRONTEND_DIR)), name="static")
+
+# Include project lifecycle router (startup page)
+app.include_router(project_router)
 
 # Include collaboration router
 app.include_router(collaboration_router)

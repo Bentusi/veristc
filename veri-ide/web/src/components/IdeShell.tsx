@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ActivityBar } from "./ActivityBar";
 import { StatusBar } from "./StatusBar";
+import { useProject } from "../project/ProjectProvider";
 
 const NAV_ITEMS = [
   { id: "home", path: "/", icon: "M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z", label: "首页" },
@@ -15,16 +16,36 @@ const NAV_ITEMS = [
 export function IdeShell() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { current } = useProject();
 
   // Derived from the URL so a deep link or browser back keeps the shell in sync.
   const activeView = NAV_ITEMS.find((n) => n.path === location.pathname)?.id ?? "home";
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden">
-      {/* Title bar */}
-      <div className="h-8 bg-ide-activity flex items-center px-3 select-none border-b border-ide-border">
+      {/* Title bar: which project folder the stage pages are reading and writing. */}
+      <div className="h-8 bg-ide-activity flex items-center px-3 select-none border-b border-ide-border gap-2">
         <span className="text-xs text-ide-textDim">VeriIDE</span>
-        <span className="text-xs text-ide-textDim ml-2">— 工程站</span>
+        {current ? (
+          <button
+            data-testid="titlebar-project"
+            onClick={() => navigate("/")}
+            className="text-xs text-ide-text hover:text-white truncate max-w-[60ch]"
+            title={current.path}
+          >
+            {current.name}
+            <span className="text-ide-textDim ml-2">{current.path}</span>
+            <span className="text-ide-textDim ml-2">· {current.safety_level}</span>
+          </button>
+        ) : (
+          <button
+            data-testid="titlebar-project"
+            onClick={() => navigate("/")}
+            className="text-xs text-ide-textDim hover:text-ide-text"
+          >
+            未打开工程
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 overflow-hidden">

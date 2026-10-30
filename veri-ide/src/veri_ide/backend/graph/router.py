@@ -25,6 +25,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..build.analysis import AnalysisError, run_analysis
+from ..project.workspace import resolve_project_path
 from .compose import block_defs, compile_unit, station_of
 from .service import GraphError, get_graph_project
 
@@ -47,7 +48,7 @@ class RenameRequest(BaseModel):
 
 
 class ProjectRequest(BaseModel):
-    project_path: str
+    project_path: str = ""
 
 
 class CheckRequest(BaseModel):
@@ -203,15 +204,19 @@ def st_text() -> str:
 @router.post("/save")
 def save(request: ProjectRequest) -> dict:
     try:
-        written = get_graph_project().save_project(Path(request.project_path))
-    except OSError as exc:
+        target = resolve_project_path(request.project_path)
+        written = get_graph_project().save_project(target)
+    except (OSError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"graph": written}
 
 
 @router.post("/load")
 def load(request: ProjectRequest) -> list[dict]:
-    project = Path(request.project_path)
+    try:
+        project = resolve_project_path(request.project_path)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     if not project.is_dir():
         raise HTTPException(status_code=404, detail=f"Project directory not found: {project}")
     try:

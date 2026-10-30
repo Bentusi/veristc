@@ -68,7 +68,10 @@ def st_type_of(block: dict) -> str:
 def station_of(request_station: Optional[str]) -> DeviceService:
     """Resolve the station a chart is prepared for; the first one when unnamed."""
     project = get_device_project()
-    station_id = request_station or sorted(project.stations())[0]["station_id"]
+    stations = sorted(project.stations(), key=lambda row: row["station_id"])
+    if not stations:
+        raise ValueError("工程还没有设备组态：先在设备组态页新建一个控制站")
+    station_id = request_station or stations[0]["station_id"]
     return project.station(station_id)
 
 
