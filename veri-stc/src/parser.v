@@ -401,6 +401,14 @@ with parse_unary_expression (fuel : nat) (st : parser_state) {struct fuel}
       | Some TK_MINUS =>
           let st1 := snd (consume st) in
           match parse_primary_expression fuel' st1 with
+          (* A negated float literal is folded into the literal itself. IEEE-754
+             negation of a value is exact, and the typed F32_NEG/F64_NEG path is
+             not reachable from a literal context yet, so keeping E_UNARY_OP here
+             would emit an integer subtraction on the bit pattern. *)
+          | Parse_ok (E_LIT (L_REAL f), st2) =>
+              Parse_ok (E_LIT (L_REAL (PrimFloat.opp f)), st2)
+          | Parse_ok (E_LIT (L_LREAL f), st2) =>
+              Parse_ok (E_LIT (L_LREAL (PrimFloat.opp f)), st2)
           | Parse_ok (e, st2) => Parse_ok ((E_UNARY_OP U_NEG e), st2)
           | Parse_fail => Parse_fail
           | Parse_error msg => Parse_error msg

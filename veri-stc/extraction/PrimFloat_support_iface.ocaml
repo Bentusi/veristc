@@ -2,3 +2,7 @@ type float = Float.t
 
 val one : float
 val zero : float
+val add : float -> float -> float
+val mul : float -> float -> float
+val div : float -> float -> float
+val opp : float -> float

@@ -8,6 +8,8 @@ cd "$ROOT"
 
 test_begin "VM/SVM Checks"
 
+V=./build/bin/veristc
+
 make build-vm-test build-io-test build-hs-test \
      build-dlwire-test build-dlswitch-test build-smoke build-function-tests
 
@@ -29,14 +31,24 @@ assert_contains "/tmp/veristc-svm-once.out" " x=" "x variable output"
 assert_contains "/tmp/veristc-svm-once.out" "1, " "value 1 output"
 assert_contains "/tmp/veristc-svm-once.out" "42, " "value 42 output"
 
+# REAL literal reaches the runtime station: the single-precision pattern the
+# compiler writes for F32_CONST is what the interpreter keeps in the local slot,
+# and `svm <sasm> <expected> <local>` compares them as raw int32 bit patterns.
+# 1069547520 = 0x3FC00000 = 1.5f (local 0),
+# 1232348160 = 0x49742400 = 1000000.0f (local 6).
+"$V" -c veri-stc/tests/compiler-tests/positive/real_literals.st \
+    -o /tmp/veristc-real-chain.sasm > /tmp/veristc-real-chain.out
+assert_exit_code 0 "REAL literal 1.5 stored as 0x3FC00000" \
+    ./build/bin/svm -n 1 -p 0 /tmp/veristc-real-chain.sasm 1069547520 0
+assert_exit_code 0 "REAL literal 1.0e6 stored as 0x49742400" \
+    ./build/bin/svm -n 1 -p 0 /tmp/veristc-real-chain.sasm 1232348160 6
+
 step "5/10" "full FUNCTION control flow, nested CALL and safety gates"
 ./build/bin/svm -n 6 -p 0 build/sasm/function_control_flow.sasm \
     > /tmp/veristc-function.out
 assert_contains "/tmp/veristc-function.out" "tick=1,  y=2," "tick=1 output"
 assert_contains "/tmp/veristc-function.out" "tick=4,  y=5," "tick=4 output"
 assert_contains "/tmp/veristc-function.out" "tick=6,  y=5," "tick=6 output"
-
-V=./build/bin/veristc
 
 # impure FUNCTION rejection
 if "$V" -c veri-stc/tests/st-examples/function_impure.st \

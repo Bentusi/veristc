@@ -358,13 +358,112 @@ let iomap_count_len = 4
 let iomap_scale_off = 18
 let iomap_bias_off = 26
 
-(* float64 → 小端 8 字节（等价于 Bytes.set_double_le_bytes，不依赖 stdlib 版本）*)
+(* float64 -> 8 little-endian bytes. Shifts stay in int64: truncating the bit
+   pattern to an OCaml `int` drops bit 63, which would silently turn every
+   negative value positive. *)
 let put_f64 (b : Bytes.t) (off : int) (v : float) : unit =
-  (* 64 位平台上 Int64.to_int 是位模式的恒等转换 *)
-  let raw = Stdlib.Int64.to_int (Stdlib.Int64.bits_of_float v) in
+  let raw = Stdlib.Int64.bits_of_float v in
   for i = 0 to 7 do
-    Bytes.set b (off + i) (Char.chr ((raw lsr (8 * i)) land 0xff))
+    Bytes.set b (off + i)
+      (Char.chr
+         (Stdlib.Int64.to_int
+            (Stdlib.Int64.logand
+               (Stdlib.Int64.shift_right_logical raw (8 * i)) 255L)))
   done
+
+(* float -> IEEE-754 binary32, 4 little-endian bytes (REAL is single
+   precision on the wire; safeasm_interp.c reads it back as a float).
+   The lexer builds real literals as binary64, so narrowing happens here.
+   OCaml's stdlib has no Float32 module, hence the explicit
+   round-to-nearest-even conversion: the result is bit-identical to what a
+   C compiler produces for a `(float)` cast of the same literal. *)
+let f32_bits_of_float (v : float) : Stdlib.Int64.t =
+  let open Stdlib.Int64 in
+  let raw = bits_of_float v in
+  (* the binary64 sign bit is moved down to the binary32 sign position first,
+     so every branch below ORs into a 32-bit value *)
+  let sign = shift_right_logical (logand raw 0x8000000000000000L) 32 in
+  let exp = to_int (logand (shift_right_logical raw 52) 0x7FFL) in
+  let frac = logand raw 0x000FFFFFFFFFFFFFL in
+  let inf = logor sign 0x7F800000L in
+  (* round (s / 2^shift) to nearest, ties to even; s is a positive int64 and
+     the caller guarantees 0 < shift < 53 *)
+  let round_shift s shift =
+    let q = shift_right_logical s shift in
+    let rem = logand s (sub (shift_left 1L shift) 1L) in
+    let half = shift_left 1L (shift - 1) in
+    match compare rem half with
+    | 1 -> add q 1L
+    | 0 -> if compare (logand q 1L) 0L = 0 then q else add q 1L
+    | _ -> q
+  in
+  let bits =
+    if exp = 0x7FF then
+      (* +-Inf stays, any NaN becomes a quiet NaN *)
+      if frac = 0L then inf else logor sign 0x7FC00000L
+    else if exp = 0 then
+      (* binary64 subnormals are all far below half of the smallest binary32
+         subnormal, so they narrow to signed zero *)
+      sign
+    else
+      let e = exp - 1023 in
+      let s = logor 0x0010000000000000L frac in
+      if e >= 128 then inf
+      else if e >= -126 then
+        let t = round_shift s 29 in
+        if compare t 0x1000000L = 0 then
+          (* rounding carried into the next binade *)
+          if e + 1 >= 128 then inf
+          else logor sign (shift_left (of_int (e + 1 + 127)) 23)
+        else
+          logor sign
+            (logor (shift_left (of_int (e + 127)) 23)
+               (sub t 0x800000L))
+      else
+        (* binary32 subnormal: mantissa = s / 2^(-e-97) *)
+        let shift = -e - 97 in
+        if shift >= 54 then sign else logor sign (round_shift s shift)
+  in
+  logand bits 0xFFFFFFFFL
+
+let put_f32 (b : Bytes.t) (off : int) (v : float) : unit =
+  let raw = f32_bits_of_float v in
+  for i = 0 to 3 do
+    Bytes.set b (off + i)
+      (Char.chr
+         (Stdlib.Int64.to_int
+            (Stdlib.Int64.logand
+               (Stdlib.Int64.shift_right_logical raw (8 * i)) 255L)))
+  done
+
+(* Little-endian u32 read; `label` names the caller in the bounds message. *)
+let get_u32_le (b : Bytes.t) (label : string) (off : int) : int =
+  if off + 4 > Bytes.length b then
+    die exit_internal (Printf.sprintf "%s: short read" label)
+  else
+    Char.code (Bytes.get b off)
+    lor (Char.code (Bytes.get b (off + 1)) lsl 8)
+    lor (Char.code (Bytes.get b (off + 2)) lsl 16)
+    lor (Char.code (Bytes.get b (off + 3)) lsl 24)
+
+(* Walk the section list of an encoded image and return (data_start, length) of
+   the section with the given id. The trailing 4-byte CRC placeholder is not
+   covered, so a section claiming to run past it is refused. *)
+let find_section (b : Bytes.t) (label : string) (sec_id : int) : int * int =
+  let sections_end = Bytes.length b - 4 in
+  let rec go off =
+    if off + 8 > sections_end then None
+    else
+      let sec_len = get_u32_le b label (off + 1) in
+      if sec_len > sections_end - off - 8 then None
+      else if Char.code (Bytes.get b off) = sec_id then Some (off + 8, sec_len)
+      else go (off + 8 + sec_len)
+  in
+  match go 6 with
+  | Some r -> r
+  | None ->
+      die exit_internal
+        (Printf.sprintf "%s section (%d) not found in encoded module" label sec_id)
 
 (* io_cal_row = ((channel, scale), bias) —— Coq 元组左结合 *)
 let decode_io_cal (r : G.io_cal_row) : int * float * float =
@@ -374,51 +473,117 @@ let decode_io_cal (r : G.io_cal_row) : int * float * float =
 
 let patch_iomap_cal (image : string)
                     (rows : (int * float * float) Stdlib.List.t) : string =
-  let n = Stdlib.String.length image in
   let b = Bytes.of_string image in
-  let get_u32 off =
-    if off + 4 > n then die exit_internal "iomap: short read"
-    else
-      Char.code (Bytes.get b off)
-      lor (Char.code (Bytes.get b (off + 1)) lsl 8)
-      lor (Char.code (Bytes.get b (off + 2)) lsl 16)
-      lor (Char.code (Bytes.get b (off + 3)) lsl 24)
-  in
-  let sections_end = n - 4 in
-  let rec find_sec off =
-    if off + 8 > sections_end then None
-    else
-      let sec_len = get_u32 (off + 1) in
-      if sec_len > sections_end - off - 8 then None
-      else if Char.code (Bytes.get b off) = iomap_sec_id then Some (off + 8, sec_len)
-      else find_sec (off + 8 + sec_len)
-  in
-  match find_sec 6 with
-  | None -> die exit_internal "IOMAP section (3) not found in encoded module"
-  | Some (body, sec_len) ->
-      let count = get_u32 body in
-      if Stdlib.List.length rows <> count then
-        die exit_internal
-          (Printf.sprintf "iomap calibration count %d != encoded entries %d"
-             (Stdlib.List.length rows) count)
-      (* 段长度必须正好容纳 count 个定宽条目，否则条目边界不可信 *)
-      else if sec_len <> iomap_count_len + count * iomap_entry_len then
-        die exit_internal "iomap section length does not match its entry count"
-      else begin
-        Stdlib.List.iteri
-          (fun i (ch, scale, bias) ->
-             let e = body + iomap_count_len + (i * iomap_entry_len) in
-             (* 逐条核对通道号：行序与编码序必须一致，否则缩放会写到别的通道上 *)
-             if get_u32 (e + 8) <> ch then
+  let get_u32 = get_u32_le b "iomap" in
+  let (body, sec_len) = find_section b "IOMAP" iomap_sec_id in
+  let count = get_u32 body in
+  if Stdlib.List.length rows <> count then
+    die exit_internal
+      (Printf.sprintf "iomap calibration count %d != encoded entries %d"
+         (Stdlib.List.length rows) count)
+  (* 段长度必须正好容纳 count 个定宽条目，否则条目边界不可信 *)
+  else if sec_len <> iomap_count_len + count * iomap_entry_len then
+    die exit_internal "iomap section length does not match its entry count"
+  else begin
+    Stdlib.List.iteri
+      (fun i (ch, scale, bias) ->
+         let e = body + iomap_count_len + (i * iomap_entry_len) in
+         (* 逐条核对通道号：行序与编码序必须一致，否则缩放会写到别的通道上 *)
+         if get_u32 (e + 8) <> ch then
+           die exit_internal
+             (Printf.sprintf
+                "iomap calibration row %d: channel %d != encoded channel %d"
+                i ch (get_u32 (e + 8)));
+         put_f64 b (e + iomap_scale_off) scale;
+         put_f64 b (e + iomap_bias_off) bias)
+      rows;
+    Bytes.to_string b
+  end
+
+(* ================================================================
+   Section 4 (CODE) float immediates
+
+   encoder.v writes zero placeholders because Coq cannot reach IEEE-754 bits
+   (the same gap as section 3's scale/bias); Encoder.encode_code_float_rows
+   supplies the offsets and the host writes the real values back: F32_CONST
+   gets 4 single-precision bytes, F64_CONST 8 double-precision bytes, which is
+   exactly what safeasm_interp.c reads. Row order is encoding order (each
+   function is prefixed by 8 bytes of index + body length).
+
+   Every row is checked three ways and the artifact is refused on any mismatch
+   instead of patching the wrong slot:
+     1 the offset lies inside the section and that byte really is 0x43/0x44;
+     2 the following width bytes are still the zero placeholder (non-zero means
+       the rows no longer line up with the layout, or were already written);
+     3 offsets increase and each row starts at or after the previous row's end,
+       so rows cannot overlap.
+   ================================================================ *)
+
+let code_sec_id = 4
+
+(* float_imm_row = (offset, value) *)
+let decode_float_imm (r : E.float_imm_row) : int * float =
+  let Datatypes.Coq_pair (off, v) = r in
+  (z_to_int off, v)
+
+let patch_code_floats (image : string)
+                      (rows : (int * float) Stdlib.List.t) : string =
+  if Stdlib.List.length rows = 0 then image
+  else
+    let b = Bytes.of_string image in
+    let (body, sec_len) = find_section b "CODE" code_sec_id in
+    let prev_end = ref 0 in
+    Stdlib.List.iter
+      (fun (off, v) ->
+         let at = body + off in
+         if off < 0 || at + 1 >= body + sec_len then
+           die exit_internal
+             (Printf.sprintf "code float row offset %d outside the %d-byte code section"
+                off sec_len);
+         let width =
+           match Char.code (Bytes.get b at) with
+           | 0x43 -> 4
+           | 0x44 -> 8
+           | op ->
                die exit_internal
                  (Printf.sprintf
-                    "iomap calibration row %d: channel %d != encoded channel %d"
-                    i ch (get_u32 (e + 8)));
-             put_f64 b (e + iomap_scale_off) scale;
-             put_f64 b (e + iomap_bias_off) bias)
-          rows;
-        Bytes.to_string b
-      end
+                    "code float row at %d: opcode 0x%02x is not F32/F64_CONST"
+                    off op)
+         in
+         if at + 1 + width > body + sec_len then
+           die exit_internal
+             (Printf.sprintf "code float row at %d: immediate runs past the code section" off);
+         if off < !prev_end then
+           die exit_internal
+             (Printf.sprintf
+                "code float row at %d out of order or overlapping (previous row ends at %d)"
+                off !prev_end);
+         prev_end := off + 1 + width;
+         for i = 1 to width do
+           if Bytes.get b (at + i) <> '\x00' then
+             die exit_internal
+               (Printf.sprintf
+                  "code float row at %d: immediate is not the zero placeholder" off)
+         done;
+         if width = 4 then put_f32 b (at + 1) v else put_f64 b (at + 1) v)
+      rows;
+    Bytes.to_string b
+
+(* The encoded image with every host-side truth patched in: section 3 scale/bias
+   and section 4 float immediates. `-c` and `-g` must both go through here, or
+   the IMAGE embedded in a .svobj drifts from the standalone .sasm. *)
+let encode_patched_image module_ir =
+  let bytes = z_bytes_to_string (E.encode_module module_ir) in
+  let with_cal =
+    patch_iomap_cal
+      bytes
+      (Stdlib.List.map decode_io_cal
+         (sv_list_to_ocaml (G.compile_module_io_cal_info module_ir)))
+  in
+  patch_code_floats
+    with_cal
+    (Stdlib.List.map decode_float_imm
+       (sv_list_to_ocaml (E.encode_code_float_rows module_ir)))
 
 let frontend (source_path : string) =
   let native_src =
@@ -484,12 +649,7 @@ let frontend (source_path : string) =
 let compile_st_to_sasm (source_path : string) : string =
   let corest = frontend source_path in
   let module_ir = G.compile_program_gc corest in
-  let image =
-    patch_iomap_cal
-      (z_bytes_to_string (E.encode_module module_ir))
-      (Stdlib.List.map decode_io_cal
-         (sv_list_to_ocaml (G.compile_module_io_cal_info module_ir)))
-  in
+  let image = encode_patched_image module_ir in
   let debug =
     emit_debug_section
       (Stdlib.List.map decode_debug_row
@@ -617,12 +777,7 @@ let emit_svobj (source_path : string) : string =
   let module_ir = G.compile_program_gc corest in
   (* svobj 内嵌的 IMAGE 与 -c 产物同源，量程同样必须是真值：
      否则 P3 链接出来的 .sasm 会带着 scale=0 的 IOMAP 条目 *)
-  let image =
-    patch_iomap_cal
-      (z_bytes_to_string (E.encode_module module_ir))
-      (Stdlib.List.map decode_io_cal
-         (sv_list_to_ocaml (G.compile_module_io_cal_info module_ir)))
-  in
+  let image = encode_patched_image module_ir in
   let st_s = Buffer.contents symtab in
   let rl_s = Buffer.contents reloc_buf in
   let bl_s = Buffer.contents block_buf in

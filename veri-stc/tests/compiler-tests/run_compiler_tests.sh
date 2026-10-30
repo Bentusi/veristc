@@ -135,6 +135,48 @@ cli_eq "analysis metrics are machine-readable" \
     "$(if "$V" --json -a veri-stc/tests/st-examples/core_assign.st 2>&1 \
           | grep -Fq '{"kind":"analysis","stack_depth":'; then echo ok; else echo bad; fi)"
 
+# REAL literal truth chain: lexical conversion (lexer.v decimal fast path) ->
+# immediate offsets and zero placeholders (encoder.v encode_code_float_rows) ->
+# host-side overwrite (veristc_main.ml patch_code_floats). The expected bit
+# patterns below were computed independently as IEEE-754 binary32 results.
+REAL_ST=veri-stc/tests/compiler-tests/positive/real_literals.st
+REAL_SASM=/tmp/veristc-pos-real_literals.sasm
+REAL_WIRE=/tmp/veristc-real-wire.out
+REAL_EXPECT=/tmp/veristc-real-wire.txt
+
+cat > "$REAL_EXPECT" <<'EXPECT'
+f32 3fc00000
+f32 3dcccccd
+f32 bdcccccd
+f32 40490fdb
+f32 4b800000
+f32 3eaaaaab
+f32 49742400
+f32 3e800000
+f32 bfc00000
+f32 33d6bf95
+f32 3089705f
+f32 42c80000
+f32 00000000
+f32 c3889333
+EXPECT
+
+if command -v python3 >/dev/null 2>&1; then
+    cli_rc "REAL literals compile" 0 "$V" -c "$REAL_ST" -o "$REAL_SASM"
+    python3 veri-stc/tests/compiler-tests/f32_immediates.py "$REAL_SASM" \
+        > "$REAL_WIRE" 2>&1
+    cli_eq "REAL literal wire bytes match IEEE-754 binary32" \
+        "$(cat "$REAL_EXPECT")" "$(cat "$REAL_WIRE")"
+    cli_rc "out-of-range REAL precision is refused" 21 \
+        "$V" -c veri-stc/tests/compiler-tests/negative/real_literal_precision.st \
+           -o /tmp/veristc-cli-x.sasm
+    cli_rc "out-of-range REAL exponent is refused" 21 \
+        "$V" -c veri-stc/tests/compiler-tests/negative/real_literal_exponent.st \
+           -o /tmp/veristc-cli-x.sasm
+else
+    echo "  REAL literal wire bytes ... SKIP (no python3)"
+fi
+
 # 多租户纪律：-o 缺失即拒绝，绝不回退默认名写进当前工作目录
 CLI_CWD="$(mktemp -d)"
 ( cd "$CLI_CWD" && "$ROOT/../../../build/bin/veristc" \

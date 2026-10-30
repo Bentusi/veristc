@@ -14,7 +14,7 @@
 | p04_div_mod | 有符号 /、MOD | PASS | -17/5=-3、-17%5=-2（C 截断语义，与 Z.div/Z.rem 一致） |
 | p05_xor_bits | 布尔 XOR / 算术位抽取 | PASS | AND/OR/XOR 类型规则仅 BOOL 域 |
 | p06_latch_state | VAR_GLOBAL 跨周期锁存 + 迟滞 | PASS | 复位脉冲回环 t7→0, t8→1 |
-| p07_real_arith | REAL 浮点 | **XFAIL-词法** | lexer 无小数字面量产生路径，`1.5` 不可解析 |
+| p07_real_arith | REAL 浮点 | **XFAIL-后端缺口** | 字面量已可写（v1.5.4）；PROGRAM 体走 `compile_expr_g`，REAL 运算仍发 I32 指令 |
 | p08_lint_arith | LINT 64 位算术 | **XFAIL-后端** | global_codegen 全 I32；判据用除法破坏环同态 |
 | p09_array_ops | 静态数组 | **XFAIL-类型/后端** | 数组访问无元素宽度缩放；全局数组基址取内容非地址 |
 | p10_quality_ops | Q 类型/质量算子 | **XFAIL-语法+后端** | parser 无 Q_* 算子产生式；CE_QUALITY_OP 仅透传数值 |

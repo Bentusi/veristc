@@ -219,6 +219,132 @@ Fixpoint read_decimal (s : string) (acc : Z) : (Z * string) :=
       else (acc, s)
   end.
 
+(* ---------------- Real literals (safest-spec.md section 4.4) ----------------
+   `float` is a PrimFloat primitive: Coq cannot reach its bit pattern (that is
+   why encoder.v writes zero placeholders for F32/F64_CONST immediates), but the
+   *value* can be built -- after extraction add/mul/div are the OCaml/C
+   double-precision hardware operations, each one correctly rounded.
+
+   This uses the decimal->float "fast path": treat the literal as mant / 10^k
+   where mant and 10^k are both exactly representable integers (at most 15
+   significant digits, at most 22 fraction digits, since 5^22 < 2^53). The
+   evaluation then contains exactly *one* division, so the result is the
+   IEEE-754 binary64 correctly-rounded value of that decimal literal -- bit for
+   bit what a host-side float_of_string would return. Exponent forms reduce to
+   the same single scaling: E+n requires digits+n <= 15 (the power stays exact),
+   E-n requires fraction+n <= 22. Anything outside those premises fails lexing
+   (None) instead of silently double-rounding. *)
+
+Definition f_zero : float := PrimFloat.zero.
+Definition f_one : float := PrimFloat.one.
+
+(* Small natural -> float by repeated +1; only used for single digits and 10. *)
+Fixpoint nat_to_float (n : nat) : float :=
+  match n with
+  | O => f_zero
+  | S k => PrimFloat.add f_one (nat_to_float k)
+  end.
+
+Definition f_ten : float := nat_to_float 10.
+
+(* 10^k; callers guarantee k <= 22, the range where every power is exact. *)
+Fixpoint pow10f (k : nat) : float :=
+  match k with
+  | O => f_one
+  | S k' => PrimFloat.mul f_ten (pow10f k')
+  end.
+
+Definition is_dot_char (c : ascii) : bool :=
+  Z.eqb (Z.of_N (Ascii.N_of_ascii c)) 46.  (* '.' *)
+
+Definition is_exp_char (c : ascii) : bool :=
+  let n := Z.of_N (Ascii.N_of_ascii c) in
+  (Z.eqb n 69) || (Z.eqb n 101).           (* 'E' | 'e' *)
+
+Definition starts_with_digit (s : string) : bool :=
+  match s with
+  | String c _ => is_digit c
+  | EmptyString => false
+  end.
+
+(* Run of decimal digits: mant := mant * 10 + digit, counting the digits. *)
+Fixpoint read_mantissa (s : string) (acc : float) (cnt : Z) : (float * Z * string) :=
+  match s with
+  | EmptyString => (acc, cnt, EmptyString)
+  | String c s' =>
+      if is_digit c
+      then read_mantissa s'
+             (PrimFloat.add (PrimFloat.mul acc f_ten)
+                            (nat_to_float (Z.to_nat (Z.of_N (Ascii.N_of_ascii c) - 48))))
+             (cnt + 1)
+      else (acc, cnt, s)
+  end.
+
+(* Exponent part: no 'E' means 0; an 'E' must be followed by >= 1 digit. *)
+Definition read_exponent (s : string) : option (Z * string) :=
+  match s with
+  | String e rest1 =>
+      if is_exp_char e then
+        let (neg, rest2) :=
+          match rest1 with
+          | String c r =>
+              let n := Z.of_N (Ascii.N_of_ascii c) in
+              if Z.eqb n 45 then (true, r)                  (* '-' *)
+              else if Z.eqb n 43 then (false, r)            (* '+' *)
+              else (false, rest1)
+          | EmptyString => (false, rest1)
+          end in
+        if starts_with_digit rest2
+        then let (ev, rest3) := read_decimal rest2 0 in
+             Some ((if neg then - ev else ev), rest3)
+        else None
+      else Some (0, s)
+  | EmptyString => Some (0, s)
+  end.
+
+(* Join integer and fraction parts into mant / 10^fraction, then scale once
+   by the exponent. Returns None if any exactness premise fails (see above). *)
+Definition build_real (imant : float) (idig : Z)
+                      (fmant : float) (fdig : Z) (exp : Z) : option float :=
+  let digits := idig + fdig in
+  if (Z.leb digits 15) && (Z.leb fdig 22) &&
+     (if Z.leb 0 exp then Z.leb (digits + exp) 15
+      else Z.leb (fdig - exp) 22)
+  then
+    let mant := PrimFloat.add (PrimFloat.mul imant (pow10f (Z.to_nat fdig))) fmant in
+    Some (if Z.leb 0 exp
+          then PrimFloat.div (PrimFloat.mul mant (pow10f (Z.to_nat exp)))
+                            (pow10f (Z.to_nat fdig))
+          else PrimFloat.div mant (pow10f (Z.to_nat (fdig - exp))))
+  else None.
+
+(* Literal starting with a digit: integer, or
+   `digits . digits [E [+-] digits]`. When no digit follows the dot the token
+   stays an integer and the dot is left to the next token -- CASE ranges such as
+   `1..5` depend on that (TK_INT_LIT 1, TK_RANGE, TK_INT_LIT 5). *)
+Definition read_number_literal (s : string) : option (token * string) :=
+  let (ival, rest) := read_decimal s 0 in
+  match rest with
+  | EmptyString => Some (TK_INT_LIT ival, EmptyString)
+  | String d after_dot =>
+      if (is_dot_char d) && (starts_with_digit after_dot) then
+        match read_mantissa s f_zero 0 with
+        | (imant, idig, _) =>
+            match read_mantissa after_dot f_zero 0 with
+            | (fmant, fdig, tail) =>
+                match read_exponent tail with
+                | Some (exp, rest') =>
+                    match build_real imant idig fmant fdig exp with
+                    | Some v => Some (TK_REAL_LIT v, rest')
+                    | None => None
+                    end
+                | None => None
+                end
+            end
+        end
+      else Some (TK_INT_LIT ival, rest)
+  end.
+
 (* 读取标识符或关键字 *)
 Fixpoint read_ident (s : string) (acc : string) : (string * string) :=
   match s with
@@ -305,10 +431,9 @@ Fixpoint next_token (s : string) : option (token * string) :=
   | EmptyString => Some (TK_EOF, EmptyString)
   | String c rest =>
       let n := Ascii.N_of_ascii c in
-      (* 数字开头 → 数字字面量 *)
+      (* digit start -> integer or real literal *)
       if is_digit c then
-        let (val, rest') := read_decimal s' 0 in
-        Some (TK_INT_LIT val, rest')
+        read_number_literal s'
       
       (* 字母或下划线开头 → 标识符或关键字 *)
       else if is_letter c || is_underscore c then

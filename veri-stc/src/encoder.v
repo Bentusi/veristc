@@ -265,6 +265,47 @@ Definition encode_code_section_data (m : sasm_module) : list Z :=
 Definition encode_code_section (m : sasm_module) : list Z :=
   encode_section 4 (encode_code_section_data m).
 
+(* ---- 2e+. Float immediate rows for section 4 (host side overwrites the
+      zero placeholders using these) ----
+   Coq cannot reach the IEEE-754 bits of `float` -- the same gap that leaves
+   section 3's scale/bias to the host (see io_cal_row in global_codegen.v), so
+   encode_sasm_instr emits zero placeholders for F32_CONST/F64_CONST and the
+   real bits are written back from this table.
+
+   The offsets mirror encode_codes step for step: every function is prefixed by
+   8 bytes (u32 idx + u32 body length) and the body advances by the byte length
+   of encode_sasm_instr. Row order is encoding order; the host checks per row
+   that the opcode byte is 0x43/0x44 and the immediate is still all zero, and
+   refuses to emit on any mismatch instead of patching the wrong slot. *)
+
+Definition float_imm_row : Type := (Z * PrimFloat.float).
+
+Fixpoint body_float_rows (body : list sasm_instr) (off : Z) : list float_imm_row :=
+  match body with
+  | nil => nil
+  | i :: rest =>
+      let sz := Z.of_nat (List.length (encode_sasm_instr i)) in
+      let hit :=
+        match i with
+        | F32_CONST f => (off, f) :: nil
+        | F64_CONST f => (off, f) :: nil
+        | _ => nil
+        end in
+      hit ++ body_float_rows rest (off + sz)
+  end.
+
+Fixpoint code_float_rows (funcs : list sasm_function) (off : Z) : list float_imm_row :=
+  match funcs with
+  | nil => nil
+  | f :: rest =>
+      let body := encode_instrs f.(sasm_body) in
+      body_float_rows f.(sasm_body) (off + 8) ++
+      code_float_rows rest (off + 8 + Z.of_nat (List.length body))
+  end.
+
+Definition encode_code_float_rows (m : sasm_module) : list float_imm_row :=
+  code_float_rows m.(sasm_functions) 0.
+
 (* ---- 2f. SAFE Section (5) ---- *)
 
 Definition encode_loop_bound (lb : loop_bound) : list Z :=

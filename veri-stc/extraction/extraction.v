@@ -64,4 +64,5 @@ Separate Extraction
   veristc_src.analysis.analyze
   veristc_src.encoder.encode_sasm_instr
   veristc_src.encoder.encode_module
+  veristc_src.encoder.encode_code_float_rows
 .

@@ -1,4 +1,15 @@
+(* Real literals are built in Coq (src/lexer.v) from these operations only, and
+   a negated float literal is folded by the parser, so the extracted compiler
+   needs the double-precision hardware arithmetic behind them. On x86-64
+   add/mul/div are the correctly rounded IEEE-754 binary64 operations and opp is
+   an exact sign-bit flip, which is what the fast-path decimal conversion
+   assumes. *)
+
 type float = Float.t
 
 let one : float = 1.0
 let zero : float = 0.0
+let add : float -> float -> float = Stdlib.Float.add
+let mul : float -> float -> float = Stdlib.Float.mul
+let div : float -> float -> float = Stdlib.Float.div
+let opp : float -> float = Stdlib.Float.neg

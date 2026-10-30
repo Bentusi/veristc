@@ -565,9 +565,16 @@ SYMTAB  : u32 count | { u32 name_off | u32 mem_addr | u8 type_tag | u8 size | u1
 
 > **实现状态**：段 7 自 v1.2 起由编译器发射（Phase 6 G0 / W2，
 > Coq `compile_program_debug_info` 出行 + OCaml `emit_debug_section` 编码）。
-> `REAL` 的 `type_tag` 照发，但 `F32_CONST`/`F64_CONST` 的立即数位当前编码为全零，
-> 上位工具须对该类型标注为不可信，直至浮点链路补齐。
 > `T_ARRAY` 全局当前只占一个 int32 槽，段 7 只报告其首槽地址，不表达数组跨度。
+
+**浮点立即数真值链**：`F32_CONST`/`F64_CONST` 的立即数位由 Coq 侧写占位零
+（`PrimFloat.float` 在 Coq 内拿不到 IEEE-754 位模式，与段 3 的 scale/bias 同一个缺口），
+由主机侧 `veristc_main.ml` 的 `patch_code_floats` 覆盖成真值；偏移与宽度出自
+Coq `encode_code_float_rows`（与 `encode_codes` 逐步同构），主机侧逐条核对
+「该字节确为 0x43/0x44」「其后宽度仍为全零」「行序不重叠」，任一不符即拒绝产出。
+字面量取值范围受词法转换前提约束（`spec/safest-spec.md` §4.4），越界判词法失败。
+仍不可信的两点：REAL 的**算术**在 codegen 里降级为 I32 指令（见特性探针 p07），
+LREAL 在运行站没有 `F64_LOAD/STORE`，故只能作为常量参与单槽 REAL 计算。
 
 ---
 
