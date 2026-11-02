@@ -2,7 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens. Dark is the default so the IDE looks the same as before until
+   a light-theme document attribute is applied. */
 :root {
+  --ide-bg: 30 30 30;
+  --ide-sidebar: 37 37 38;
+  --ide-activity: 51 51 51;
+  --ide-panel: 30 30 30;
+  --ide-status: 0 122 204;
+  --ide-border: 60 60 60;
+  --ide-text: 204 204 204;
+  --ide-text-dim: 133 133 133;
+  --ide-accent: 0 122 204;
+  --ide-hover: 42 45 46;
+  --ide-selected: 55 55 61;
+  --ide-strong: 255 255 255;
+  --ide-hue-red: 248 113 113;
+  --ide-hue-green: 74 222 128;
+  --ide-hue-yellow: 250 204 21;
+  --ide-hue-orange: 251 146 60;
+  --ide-hue-blue: 96 165 250;
+  --ide-hue-teal: 94 234 212;
+  --ide-hue-purple: 192 132 252;
+  --ide-hue-cyan: 34 211 238;
+  --ide-scroll-thumb: 86 86 90;
+  --ide-scroll-thumb-hover: 115 115 120;
+  color-scheme: dark;
   font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
   font-size: 13px;
   line-height: 1.5;
@@ -10,12 +35,77 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+[data-theme="light"] {
+  --ide-bg: 255 255 255;
+  --ide-sidebar: 243 243 244;
+  --ide-activity: 232 232 234;
+  --ide-panel: 255 255 255;
+  --ide-status: 0 103 184;
+  --ide-border: 208 208 212;
+  --ide-text: 36 41 47;
+  --ide-text-dim: 106 115 125;
+  --ide-accent: 0 103 184;
+  --ide-hover: 228 231 235;
+  --ide-selected: 214 219 225;
+  --ide-strong: 28 30 33;
+  --ide-hue-red: 199 38 38;
+  --ide-hue-green: 21 122 58;
+  --ide-hue-yellow: 138 89 8;
+  --ide-hue-orange: 152 62 11;
+  --ide-hue-blue: 26 86 179;
+  --ide-hue-teal: 13 110 103;
+  --ide-hue-purple: 113 35 171;
+  --ide-hue-cyan: 15 118 141;
+  --ide-scroll-thumb: 179 182 188;
+  --ide-scroll-thumb-hover: 158 162 168;
+  color-scheme: light;
+}
+
 body {
   margin: 0;
   padding: 0;
   overflow: hidden;
+  background-color: rgb(var(--ide-bg));
+  color: rgb(var(--ide-text));
+  /* Native form controls (checkbox, radio, range) pick up the accent hue
+     instead of the browser default, so they match the panel either way. */
+  accent-color: rgb(var(--ide-accent));
 }
 
 * {
   box-sizing: border-box;
+  /* Scrollbars: the OS default was a light-gray trough with a square thumb
+     inside every dark panel. Both engines are themed from the same tokens, so
+     a theme flip restyles them without touching any component. */
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--ide-scroll-thumb)) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  /* The transparent border + content-box clip makes the thumb read as a
+     floating pill instead of a block filling the trough. */
+  border: 2px solid transparent;
+  background-clip: content-box;
+  background-color: rgb(var(--ide-scroll-thumb));
+}
+
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  /* Only background-color: the `background` shorthand would reset the clip. */
+  background-color: rgb(var(--ide-scroll-thumb-hover));
+}
+
+::selection {
+  background: rgb(var(--ide-accent) / 0.35);
 }

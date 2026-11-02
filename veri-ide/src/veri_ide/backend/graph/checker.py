@@ -15,6 +15,8 @@ does prove it is not worth compiling.
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ..gen.system_vars import BY_NAME, is_system
+
 
 #: Sentinel endpoint that addresses a page's interface port.
 INTERFACE = "__interface__"
@@ -539,6 +541,20 @@ def _check_bindings(g: _Graph) -> list[Finding]:
                 )
             )
             continue
+        if row.get("enabled") is False:
+            findings.append(
+                Finding(
+                    "error",
+                    "BAD_BIND",
+                    f"Page port '{name}' is bound to '{variable}', which is disabled on the "
+                    "station: it emits no VAR_GLOBAL/IOMAP entry, so the reference would not "
+                    "compile. Enable the point or unbind the pin",
+                    page=page,
+                    block=INTERFACE,
+                    port=name,
+                )
+            )
+            continue
         if row.get("direction") == "input" and entry["direction"] == "output":
             findings.append(
                 Finding(
@@ -576,6 +592,11 @@ def _check_interfaces(g: _Graph) -> list[Finding]:
     bound to, or a block writing into it. A port with neither is a variable the
     chart references but nothing associates -- the case the inspector is asked
     to catch. An output port needs a consumer on some page.
+
+    A system variable is exempt from all of that: the program body supplies it
+    every cycle, so it is neither bound nor written by a wire. What is checked
+    instead is that the chart takes it as it is given -- the runtime's type, and
+    read-only.
     """
     findings = []
     read: set[str] = set()
@@ -589,6 +610,34 @@ def _check_interfaces(g: _Graph) -> list[Finding]:
     for name, entry in sorted(g.interface.items()):
         page = entry["pages"][0] if entry["pages"] else ""
         pages = ", ".join(entry["pages"]) or "?"
+
+        if is_system(name):
+            given = BY_NAME[name]
+            if entry["type"] != given.st_type:
+                findings.append(
+                    Finding(
+                        "error",
+                        "SYSTEM_TYPE",
+                        f"System variable '{name}' is declared as {entry['type']} on page(s) "
+                        f"{pages}; the runtime supplies it as {given.st_type}",
+                        page=page,
+                        block=INTERFACE,
+                        port=name,
+                    )
+                )
+            if name in written:
+                findings.append(
+                    Finding(
+                        "error",
+                        "SYSTEM_READONLY",
+                        f"'{name}' is supplied by the runtime every cycle "
+                        f"({given.description}); the chart may read it but not write it",
+                        page=page,
+                        block=INTERFACE,
+                        port=name,
+                    )
+                )
+            continue
 
         if len(entry["pages"]) > 1:
             findings.append(

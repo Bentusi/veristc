@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../lib/i18n";
 import { AnalysisPanel } from "./AnalysisPanel";
 import { SimPanel } from "./SimPanel";
 import { StimulusPanel } from "./StimulusPanel";
@@ -13,14 +14,6 @@ import type {
 import { makeForceRow } from "./types";
 
 export type PanelTab = "check" | "st" | "analysis" | "sim" | "stim";
-
-const TAB_LABELS: Record<PanelTab, string> = {
-  check: "检查器",
-  st: "ST 文本",
-  analysis: "编译分析",
-  sim: "仿真",
-  stim: "激励/强制",
-};
 
 export interface CheckerPanelProps {
   report: CheckReport | null;
@@ -47,12 +40,6 @@ export interface CheckerPanelProps {
   onForces: (rows: ForceRow[]) => void;
   onScript: (rows: ScriptRow[]) => void;
 }
-
-const SEVERITY: Record<Finding["severity"], { color: string; glyph: string; label: string }> = {
-  error: { color: "#f14c4c", glyph: "✕", label: "错误" },
-  warning: { color: "#cca700", glyph: "▲", label: "警告" },
-  info: { color: "#569cd6", glyph: "ℹ", label: "提示" },
-};
 
 function rows(findings: Finding[], filter: Record<string, boolean>): Finding[] {
   return findings.filter((finding) => filter[finding.severity] !== false);
@@ -84,7 +71,22 @@ export function CheckerPanel({
   onForces,
   onScript,
 }: CheckerPanelProps) {
+  const { t } = useI18n();
   const [filter, setFilter] = useState<Record<string, boolean>>({ error: true, warning: true, info: true });
+
+  const TAB_LABELS: Record<PanelTab, string> = {
+    check: t("checker.tabs.checker"),
+    st: t("checker.tabs.st"),
+    analysis: t("checker.tabs.analysis"),
+    sim: t("checker.tabs.sim"),
+    stim: t("checker.tabs.stimulus"),
+  };
+
+  const SEVERITY: Record<Finding["severity"], { color: string; glyph: string; label: string }> = {
+    error: { color: "rgb(var(--ide-hue-red))", glyph: "✕", label: t("checker.error") },
+    warning: { color: "rgb(var(--ide-hue-yellow))", glyph: "▲", label: t("checker.warning") },
+    info: { color: "rgb(var(--ide-hue-blue))", glyph: "ℹ", label: t("checker.info") },
+  };
 
   const errors = report?.errors ?? [];
   const warnings = report?.warnings ?? [];
@@ -111,7 +113,7 @@ export function CheckerPanel({
             <span className="flex-1">
               <span className="text-ide-text">{finding.message}</span>
               <span className="block text-[10px] text-ide-textDim">
-                {finding.page || "未定位"}
+                {finding.page || t("checker.unlocated")}
                 {finding.block && finding.block !== "__interface__" ? ` · ${finding.block}` : ""}
                 {finding.port ? ` · ${finding.port}` : ""}
                 <span className="ml-2 font-mono opacity-70">{finding.code}</span>
@@ -137,7 +139,7 @@ export function CheckerPanel({
             {TAB_LABELS[key]}
             {key === "check" && report && (
               <span className={`ml-1.5 ${errors.length ? "text-red-400" : "text-green-400"}`}>
-                {errors.length ? `${errors.length} 错` : "通过"}
+                {errors.length ? `${errors.length} ${t("checker.fail")}` : t("checker.pass")}
               </span>
             )}
             {key === "analysis" && analysis && (
@@ -146,12 +148,12 @@ export function CheckerPanel({
                   analysis.ok ? (analysisStale ? "text-yellow-400" : "text-green-400") : "text-red-400"
                 }`}
               >
-                {!analysis.ok ? "拒绝" : analysisStale ? "已改动" : "已度量"}
+                {!analysis.ok ? t("checker.rejected") : analysisStale ? t("checker.modified") : t("checker.measured")}
               </span>
             )}
             {key === "sim" && sim && (
               <span className={`ml-1.5 ${sim.ok ? "text-green-400" : "text-red-400"}`}>
-                {sim.ok ? `${sim.done?.cycles ?? 0} 周期` : `拒绝·${sim.stage ?? ""}`}
+                {sim.ok ? `${sim.done?.cycles ?? 0} ${t("sim.cycle")}` : `${t("checker.rejected")}·${sim.stage ?? ""}`}
               </span>
             )}
             {key === "stim" && (forces.length || script.length) > 0 && (
@@ -180,19 +182,19 @@ export function CheckerPanel({
             ))}
           </div>
         )}
-        {busy && <span className="text-ide-textDim animate-pulse">运行中…</span>}
+        {busy && <span className="text-ide-textDim animate-pulse">{t("checker.running")}</span>}
       </div>
 
       {tab === "check" ? (
         <div className="flex-1 overflow-y-auto">
           {!report && !busy && (
             <div className="p-4 text-ide-textDim">
-              尚未检查。检查器会核查回环、引脚类型、未关联变量、多驱动与外部变量绑定。
+              {t("checker.notChecked")}
             </div>
           )}
           {report?.ok && (
             <div className="p-3 text-green-400">
-              检查通过：{pages.length} 张图页，{report.cross_page.length} 个跨页变量，无错误。
+              {t("checker.passed")}{pages.length} {t("checker.passedPages")}{report.cross_page.length} {t("checker.passedCrossVars")}
             </div>
           )}
           {group(SEVERITY.error.label, errors)}
@@ -202,7 +204,7 @@ export function CheckerPanel({
       ) : tab === "st" ? (
         <div className="flex-1 overflow-auto">
           {stError && <pre className="p-3 text-red-400 font-mono whitespace-pre-wrap">{stError}</pre>}
-          {!stError && <pre className="p-3 font-mono text-ide-text leading-relaxed whitespace-pre">{stText || "（无内容）"}</pre>}
+          {!stError && <pre className="p-3 font-mono text-ide-text leading-relaxed whitespace-pre">{stText || t("checker.noContent")}</pre>}
         </div>
       ) : tab === "analysis" ? (
         <AnalysisPanel

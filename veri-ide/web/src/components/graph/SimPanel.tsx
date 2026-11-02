@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "../../lib/i18n";
 import type { Finding, PinRow, SimRun } from "./types";
 import { pinKey } from "./types";
 
@@ -20,6 +21,7 @@ interface TimelineProps {
  * this cycle reported, so the cycle being shown has always to be stated.
  */
 export function SimTimeline({ run, cycle, stale, onCycle }: TimelineProps) {
+  const { t } = useI18n();
   const [playing, setPlaying] = useState(false);
   const count = run.timeline?.length ?? 0;
 
@@ -42,23 +44,23 @@ export function SimTimeline({ run, cycle, stale, onCycle }: TimelineProps) {
 
   return (
     <div className="h-8 shrink-0 flex items-center gap-2 px-3 bg-ide-sidebar border-t border-ide-border text-[11px]">
-      <button className={button} onClick={() => step(0)} disabled={cycle === 0} title="首个周期">
+      <button className={button} onClick={() => step(0)} disabled={cycle === 0} title={t("sim.firstCycle")}>
         ⏮
       </button>
-      <button className={button} onClick={() => step(cycle - 1)} disabled={cycle === 0} title="上一周期">
+      <button className={button} onClick={() => step(cycle - 1)} disabled={cycle === 0} title={t("sim.prevCycle")}>
         ‹
       </button>
       <button
         className={button}
         onClick={() => setPlaying((value) => !value)}
-        title={playing ? "暂停" : "回放"}
+        title={playing ? t("sim.pause") : t("sim.replay")}
       >
         {playing ? "⏸" : "▶"}
       </button>
-      <button className={button} onClick={() => step(cycle + 1)} disabled={cycle >= count - 1} title="下一周期">
+      <button className={button} onClick={() => step(cycle + 1)} disabled={cycle >= count - 1} title={t("sim.nextCycle")}>
         ›
       </button>
-      <button className={button} onClick={() => step(count - 1)} disabled={cycle >= count - 1} title="末个周期">
+      <button className={button} onClick={() => step(count - 1)} disabled={cycle >= count - 1} title={t("sim.lastCycle")}>
         ⏭
       </button>
       <input
@@ -70,16 +72,16 @@ export function SimTimeline({ run, cycle, stale, onCycle }: TimelineProps) {
         className="flex-1 accent-teal-400"
       />
       <span className="font-mono text-ide-text w-28">
-        周期 {cycle + 1}/{count}
+        {t("sim.cycle")} {cycle + 1}/{count}
       </span>
       <span className="font-mono text-ide-textDim w-24">t = {row?.t_ms ?? 0} ms</span>
       <span className={`font-mono ${(row?.violations ?? 0) > 0 ? "text-red-400" : "text-green-400"}`}>
-        违例 {row?.violations ?? 0}
+        {t("sim.violation")} {row?.violations ?? 0}
       </span>
-      <span className="font-mono text-ide-textDim">状态 {row?.status ?? 0}</span>
-      {stale && <span className="text-yellow-400">图已改动，结果属于改动前</span>}
+      <span className="font-mono text-ide-textDim">{t("sim.status")} {row?.status ?? 0}</span>
+      {stale && <span className="text-yellow-400">{t("sim.staleWarning")}</span>}
       <span className="text-ide-textDim">
-        {run.symbols?.length ?? 0} 符号 · {(run.runs ?? 1) > 1 ? `${run.runs} 次运行合并` : "单次运行"}
+        {run.symbols?.length ?? 0} {t("sim.symbol")} · {(run.runs ?? 1) > 1 ? `${run.runs} ${t("sim.runsMerged")}` : t("sim.singleRun")}
       </span>
     </div>
   );
@@ -103,6 +105,7 @@ interface SimPanelProps {
 
 /** The simulator's answer: what the object table was, and what every frame reported. */
 export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: SimPanelProps) {
+  const { t } = useI18n();
   const pinsFor = (symbol: string): PinRow[] =>
     (run?.pins ?? []).filter((pin) => pin.symbol === symbol);
 
@@ -110,22 +113,22 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
     <div className="flex-1 overflow-auto text-xs">
       <div className="sticky top-0 px-3 py-1.5 bg-ide-sidebar border-b border-ide-border flex items-center gap-3">
         <button onClick={onRun} disabled={busy} className="px-2 py-0.5 rounded bg-ide-accent text-white hover:bg-blue-600 disabled:opacity-50">
-          {busy ? "仿真中…" : "运行仿真"}
+          {busy ? t("checker.running") : t("sim.runSim")}
         </button>
         {run?.ok && run.done && (
           <span className="text-green-400 font-mono">
-            {run.done.cycles} 周期 · {run.cycle_ms} ms · 读错 {run.done.read_errors} · 写错 {run.done.write_errors}
+            {run.done.cycles} {t("sim.cycle")} · {run.cycle_ms} ms · {t("sim.readError")} {run.done.read_errors} · {t("sim.writeError")} {run.done.write_errors}
           </span>
         )}
-        {run?.ok && run.plant && <span className="text-ide-textDim font-mono">对象表 {run.plant.name}</span>}
-        {run?.ok && run.station && <span className="text-ide-textDim font-mono">站 {run.station.station_id}</span>}
+        {run?.ok && run.plant && <span className="text-ide-textDim font-mono">{t("sim.plantTable")} {run.plant.name}</span>}
+        {run?.ok && run.station && <span className="text-ide-textDim font-mono">{t("sim.station")} {run.station.station_id}</span>}
         {run?.ok && (
           <span
             className={
               forcedCount(run, cycle) ? "text-orange-400 font-mono" : "text-ide-textDim font-mono"
             }
           >
-            {forcedCount(run, cycle) ? `${forcedCount(run, cycle)} 个值被强制` : "无强制值"}
+            {forcedCount(run, cycle) ? `${forcedCount(run, cycle)} ${t("sim.forcedValues")}` : t("sim.noForced")}
           </span>
         )}
       </div>
@@ -135,7 +138,7 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
       {run && !run.ok && (
         <div className="p-3 space-y-1">
           <div className="text-red-400">
-            仿真被拒绝：{run.stage ?? "未知阶段"}
+            {t("sim.rejected")}{run.stage ?? t("sim.unknownStage")}
           </div>
           {refusalErrors(run).map((message, index) => (
             <div key={index} className="font-mono text-red-300">
@@ -160,13 +163,13 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
         <table className="w-full border-collapse">
           <thead>
             <tr className="text-ide-textDim text-[10px] uppercase">
-              <th className="text-left px-3 py-1">符号</th>
-              <th className="text-left px-2 py-1">类型</th>
-              <th className="text-right px-2 py-1">地址</th>
-              <th className="text-right px-2 py-1">通道</th>
-              <th className="text-right px-2 py-1">当前值</th>
-              <th className="text-left px-2 py-1">显示在</th>
-              <th className="text-left px-2 py-1">强制</th>
+              <th className="text-left px-3 py-1">{t("sim.symbol")}</th>
+              <th className="text-left px-2 py-1">{t("inspector.type")}</th>
+              <th className="text-right px-2 py-1">{t("monitor.address")}</th>
+              <th className="text-right px-2 py-1">{t("sim.channel")}</th>
+              <th className="text-right px-2 py-1">{t("monitor.currentValue")}</th>
+              <th className="text-left px-2 py-1">{t("sim.displayIn")}</th>
+              <th className="text-left px-2 py-1">{t("sim.force")}</th>
             </tr>
           </thead>
           <tbody className="font-mono">
@@ -190,7 +193,7 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
                     className={`px-2 py-0.5 text-right ${
                       isForced ? "text-orange-400 font-bold" : "text-teal-300"
                     }`}
-                    title={isForced ? "本周期该值由激励覆盖，不是程序算出的" : "本周期该值由程序算出"}
+                    title={isForced ? t("sim.forcedByStimulus") : t("sim.computedByProgram")}
                   >
                     {isForced ? "F " : ""}
                     {value === null ? "—" : String(value)}
@@ -214,9 +217,9 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
                     <button
                       onClick={() => onForce(row.name, value === null ? "" : String(value))}
                       className="text-ide-textDim hover:text-orange-400"
-                      title="加入强制列表并转到激励页"
+                      title={t("sim.addToForce")}
                     >
-                      {isForced ? "已强制" : "强制…"}
+                      {isForced ? t("monitor.forced") : t("sim.forceLabel")}
                     </button>
                   </td>
                 </tr>
@@ -228,7 +231,7 @@ export function SimPanel({ run, error, busy, cycle, onRun, onJump, onForce }: Si
 
       {!run && !error && !busy && (
         <div className="p-4 text-ide-textDim">
-          尚未仿真。运行时检查器先通过，再按设备组态生成被控对象表，逐周期取回 watch 帧；引脚上的数字来自帧，不来自图。
+          {t("sim.notSimulated")}
         </div>
       )}
     </div>

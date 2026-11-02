@@ -601,6 +601,58 @@ def test_output_declared_but_never_written():
     assert find(findings, "UNUSED_PORT")
 
 
+# ---------- checker: system variables ----------
+
+
+def test_a_system_variable_needs_nothing_to_supply_it():
+    """The runtime assigns it every cycle, so the association check does not apply."""
+    fc = page("P1", blocks=[block("pid1", "PID", parameters={"Kp": 1.0})],
+              interface={"input": [{"name": "CYCLE_TICK", "type": "DINT"}]},
+              connections=[wire("__interface__", "CYCLE_TICK", "pid1", "SP"),
+                           wire("__interface__", "CYCLE_TICK", "pid1", "PV")])
+    findings = check_graph(GraphProject(pages=[fc]).merged_fc(), LIBRARY, EXTERNAL)
+    assert not find(findings, "VARIABLE_UNBOUND")
+
+
+def test_a_system_variable_written_by_the_chart_is_refused():
+    """The chart reads the cycle it runs in; it does not get to choose it."""
+    fc = page("P1", constants=[{"id": "K1", "type": "DINT", "value": 1,
+                               "position": {"x": 0, "y": 0}}],
+              interface={"input": [{"name": "CYCLE_MS", "type": "DINT"}]},
+              connections=[wire("K1", "OUT", "__interface__", "CYCLE_MS")])
+    findings = check_graph(GraphProject(pages=[fc]).merged_fc(), LIBRARY, EXTERNAL)
+    readonly = find(findings, "SYSTEM_READONLY")
+    assert len(readonly) == 1 and readonly[0].port == "CYCLE_MS"
+
+
+def test_a_system_variable_declared_with_the_wrong_type_is_refused():
+    given = {"CYCLE_TICK": "DINT", "CYCLE_MS": "DINT"}
+    for name, real in given.items():
+        fc = page("P1", interface={"input": [{"name": name, "type": "REAL"}]})
+        findings = check_graph(GraphProject(pages=[fc]).merged_fc(), LIBRARY, {})
+        bad = find(findings, "SYSTEM_TYPE")
+        assert len(bad) == 1, name
+        assert real in bad[0].message, name
+
+
+def test_a_system_variable_read_on_two_pages_is_not_a_page_connector():
+    """Both sheets read the counter, but neither page carries it to the other."""
+    project = GraphProject(
+        pages=[
+            page("P1", blocks=[block("pid1", "PID", parameters={"Kp": 1.0})],
+                 interface={"input": [{"name": "CYCLE_TICK", "type": "DINT"}]},
+                 connections=[wire("__interface__", "CYCLE_TICK", "pid1", "SP"),
+                              wire("__interface__", "CYCLE_TICK", "pid1", "PV")]),
+            page("P2", index=1, interface={"input": [{"name": "CYCLE_TICK", "type": "DINT"}]}),
+        ]
+    )
+    merged = project.merged_fc()
+    port = next(p for p in merged["interface"]["input"] if p["name"] == "CYCLE_TICK")
+    assert port["scope"] == "external" and port["pages"] == ["P1", "P2"]
+    assert project.cross_page_index() == []
+    assert not find(check_graph(merged, LIBRARY, {}), "VARIABLE_UNBOUND")
+
+
 # ---------- persistence ----------
 
 
@@ -642,10 +694,12 @@ def test_load_missing_pages_fails(tmp_path):
 
 @pytest.fixture
 def client():
-    """A fresh graph singleton, so the API tests do not leak into each other."""
+    """Fresh graph and device singletons, so API tests do not leak into each other."""
     from veri_ide.api.server import app
+    import veri_ide.backend.device.service as device_service
 
     graph_service._PROJECT = None
+    device_service._PROJECT = device_service.DeviceProject([device_service.DeviceService()])
     yield TestClient(app)
     graph_service._PROJECT = None
 
@@ -689,3 +743,80 @@ def test_api_rejects_bad_page(client):
 def test_api_page_not_found(client):
     assert client.get("/graph/pages/NOPE").status_code == 404
     assert client.delete("/graph/pages/NOPE").status_code == 404
+
+
+# ---------- device-side guard: which variables does the chart bind? ----------
+
+def _bound_page():
+    return page(
+        "P1",
+        blocks=[block("pid1", "PID", parameters={"Kp": 1.0})],
+        interface={
+            "input": [
+                {"name": "SP", "type": "REAL", "bind": {"station": "ST1", "variable": "SP"}},
+                {"name": "PV", "type": "REAL", "bind": {"station": "ST1", "variable": "PV"}},
+            ],
+            "output": [{"name": "OUT", "type": "REAL",
+                        "bind": {"station": "ST1", "variable": "OUT"}}],
+        },
+        connections=[
+            wire("__interface__", "SP", "pid1", "SP"),
+            wire("__interface__", "PV", "pid1", "PV"),
+            wire("pid1", "OUT", "__interface__", "OUT"),
+        ],
+    )
+
+
+def test_bound_variables_lists_every_pin_for_the_device_guard():
+    """The device page asks before disabling or deleting a point."""
+    project = GraphProject(pages=[_bound_page()])
+    rows = project.bound_variables()
+    assert {r["variable"] for r in rows} == {"SP", "PV", "OUT"}
+    sp = next(r for r in rows if r["variable"] == "SP")
+    assert sp["port"] == "SP" and sp["station"] == "ST1" and sp["pages"] == ["P1"]
+
+
+def test_bound_variables_skips_local_pins():
+    """A pin with no `bind` is page-local -- the device stage may not block on it."""
+    project = GraphProject(
+        pages=[page("P1", interface={"input": [{"name": "PV", "type": "REAL", "scope": "local"}]})]
+    )
+    assert project.bound_variables() == []
+
+
+def test_api_bound_variables_endpoint(client):
+    client.put("/graph/pages/PAGE1", json=_bound_page())
+    rows = client.get("/graph/bound-variables").json()
+    assert {r["variable"] for r in rows} == {"SP", "PV", "OUT"}
+
+
+def test_api_system_variables_are_offered_read_only(client):
+    """The palette lists what the runtime really supplies, and says it cannot be written."""
+    rows = client.get("/graph/system-variables").json()
+    assert [row["name"] for row in rows] == ["CYCLE_TICK", "CYCLE_MS"]
+    assert all(row["readonly"] and row["st_type"] == "DINT" for row in rows)
+
+
+def test_api_st_preview_writes_the_cycle_of_the_station_named(client):
+    """`CYCLE_MS` is the number this station runs at, so the preview asks for it."""
+    import veri_ide.backend.device.service as device_service
+    from veri_ide.backend.device.models import Station
+
+    device_service.get_device_project().station("ST1").set_station(
+        Station(station_id="ST1", cycle_ms=250)
+    )
+    client.put(
+        "/graph/pages/PAGE1",
+        json=page("PAGE1", interface={"input": [{"name": "CYCLE_MS", "type": "DINT"}]}),
+    )
+    assert "CYCLE_MS := 250;" in client.get("/graph/st?station=ST1").text
+
+
+def test_binding_a_disabled_point_is_a_checker_error():
+    """A pin bound to a point the device stage disabled emits no global: broken chain."""
+    external = dict(EXTERNAL, SP={**EXTERNAL["SP"], "enabled": False})
+    findings = check_graph(GraphProject(pages=[_bound_page()]).merged_fc(), LIBRARY, external)
+    bad = [f for f in findings if f.code == "BAD_BIND"]
+    assert len(bad) == 1
+    assert "SP" in bad[0].message and "disabled" in bad[0].message
+    assert bad[0].page == "P1" and bad[0].port == "SP"

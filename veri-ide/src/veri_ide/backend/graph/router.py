@@ -8,6 +8,7 @@ Endpoints:
   multi-driver pins, unknown blocks and ports, station binding consistency. Its
   findings locate a page, a block and a pin so the editor can jump there
 - cross-page variable index, which is what the page tabs jump through
+- the system variables the runtime supplies, which the palette offers as read-only
 - `IOMAP`-side association: the checker reads the station external variable table
   produced by the device stage
 - `analysis`: the compiler hand-off -- WCET against the station cycle budget,
@@ -25,6 +26,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..build.analysis import AnalysisError, run_analysis
+from ..gen.system_vars import DEFAULT_CYCLE_MS, SYSTEM_VARIABLES
 from ..project.workspace import resolve_project_path
 from .compose import block_defs, compile_unit, station_of
 from .service import GraphError, get_graph_project
@@ -192,10 +194,43 @@ def cross_page() -> list[dict]:
     return get_graph_project().cross_page_index()
 
 
+@router.get("/system-variables")
+def system_variables() -> list[dict]:
+    """The variables the runtime supplies, which a chart may read but never write.
+
+    Only names with a byte behind them are listed; the palette offers these and
+    nothing else, so a pin cannot be drawn on a promise the station does not keep.
+    """
+    return [variable.to_dict() for variable in SYSTEM_VARIABLES]
+
+
+@router.get("/bound-variables")
+def bound_variables() -> list[dict]:
+    """Configuration variables the chart binds pins to, with their pages.
+
+    The device stage consults this before disabling or deleting a variable:
+    removing one the graph still references would break compilation, so the
+    user is pointed back here to unbind the pin first.
+    """
+    return get_graph_project().bound_variables()
+
+
 @router.get("/st", response_class=PlainTextResponse)
-def st_text() -> str:
+def st_text(station: Optional[str] = None) -> str:
+    """The text the whole project generates, for reading -- never for compiling.
+
+    `CYCLE_MS` needs the station's cycle to be written at its real value, so the
+    station the preview is taken for is named here. Without a device stage there is
+    no station to ask, and the preview falls back to the cycle a station is created
+    with; the analysis and simulation hand-offs always use the configured one.
+    """
+    project = get_graph_project()
     try:
-        return get_graph_project().generate_st()
+        cycle_ms = station_of(station).station.cycle_ms
+    except ValueError:
+        cycle_ms = DEFAULT_CYCLE_MS
+    try:
+        return project.generate_st(cycle_ms=cycle_ms)
     except (GraphError, ValueError) as exc:
         # A chart with a loop has no execution order, so there is no text to emit.
         raise HTTPException(status_code=400, detail=str(exc)) from None

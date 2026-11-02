@@ -11,9 +11,16 @@ only place a chart becomes a program. Two protocol decisions shape it:
   emitted by the device stage, so redeclaring it here would be a duplicate;
   an intermediate or local port is a program variable shared by the pages.
 * the calling chart writes an associated port as that variable name, not as the
-  port label, because the variable is what the global section actually declares.
+  port label, because the variable is what the global section actually declares;
+* a system variable is not supplied by a wire at all. The program body opens by
+  assigning it, which is what makes the number on the pin the cycle's own.
 """
-from typing import Any
+from typing import Any, Optional
+
+from .system_vars import DEFAULT_CYCLE_MS
+from .system_vars import assignments as system_assignments
+from .system_vars import declarations as system_declarations
+from .system_vars import is_system
 
 
 INTERFACE = "__interface__"
@@ -51,12 +58,19 @@ def _bound(data: dict[str, Any]) -> dict[str, str]:
 
 
 def _internal(data: dict[str, Any]) -> list[str]:
-    """Page variables: intermediate or local ports that no station owns."""
+    """Page variables: intermediate or local ports that no station owns.
+
+    A system variable is never one of them. Two pages may both read `CYCLE_TICK`,
+    which makes the name shared, but it is shared because the runtime supplies it
+    -- not because a page computes it -- so it belongs to neither page's storage.
+    """
     bound = _bound(data)
     return sorted(
         name
         for name, port in _ports(data).items()
-        if port.get("scope") in ("intermediate", "local") and name not in bound
+        if port.get("scope") in ("intermediate", "local")
+        and name not in bound
+        and not is_system(name)
     )
 
 
@@ -64,18 +78,26 @@ def global_declarations(data: dict[str, Any]) -> list[tuple[str, str]]:
     """
     Names the caller must declare in its single `VAR_GLOBAL` section.
 
-    Two kinds. Block instances, because the compiler rejects an instance held as
-    a program variable as soon as a call names an argument or reads a field. And
-    page variables, because the debug section lists globals only -- a program
-    local has no address a simulator or a monitor could ever read.
+    Three kinds. Block instances, because the compiler rejects an instance held as
+    a program variable as soon as a call names an argument or reads a field. Page
+    variables, because the debug section lists globals only -- a program local has
+    no address a simulator or a monitor could ever read. And the system variables
+    the program body assigns, which have to be readable for that assignment to
+    mean anything.
     """
     ports = _ports(data)
     rows = [(block["id"], block["type"]) for block in data.get("blocks", [])]
     rows += [(name, ports[name]["type"]) for name in _internal(data)]
+    rows += system_declarations(ports)
     return rows
 
 
-def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False) -> str:
+def generate_st_from_fc(
+    data: dict[str, Any],
+    *,
+    instances_global: bool = False,
+    cycle_ms: int = DEFAULT_CYCLE_MS,
+) -> str:
     """
     Generate ST code from FC JSON.
 
@@ -84,6 +106,7 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
         instances_global: hold back everything `global_declarations` reports and
             let the caller declare it in its global section. The analysis and
             simulation hand-offs both set it.
+        cycle_ms: the station cycle the system variable `CYCLE_MS` is given
 
     Returns:
         ST code as string
@@ -100,6 +123,7 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
     ports = _ports(data)
     bound = _bound(data)
     internal = set(_internal(data))
+    system = [variable for variable in system_declarations(ports)]
 
     declarations = [] if instances_global else [
         f"    {block['id']} : {block['type']};" for block in blocks
@@ -107,6 +131,7 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
     declarations += [] if instances_global else [
         f"    {ports[name]['name']} : {ports[name]['type']};" for name in sorted(internal)
     ]
+    declarations += [] if instances_global else [f"    {name} : {type_name};" for name, type_name in system]
     if declarations:
         lines.append("VAR")
         lines.extend(declarations)
@@ -116,7 +141,7 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
         entries = [
             port
             for port in interface.get(direction, [])
-            if not port.get("bind") and port["name"] not in internal
+            if not port.get("bind") and port["name"] not in internal and not is_system(port["name"])
         ]
         if entries:
             lines.append(keyword)
@@ -130,6 +155,11 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
         )
 
     lines.append("")
+
+    #: Before anything the chart computes: the cycle counters describe the cycle
+    #: this body is running in, so a block that reads one must not see the last
+    #: cycle's value.
+    lines.extend(system_assignments(ports, cycle_ms))
 
     connections = data.get("connections", [])
     block_map = {b["id"]: b for b in blocks}
@@ -169,6 +199,8 @@ def generate_st_from_fc(data: dict[str, Any], *, instances_global: bool = False)
     for conn in connections:
         if conn["to"]["block"] != INTERFACE or conn["to"]["port"] in internal:
             continue
+        if is_system(conn["to"]["port"]):
+            continue  # the checker already refuses it; a chart cannot write the cycle
         target = bound.get(conn["to"]["port"], conn["to"]["port"])
         lines.append(f"{target} := {_source_text(conn['from'], constants, bound)};")
 
@@ -220,7 +252,7 @@ def pin_symbols(data: dict[str, Any], block_defs: dict[str, dict]) -> list[dict]
                 rows.append(row)
 
     for name, port in ports.items():
-        symbol = bound.get(name) if name in bound else (name if name in internal else None)
+        symbol = _port_symbol(name, bound, internal)
         for page in port.get("pages") or [default_page]:
             rows.append(
                 {
@@ -251,6 +283,19 @@ def _pin_row(page: str, element: str, pin: dict, direction: str, kind_of_block: 
     }
 
 
+def _port_symbol(name: str, bound: dict[str, str], internal: set[str]) -> Optional[str]:
+    """The global slot whose frame carries a page port's value, when it has one.
+
+    A system variable always does: the program body assigns it, and the
+    declaration it lands in is a global.
+    """
+    if name in bound:
+        return bound[name]
+    if is_system(name):
+        return name
+    return name if name in internal else None
+
+
 def _source_pin(
     source: dict,
     blocks: dict[str, dict],
@@ -266,7 +311,7 @@ def _source_pin(
     if block in blocks:
         return {"kind": "symbol", "symbol": f"{block}#{port}"}
     if block == INTERFACE:
-        symbol = bound.get(port) if port in bound else (port if port in internal else None)
+        symbol = _port_symbol(port, bound, internal)
         return {"kind": "symbol" if symbol else "unwatchable", "symbol": symbol}
     return {"kind": "unconnected"}
 

@@ -158,6 +158,8 @@ def plant_from_external_variables(station_id: str, rows: list[dict]) -> PlantMod
 
     for row in rows:
         name = row.get("name", "?")
+        if row.get("enabled") is False:
+            continue
         if not row.get("mapped") or row.get("channel") is None:
             continue
         channel = _raw_int(row["channel"], f"{name}: channel", problems)

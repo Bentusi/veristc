@@ -407,6 +407,72 @@ def test_a_pin_driven_by_a_graph_constant_shows_the_literal_it_was_folded_into()
     assert row["page"] == "PAGE1"
 
 
+SYSTEM_CHART = {
+    "version": "1.1",
+    "type": "FC",
+    "name": "SYSTEM_READ",
+    "page": {"id": "PAGE1"},
+    "interface": {
+        "input": [
+            {"name": "CYCLE_TICK", "type": "DINT", "scope": "external"},
+            {"name": "CYCLE_MS", "type": "DINT", "scope": "external"},
+        ],
+        "output": [{"name": "SPAN", "type": "DINT", "scope": "intermediate"}],
+        "in_out": [],
+    },
+    "constants": [],
+    "blocks": [{"id": "mul1", "type": "MUL", "position": {"x": 0, "y": 0}}],
+    "connections": [
+        {"from": {"block": "__interface__", "port": "CYCLE_TICK"}, "to": {"block": "mul1", "port": "IN1"}},
+        {"from": {"block": "__interface__", "port": "CYCLE_MS"}, "to": {"block": "mul1", "port": "IN2"}},
+        {"from": {"block": "mul1", "port": "OUT"}, "to": {"block": "__interface__", "port": "SPAN"}},
+    ],
+}
+
+MUL_DEF = {
+    "MUL": {
+        "block_kind": "FB",
+        "inputs": [{"name": "IN1", "type": "DINT"}, {"name": "IN2", "type": "DINT"}],
+        "outputs": [{"name": "OUT", "type": "DINT"}],
+    }
+}
+
+
+def test_the_cycle_is_assigned_before_the_chart_computes_anything():
+    """A block that reads the counter must not read last cycle's value."""
+    st = generate_st_from_fc(SYSTEM_CHART, instances_global=True, cycle_ms=50)
+    body = [line for line in st.splitlines() if ":=" in line]
+    assert body == [
+        "CYCLE_TICK := CycleCounter();",
+        "CYCLE_MS := 50;",
+        "mul1(IN1 := CYCLE_TICK, IN2 := CYCLE_MS);",
+        "SPAN := mul1.OUT;",
+    ]
+
+
+def test_a_system_variable_is_held_as_a_global_not_as_a_page_local():
+    """Only a global has an address, and a frame is the only source of a pin's number."""
+    assert ("CYCLE_TICK", "DINT") in global_declarations(SYSTEM_CHART)
+    assert ("CYCLE_MS", "DINT") in global_declarations(SYSTEM_CHART)
+    held = generate_st_from_fc(SYSTEM_CHART, instances_global=True)
+    assert "CYCLE_TICK : DINT;" not in held
+    assert "CYCLE_TICK : DINT;" in generate_st_from_fc(SYSTEM_CHART)
+
+
+def test_a_system_variable_is_not_declared_as_a_program_parameter():
+    """Nothing supplies it from outside, so a `VAR_INPUT` for it would be a lie."""
+    assert "VAR_INPUT" not in generate_st_from_fc(SYSTEM_CHART)
+
+
+def test_a_pin_on_a_system_variable_shows_the_counter_itself():
+    """The symbol is the slot the generated statement reads, so the pin cannot drift."""
+    rows = _pins_of(pin_symbols(SYSTEM_CHART, MUL_DEF), "mul1")
+    assert rows["IN1"]["symbol"] == "CYCLE_TICK"
+    assert rows["IN2"]["symbol"] == "CYCLE_MS"
+    ports = _pins_of(pin_symbols(SYSTEM_CHART, MUL_DEF), "__interface__")
+    assert ports["CYCLE_TICK"]["symbol"] == "CYCLE_TICK"
+
+
 def test_an_unassociated_page_port_has_no_address_to_read():
     """A bare VAR_INPUT of the program is not in the debug section, so it cannot be watched."""
     data = {

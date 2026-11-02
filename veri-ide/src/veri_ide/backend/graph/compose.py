@@ -22,12 +22,17 @@ from .service import GraphProject
 
 
 def compile_unit(device: DeviceService, project: GraphProject) -> str:
-    """The compilable unit for `project` as prepared for `device`'s station."""
+    """The compilable unit for `project` as prepared for `device`'s station.
+
+    The station cycle is handed over because the chart's `CYCLE_MS` is the number
+    this station runs at: measuring a chart against one cycle and simulating it at
+    another would make the value on the pin a lie.
+    """
     globals_ = project.global_declarations()
     parts = (
         device.render_st(globals_),
         library_st({block_type for _, block_type in globals_}),
-        project.generate_st(instances_global=True),
+        project.generate_st(instances_global=True, cycle_ms=device.station.cycle_ms),
     )
     return "\n".join(part for part in parts if part.strip())
 

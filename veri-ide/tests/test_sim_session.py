@@ -25,8 +25,8 @@ HOT = (1, 5)
 
 
 def sw_channel(index: int) -> int:
-    """Digital inputs on DI1 (12..19) then the second module the test adds (24..31)."""
-    return index + 11 if index <= 8 else index + 15
+    """Digital inputs on the DI2 module (0..7)."""
+    return index - 1
 
 
 def latches(count: int) -> dict:
@@ -74,8 +74,8 @@ def latches(count: int) -> dict:
 
 def configured_station(count: int) -> DeviceService:
     """A station with `count` digital inputs, two of them held high by their preset."""
-    dev = DeviceService(Station(station_id="ST1", cycle_ms=100))
-    dev.add_module(HardwareModule("DI2", "DI", 24, 8))
+    dev = DeviceService(Station(station_id="ST1", cycle_ms=100), modules=[])
+    dev.add_module(HardwareModule("DI2", "DI", 0, 8))
     dev.set_variables([IoVariable(f"SW_{i}", "input", "BOOL") for i in range(1, count + 1)])
     for i in range(1, count + 1):
         dev.bind(
@@ -266,7 +266,7 @@ def test_the_run_reports_a_frame_value_for_every_watched_symbol():
     assert by_name["rs1#Q"]["values"] == [1, 1, 1]
     assert by_name["QM1"]["values"] == [1, 1, 1], "the page variable carries it the same cycle"
     assert by_name["SW_2"]["values"] == [0, 0, 0]
-    assert by_name["SW_1"]["channel"] == 12, "the frame's channel stays with the value"
+    assert by_name["SW_1"]["channel"] == 0, "the frame's channel stays with the value"
     assert by_name["QM1"]["channel"] is None, "a page variable is not bound to hardware"
     assert by_name["QM1"]["type"] == "BOOL"
     assert payload["done"]["cycles"] == 3
@@ -296,13 +296,44 @@ def test_watch_symbols_reports_only_what_the_debug_section_exports():
     assert run_names(project, dev, RS_OUTPUT) == ["QM1", "SW_1", "rs1#Q"]
 
 
+def test_the_cycle_a_chart_runs_in_is_a_global_a_frame_can_report():
+    """The runtime's own counter reaches a pin: declared, assigned, watched."""
+    dev, project = chart_station(1)
+    doc = project.get_page("PAGE1")
+    doc["interface"]["input"] += [
+        {"name": "CYCLE_TICK", "type": "DINT", "scope": "external",
+         "position": {"x": 40, "y": 300}},
+        {"name": "CYCLE_MS", "type": "DINT", "scope": "external",
+         "position": {"x": 40, "y": 340}},
+    ]
+    project.put_page(doc)
+
+    text = compile_unit(dev, project)
+    assert "    CYCLE_TICK : DINT;" in text, "a global is the only slot a frame can read"
+    assert "CYCLE_MS := 100;" in text, "the cycle this station was configured with"
+    assert text.index("CYCLE_TICK := CycleCounter();") < text.index("rs1("), (
+        "the cycle is known before the chart computes anything"
+    )
+
+    result = simulate(dev, project, 3)
+    assert result.ok, result.payload
+    by_name = series_of(result.payload)
+    assert by_name["CYCLE_TICK"]["values"] == [1, 2, 3]
+    assert by_name["CYCLE_MS"]["values"] == [100, 100, 100]
+    assert by_name["CYCLE_TICK"]["channel"] is None, "it comes from the runtime, not from a wire"
+
+
 class TestSimApi:
     def client(self, count: int = 2) -> TestClient:
         graph_service._PROJECT = None
         device_service._PROJECT = None
         client = TestClient(app)
         dev = device_service.get_device_project().station("ST1")
-        dev.add_module(HardwareModule("DI2", "DI", 24, 8))
+        # Remove default modules to avoid channel overlap
+        for module_id in ["AI1", "AO1", "DI1", "DO1"]:
+            if module_id in [m.module_id for m in dev.modules()]:
+                dev.remove_module(module_id)
+        dev.add_module(HardwareModule("DI2", "DI", 0, 8))
         dev.set_variables([IoVariable(f"SW_{i}", "input", "BOOL") for i in range(1, count + 1)])
         for i in range(1, count + 1):
             dev.bind(

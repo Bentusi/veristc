@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { COMM_INTERFACES, DEVICE_TYPES, type StationRow } from "./types";
+import { useI18n } from "../../lib/i18n";
 
 export interface StationDraft {
   station_id: string;
@@ -47,6 +48,7 @@ export function StationBar({
   onSave,
   onRemove,
 }: StationBarProps) {
+  const { t } = useI18n();
   const [creating, setCreating] = useState(false);
   const [newStation, setNewStation] = useState<StationDraft>(BLANK);
   const current = stations.find((s) => s.station_id === selectedId);
@@ -77,7 +79,7 @@ export function StationBar({
               onClick={() => onSelect(station.station_id)}
               className={`px-2.5 py-1 rounded-t border-b-2 flex items-center gap-1.5 ${
                 active
-                  ? "bg-ide-sidebar border-ide-accent text-white"
+                  ? "bg-ide-sidebar border-ide-accent text-ide-strong"
                   : "border-transparent text-ide-textDim hover:text-ide-text"
               }`}
             >
@@ -102,20 +104,20 @@ export function StationBar({
               autoFocus
               value={newStation.station_id}
               onChange={(e) => setNewStation({ ...newStation, station_id: e.target.value })}
-              placeholder="站 ID"
+              placeholder={t("station.stationId")}
               className="w-20 bg-ide-bg border border-ide-border rounded px-2 py-1 font-mono"
             />
             <input
               value={newStation.label}
               onChange={(e) => setNewStation({ ...newStation, label: e.target.value })}
-              placeholder="站名称"
+              placeholder={t("station.stationName")}
               className="w-24 bg-ide-bg border border-ide-border rounded px-2 py-1"
             />
             <button
               onClick={submitCreate}
               className="px-2 py-1 bg-ide-accent text-white rounded hover:bg-blue-600"
             >
-              创建
+              {t("station.create")}
             </button>
             <button
               onClick={() => {
@@ -124,16 +126,16 @@ export function StationBar({
               }}
               className="px-2 py-1 text-ide-textDim hover:text-ide-text"
             >
-              取消
+              {t("station.cancel")}
             </button>
           </span>
         ) : (
           <button
             onClick={() => setCreating(true)}
             className="px-2 py-1 text-ide-accent hover:bg-ide-hover rounded"
-            title="新建站"
+            title={t("station.newStation")}
           >
-            + 新建站
+            {t("station.addStation")}
           </button>
         )}
 
@@ -144,9 +146,9 @@ export function StationBar({
             onClick={() => onRemove(current.station_id)}
             disabled={stations.length <= 1}
             className="px-2 py-1 text-red-400 hover:bg-ide-hover rounded disabled:opacity-40"
-            title={stations.length <= 1 ? "至少保留一个站" : "删除本站"}
+            title={stations.length <= 1 ? t("station.keepOne") : t("station.deleteThis")}
           >
-            删除站
+            {t("station.deleteStation")}
           </button>
         )}
       </div>
@@ -156,14 +158,14 @@ export function StationBar({
         <div className="mt-1.5 flex items-center gap-2 flex-wrap border-t border-ide-border pt-1.5">
           <span className="text-[10px] uppercase text-ide-textDim w-14">{current.station_id}</span>
 
-          <label className="text-[10px] text-ide-textDim">名称</label>
+          <label className="text-[10px] text-ide-textDim">{t("station.name")}</label>
           <input
             value={draft.label}
             onChange={(e) => setDraft({ ...draft, label: e.target.value })}
             className="w-24 bg-ide-bg border border-ide-border rounded px-1.5 py-1"
           />
 
-          <label className="text-[10px] text-ide-textDim">设备类型</label>
+          <label className="text-[10px] text-ide-textDim">{t("station.deviceType")}</label>
           <input
             list="veri-ide-device-types"
             value={draft.device_type}
@@ -171,12 +173,12 @@ export function StationBar({
             className="w-20 bg-ide-bg border border-ide-border rounded px-1.5 py-1 font-mono"
           />
           <datalist id="veri-ide-device-types">
-            {DEVICE_TYPES.map((t) => (
-              <option key={t} value={t} />
+            {DEVICE_TYPES.map((type) => (
+              <option key={type} value={type} />
             ))}
           </datalist>
 
-          <label className="text-[10px] text-ide-textDim">运行周期</label>
+          <label className="text-[10px] text-ide-textDim">{t("station.cycle")}</label>
           <input
             type="number"
             min={1}
@@ -187,7 +189,7 @@ export function StationBar({
           />
           <span className="text-[10px] text-ide-textDim">ms</span>
 
-          <label className="text-[10px] text-ide-textDim">通信接口</label>
+          <label className="text-[10px] text-ide-textDim">{t("station.interface")}</label>
           <select
             value={draft.comm_interface}
             onChange={(e) => setDraft({ ...draft, comm_interface: e.target.value })}
@@ -202,7 +204,7 @@ export function StationBar({
           <input
             value={draft.comm_address}
             onChange={(e) => setDraft({ ...draft, comm_address: e.target.value })}
-            placeholder="通信地址"
+            placeholder={t("station.address")}
             className="w-28 bg-ide-bg border border-ide-border rounded px-1.5 py-1 font-mono"
           />
 
@@ -211,10 +213,10 @@ export function StationBar({
             disabled={!changed}
             className="px-2.5 py-1 bg-ide-accent text-white rounded hover:bg-blue-600 disabled:opacity-40"
           >
-            保存站参数
+            {t("station.saveParams")}
           </button>
           <span className="text-[10px] text-ide-textDim">
-            模块 {current.modules} · 变量 {current.variables} · 已映射 {current.mapped}
+            {t("station.modules")} {current.modules} · {t("station.points")} {current.variables}
           </span>
         </div>
       )}

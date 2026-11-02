@@ -6,7 +6,11 @@
   "patternProperties": {
     "^[a-zA-Z_][a-zA-Z0-9_]*$": {
       "type": "object",
-      "required": ["channel", "scale", "bias"],
+      "description": "A channel binding (channel + scale + bias) or a declaration-only variable (direction + st_type)",
+      "anyOf": [
+        { "required": ["channel", "scale", "bias"] },
+        { "required": ["direction", "st_type"] }
+      ],
       "properties": {
         "channel": {
           "type": "integer",
@@ -65,6 +69,14 @@
         "preset_value": {
           "type": "number",
           "description": "Fallback value used when fault_hold is 'preset'"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "False keeps the point configured but out of the emitted VAR_GLOBAL/IOMAP and plant table"
+        },
+        "signal_type": {
+          "type": "string",
+          "description": "Analogue signal type of the channel: voltage, current, 4-20mA or 0-5V"
         }
       },
       "additionalProperties": false

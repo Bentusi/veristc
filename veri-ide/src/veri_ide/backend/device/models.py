@@ -47,6 +47,21 @@ ST_TYPES = (
     "QREAL",
 )
 
+def channel_variable_name(module_id: str, channel: int) -> str:
+    """The variable name auto-created for one module channel."""
+    return f"{module_id}_CH{channel}"
+
+
+#: Default (direction, st_type) of an auto-created channel variable, per module
+#: kind. REAL on the analogue modules, BOOL on the digital ones -- exactly the
+#: pair `derive_io_kind` maps back to the module's own kind.
+KIND_VARIABLE_DEFAULTS = {
+    "AI": ("input", "REAL"),
+    "AO": ("output", "REAL"),
+    "DI": ("input", "BOOL"),
+    "DO": ("output", "BOOL"),
+}
+
 IO_KINDS = ("AI", "AO", "DI", "DO")
 
 IO_KIND_CODE = {"AI": 0, "AO": 1, "DI": 2, "DO": 3}
@@ -59,6 +74,16 @@ DIRECTIONS = ("input", "output")
 #: quality offset is a documented dangling item), so these values are consumed
 #: by the IDE-side simulation and monitoring layers only.
 FAULT_HOLD_MODES = ("", "last_value", "preset")
+
+#: Chinese labels for the operator-facing validation messages. The enum values
+#: themselves stay as they are: they are the archived field values in
+#: `iomap/<station>.toml` and the wire vocabulary of the point table.
+FAULT_HOLD_LABELS = {"": "未配置", "last_value": "保持上周期值", "preset": "预设值"}
+
+DIRECTION_LABELS = {"input": "输入", "output": "输出"}
+
+#: Signal types for analogue channels.
+SIGNAL_TYPES = ("", "voltage", "current", "4-20mA", "0-5V")
 
 #: Suggested station device types. The field is free-form: the device family
 #: is an engineering choice, not something the compiler validates.
@@ -83,7 +108,7 @@ def derive_io_kind(direction: str, st_type: str) -> str:
         return "AI" if st_type in NUMERIC_IO_TYPES else "DI"
     if direction == "output":
         return "AO" if st_type in NUMERIC_IO_TYPES else "DO"
-    raise ValueError(f"Invalid direction: {direction}")
+    raise ValueError(f"方向不合法：{direction}")
 
 
 @dataclass
@@ -104,13 +129,13 @@ class Station:
 
     def __post_init__(self) -> None:
         if not IDENTIFIER_RE.match(self.station_id):
-            raise ValueError(f"Invalid station id: {self.station_id!r}")
+            raise ValueError(f"站点标识不合法：{self.station_id!r}（需用字母/数字/下划线）")
         if not self.device_type.strip():
-            raise ValueError("device_type must not be empty")
+            raise ValueError("设备类型不能为空")
         if not isinstance(self.cycle_ms, int) or not CYCLE_MS_MIN <= self.cycle_ms <= CYCLE_MS_MAX:
             raise ValueError(
-                f"cycle_ms must be an integer in {CYCLE_MS_MIN}..{CYCLE_MS_MAX}, "
-                f"got {self.cycle_ms!r}"
+                f"运行周期必须是 {CYCLE_MS_MIN}..{CYCLE_MS_MAX} 之间的整数（ms），"
+                f"当前为 {self.cycle_ms!r}"
             )
 
     @property
@@ -129,6 +154,26 @@ class Station:
 
 
 @dataclass
+class ChannelConfig:
+    """Per-channel physical configuration (name, signal type).
+
+    These properties belong to the channel itself, not to any binding.
+    An unbound channel still has a name and signal type.
+    """
+
+    channel: int
+    name: str = ""
+    signal_type: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "channel": self.channel,
+            "name": self.name,
+            "signal_type": self.signal_type,
+        }
+
+
+@dataclass
 class HardwareModule:
     """A physical I/O module occupying a contiguous slice of the channel space."""
 
@@ -137,16 +182,17 @@ class HardwareModule:
     first_channel: int
     channel_count: int
     label: str = ""
+    channels_config: list[ChannelConfig] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.kind not in IO_KINDS:
-            raise ValueError(f"Invalid module kind: {self.kind} (must be one of {IO_KINDS})")
+            raise ValueError(f"模块类型不合法：{self.kind}（只能是 {IO_KINDS} 之一）")
         if self.channel_count <= 0:
-            raise ValueError(f"channel_count must be positive, got {self.channel_count}")
+            raise ValueError(f"通道数必须为正整数，当前为 {self.channel_count}")
         if self.first_channel < 0:
-            raise ValueError(f"first_channel must be >= 0, got {self.first_channel}")
+            raise ValueError(f"起始通道必须大于等于 0，当前为 {self.first_channel}")
         if not isinstance(self.channel_count, int) or not isinstance(self.first_channel, int):
-            raise ValueError("first_channel and channel_count must be integers")
+            raise ValueError("起始通道与通道数必须是整数")
 
     @property
     def channels(self) -> list[int]:
@@ -156,6 +202,22 @@ class HardwareModule:
     def last_channel(self) -> int:
         return self.first_channel + self.channel_count - 1
 
+    def get_channel_config(self, channel: int) -> Optional[ChannelConfig]:
+        """Return the config for a channel, or None if not configured."""
+        for cfg in self.channels_config:
+            if cfg.channel == channel:
+                return cfg
+        return None
+
+    def set_channel_config(self, channel: int, name: str = "", signal_type: str = "") -> None:
+        """Update or create a channel's configuration."""
+        for cfg in self.channels_config:
+            if cfg.channel == channel:
+                cfg.name = name
+                cfg.signal_type = signal_type
+                return
+        self.channels_config.append(ChannelConfig(channel, name, signal_type))
+
     def to_dict(self) -> dict:
         return {
             "module_id": self.module_id,
@@ -164,6 +226,7 @@ class HardwareModule:
             "channel_count": self.channel_count,
             "last_channel": self.last_channel,
             "label": self.label,
+            "channels_config": [c.to_dict() for c in self.channels_config],
         }
 
 
@@ -180,6 +243,9 @@ class IoVariable:
     direction: str  # input / output
     st_type: str  # SafeST type name
     description: str = ""
+    #: Disabled variables stay in the table but are emitted neither into
+    #: VAR_GLOBAL nor into IOMAP, so the artifact and the plant both skip them.
+    enabled: bool = True
 
     @property
     def io_kind(self) -> str:
@@ -192,6 +258,7 @@ class IoVariable:
             "st_type": self.st_type,
             "io_kind": self.io_kind,
             "description": self.description,
+            "enabled": self.enabled,
         }
 
 
@@ -218,6 +285,7 @@ class ChannelBinding:
     has_quality: bool = False
     fault_hold: str = ""
     preset_value: Optional[float] = None
+    signal_type: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -232,6 +300,7 @@ class ChannelBinding:
             "has_quality": self.has_quality,
             "fault_hold": self.fault_hold,
             "preset_value": self.preset_value,
+            "signal_type": self.signal_type,
         }
 
 
@@ -256,12 +325,15 @@ class ValidationIssue:
 
 
 def default_hardware() -> list[HardwareModule]:
-    """A representative DCU I/O inventory covering the four module kinds."""
+    """A representative DCU I/O inventory covering the four module kinds.
+
+    Each module defaults to 16 channels, a common industrial I/O density.
+    """
     return [
-        HardwareModule("AI1", "AI", 0, 8, "模拟量输入 8 通道"),
-        HardwareModule("AO1", "AO", 8, 4, "模拟量输出 4 通道"),
-        HardwareModule("DI1", "DI", 12, 8, "数字量输入 8 通道"),
-        HardwareModule("DO1", "DO", 20, 4, "数字量输出 4 通道"),
+        HardwareModule("AI1", "AI", 0, 16, "模拟量输入 16 通道"),
+        HardwareModule("AO1", "AO", 16, 16, "模拟量输出 16 通道"),
+        HardwareModule("DI1", "DI", 32, 16, "数字量输入 16 通道"),
+        HardwareModule("DO1", "DO", 48, 16, "数字量输出 16 通道"),
     ]
 
 

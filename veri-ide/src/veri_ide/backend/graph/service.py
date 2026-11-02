@@ -19,6 +19,7 @@ from typing import Any, Optional
 from ..gen.graph_to_st import generate_st_from_fc
 from ..gen.graph_to_st import global_declarations as chart_globals
 from ..gen.graph_to_st import pin_symbols as chart_pin_symbols
+from ..gen.system_vars import DEFAULT_CYCLE_MS, is_system
 from ..gen.validator import validate_fc_json
 from .checker import DIRECTIONS, Finding, check_graph, summarize
 
@@ -207,8 +208,11 @@ class GraphProject:
             entry["pages"] = sorted(set(entry["pages"]))
             if len(entry["pages"]) > 1 and not entry["bind"] and entry["scope"] == "external":
                 # A name drawn on more than one sheet is the connector between
-                # them, whatever the pages happened to label it.
-                entry["scope"] = "intermediate"
+                # them, whatever the pages happened to label it. A system variable
+                # is on every sheet already and connects nothing, so it keeps its
+                # scope and the generator assigns it instead of declaring it twice.
+                if not is_system(entry["name"]):
+                    entry["scope"] = "intermediate"
             if {"input", "output"} <= directions:
                 entry["direction"] = "in_out"
                 interface["in_out"].append(entry)
@@ -234,7 +238,7 @@ class GraphProject:
         """Variables that join two or more pages -- what the page tabs link."""
         rows = []
         for entry in self._merged_ports():
-            if len(entry["pages"]) > 1:
+            if len(entry["pages"]) > 1 and not is_system(entry["name"]):
                 rows.append(
                     {
                         "name": entry["name"],
@@ -245,6 +249,28 @@ class GraphProject:
                     }
                 )
         return sorted(rows, key=lambda row: row["name"])
+
+    def bound_variables(self) -> list[dict]:
+        """Configuration variables a page interface port is bound to.
+
+        This is the other half of the device stage's contract: a variable the
+        chart references through an associated pin cannot be disabled or
+        deleted from the station table without breaking compilation (GATE-7),
+        so the device page consults this list before letting either through.
+        """
+        rows = []
+        for entry in self._merged_ports():
+            variable = (entry.get("bind") or {}).get("variable")
+            if variable:
+                rows.append(
+                    {
+                        "variable": variable,
+                        "port": entry["name"],
+                        "station": (entry.get("bind") or {}).get("station", ""),
+                        "pages": entry["pages"],
+                    }
+                )
+        return sorted(rows, key=lambda row: (row["variable"], row["port"]))
 
     def _merged_ports(self) -> list[dict]:
         interface = self.merged_fc()["interface"]
@@ -271,9 +297,11 @@ class GraphProject:
         payload["cross_page"] = self.cross_page_index()
         return payload
 
-    def generate_st(self, *, instances_global: bool = False) -> str:
+    def generate_st(self, *, instances_global: bool = False, cycle_ms: int = DEFAULT_CYCLE_MS) -> str:
         """Text ST for the whole project; the compiler stays the only reader of it."""
-        return generate_st_from_fc(self.merged_fc(), instances_global=instances_global)
+        return generate_st_from_fc(
+            self.merged_fc(), instances_global=instances_global, cycle_ms=cycle_ms
+        )
 
     def global_declarations(self) -> list[tuple[str, str]]:
         """`(name, type)` pairs the compile unit must declare as globals.

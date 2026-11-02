@@ -200,6 +200,16 @@ export interface ExternalVarRow {
   description?: string;
   mapped?: boolean;
   has_quality?: boolean;
+  /** A disabled point emits no global, so the chart cannot be bound to it. */
+  enabled?: boolean;
+}
+
+/** A variable the runtime supplies: readable on every page, writable on none. */
+export interface SystemVarRow {
+  name: string;
+  st_type: string;
+  description: string;
+  readonly: boolean;
 }
 
 /** One watched symbol: the timeline the frames answered for it. */

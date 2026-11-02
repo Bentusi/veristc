@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useI18n } from "../../lib/i18n";
 import {
   CONST_H,
   CONST_W,
@@ -97,6 +98,7 @@ function markColor(findings: Finding[] | undefined): string | undefined {
 
 /** The border, the zone marks and the title block of an A-series drawing. */
 function DrawingFrame({ page }: { page: PageDoc }) {
+  const { t } = useI18n();
   const sheet = SHEETS[page.page.sheet ?? "A3"] ?? SHEETS.A3;
   const innerW = sheet.w - 2 * FRAME;
   const innerH = sheet.h - 2 * FRAME;
@@ -143,13 +145,13 @@ function DrawingFrame({ page }: { page: PageDoc }) {
           {page.name}
         </text>
         <text x={8} y={38} fontSize="10" fill="#9a9a9a">
-          图页 {page.page.label || page.page.id} · 第 {(page.page.index ?? 0) + 1} 页
+          {t("sheet.page")} {page.page.label || page.page.id} · {t("sheet.pageN")} {(page.page.index ?? 0) + 1} {t("sheet.pageN2")}
         </text>
         <text x={8} y={52} fontSize="10" fill="#9a9a9a">
-          {page.blocks.length} 块 · {page.connections.length} 线 · {page.interface.input.length + page.interface.output.length + page.interface.in_out.length} 变量
+          {page.blocks.length} {t("sheet.blocks")} · {page.connections.length} {t("sheet.wires")} · {page.interface.input.length + page.interface.output.length + page.interface.in_out.length} {t("sheet.variables")}
         </text>
         <text x={TITLE_BLOCK.w - 96} y={38} fontSize="10" fill="#9a9a9a">
-          {page.page.sheet ?? "A3"} 横向
+          {page.page.sheet ?? "A3"} {t("sheet.landscape")}
         </text>
         <text x={TITLE_BLOCK.w - 96} y={52} fontSize="10" fill="#6a9955">
           VeriIDE
@@ -213,6 +215,7 @@ function PinValue({ pin, text, forced }: { pin: PinPoint; text: string; forced: 
 }
 
 export function Sheet({ page, library, marks, values, forced, selected, zoom, focus, onSelect, onPage, onDropBlock }: SheetProps) {
+  const { t } = useI18n();
   const svgRef = useRef<SVGSVGElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -536,7 +539,7 @@ export function Sheet({ page, library, marks, values, forced, selected, zoom, fo
               ))}
               {!table.inputs.length && !table.outputs.length && (
                 <text x={NODE_W / 2} y={HEAD_H + 16} textAnchor="middle" fontSize="9" fill="#8f8f8f" pointerEvents="none">
-                  库中无引脚定义
+                  {t("sheet.noPinDef")}
                 </text>
               )}
               {Object.keys(block.parameters ?? {}).length > 0 && (

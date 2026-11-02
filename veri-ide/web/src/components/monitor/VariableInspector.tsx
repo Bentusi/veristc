@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface Variable {
   name: string;
@@ -29,6 +30,7 @@ export function VariableInspector({
   onForce,
   onRelease,
 }: VariableInspectorProps) {
+  const { t } = useI18n();
   const [filterText, setFilterText] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
   const [showForceDialog, setShowForceDialog] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function VariableInspector({
     INPUT: "bg-blue-500/20 text-blue-400",
     OUTPUT: "bg-green-500/20 text-green-400",
     IN_OUT: "bg-purple-500/20 text-purple-400",
-    LOCAL: "bg-gray-500/20 text-gray-400",
+    LOCAL: "bg-gray-500/20 text-ide-textDim",
     GLOBAL: "bg-orange-500/20 text-orange-400",
   };
 
@@ -71,23 +73,23 @@ export function VariableInspector({
         <div className="flex-1">
           <input
             type="text"
-            placeholder="搜索变量名..."
+            placeholder={t("varInspector.searchPlaceholder")}
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
-            className="w-full px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-white placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
+            className="w-full px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
           />
         </div>
         <select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
-          className="px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent"
+          className="px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
         >
-          <option value="all">所有类型</option>
-          <option value="INPUT">输入</option>
-          <option value="OUTPUT">输出</option>
-          <option value="IN_OUT">输入输出</option>
-          <option value="LOCAL">本地</option>
-          <option value="GLOBAL">全局</option>
+          <option value="all">{t("varInspector.allTypes")}</option>
+          <option value="INPUT">{t("monitor.input")}</option>
+          <option value="OUTPUT">{t("monitor.output")}</option>
+          <option value="IN_OUT">{t("varInspector.inputOutput")}</option>
+          <option value="LOCAL">{t("varInspector.local")}</option>
+          <option value="GLOBAL">{t("varInspector.global")}</option>
         </select>
         <span className="text-sm text-ide-textDim">{filteredVariables.length} / {variables.length}</span>
       </div>
@@ -97,13 +99,13 @@ export function VariableInspector({
         <table className="w-full">
           <thead className="bg-ide-sidebar sticky top-0">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">变量名</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">地址</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">当前值</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">类型</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">数据类型</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">状态</th>
-              <th className="px-4 py-2 text-right text-xs font-semibold text-ide-textDim uppercase tracking-wider">操作</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.varName")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.address")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.currentValue")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.type")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.dataType")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.status")}</th>
+              <th className="px-4 py-2 text-right text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("varInspector.operations")}</th>
             </tr>
           </thead>
           <tbody className="bg-ide-bg divide-y divide-ide-border">
@@ -117,11 +119,11 @@ export function VariableInspector({
                     : "hover:bg-ide-hover/50"
                 }`}
               >
-                <td className="px-4 py-3 text-sm text-white font-mono">{variable.name}</td>
+                <td className="px-4 py-3 text-sm text-ide-strong font-mono">{variable.name}</td>
                 <td className="px-4 py-3 text-sm text-ide-textDim font-mono">
                   0x{variable.address.toString(16).toUpperCase()}
                 </td>
-                <td className="px-4 py-3 text-sm text-white font-mono">
+                <td className="px-4 py-3 text-sm text-ide-strong font-mono">
                   {variable.data_type === "BOOL"
                     ? variable.current_value
                       ? "TRUE"
@@ -129,7 +131,7 @@ export function VariableInspector({
                     : String(variable.current_value)}
                 </td>
                 <td className="px-4 py-3">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${varTypeColors[variable.var_type] || "bg-gray-500/20 text-gray-400"}`}>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${varTypeColors[variable.var_type] || "bg-gray-500/20 text-ide-textDim"}`}>
                     {variable.var_type}
                   </span>
                 </td>
@@ -142,7 +144,7 @@ export function VariableInspector({
                       ? "bg-green-500/20 text-green-400"
                       : "bg-red-500/20 text-red-400"
                   }`}>
-                    {variable.force_status === "forced" ? "已强制" : variable.quality === "good" ? "正常" : "异常"}
+                    {variable.force_status === "forced" ? t("monitor.forcedStatus") : variable.quality === "good" ? t("watchTable.normal") : t("monitor.abnormal")}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
@@ -150,7 +152,7 @@ export function VariableInspector({
                     <button
                       onClick={() => onAddToWatch(variable.name)}
                       className="p-1 text-ide-textDim hover:text-ide-accent transition-colors"
-                      title="添加到监视表"
+                      title={t("varInspector.addToWatch")}
                     >
                       <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 4v16m8-8H4" />
@@ -160,7 +162,7 @@ export function VariableInspector({
                       <button
                         onClick={() => onRelease(variable.name)}
                         className="p-1 text-orange-400 hover:text-orange-300 transition-colors"
-                        title="释放强制"
+                        title={t("varInspector.releaseForce")}
                       >
                         <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M6 18L18 6M6 6l12 12" />
@@ -173,7 +175,7 @@ export function VariableInspector({
                           setForceValue(String(variable.current_value));
                         }}
                         className="p-1 text-ide-textDim hover:text-orange-400 transition-colors"
-                        title="强制变量值"
+                        title={t("varInspector.forceValue")}
                       >
                         <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -192,15 +194,15 @@ export function VariableInspector({
       {showForceDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowForceDialog(null)}>
           <div className="bg-ide-sidebar border border-ide-border rounded-lg p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">强制变量值</h3>
+            <h3 className="text-lg font-semibold text-ide-strong mb-4">{t("varInspector.forceValueTitle")}</h3>
             <div className="mb-4">
-              <label className="block text-sm text-ide-textDim mb-2">变量名</label>
-              <div className="px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-white font-mono">
+              <label className="block text-sm text-ide-textDim mb-2">{t("varInspector.varName")}</label>
+              <div className="px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong font-mono">
                 {showForceDialog}
               </div>
             </div>
             <div className="mb-6">
-              <label className="block text-sm text-ide-textDim mb-2">强制值</label>
+              <label className="block text-sm text-ide-textDim mb-2">{t("varInspector.forceValue")}</label>
               <input
                 type="text"
                 value={forceValue}
@@ -213,7 +215,7 @@ export function VariableInspector({
                     }
                   }
                 }}
-                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent"
+                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
                 autoFocus
               />
             </div>
@@ -222,7 +224,7 @@ export function VariableInspector({
                 onClick={() => setShowForceDialog(null)}
                 className="flex-1 px-4 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 onClick={() => {
@@ -233,7 +235,7 @@ export function VariableInspector({
                 }}
                 className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm text-white transition-colors"
               >
-                强制
+                {t("varInspector.force")}
               </button>
             </div>
           </div>

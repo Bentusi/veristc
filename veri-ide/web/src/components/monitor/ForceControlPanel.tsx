@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface Variable {
   name: string;
@@ -25,6 +26,7 @@ export function ForceControlPanel({
   onBatchForce,
   onBatchRelease,
 }: ForceControlPanelProps) {
+  const { t } = useI18n();
   const [selectedVariables, setSelectedVariables] = useState<Set<string>>(new Set());
   const [batchForceValues, setBatchForceValues] = useState<Record<string, string>>({});
   const [showBatchDialog, setShowBatchDialog] = useState(false);
@@ -86,9 +88,9 @@ export function ForceControlPanel({
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="mb-6">
-        <h2 className="text-lg font-semibold text-white mb-2">变量强制控制</h2>
+        <h2 className="text-lg font-semibold text-ide-strong mb-2">{t("forceControl.title")}</h2>
         <p className="text-sm text-ide-textDim">
-          强制变量到指定值或释放强制。支持单个和批量操作。
+          {t("forceControl.desc")}
         </p>
       </div>
 
@@ -98,13 +100,13 @@ export function ForceControlPanel({
           onClick={selectAll}
           className="px-3 py-1.5 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
         >
-          全选
+          {t("forceControl.selectAll")}
         </button>
         <button
           onClick={deselectAll}
           className="px-3 py-1.5 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
         >
-          取消全选
+          {t("forceControl.deselectAll")}
         </button>
         <div className="flex-1" />
         {selectedVariables.size > 0 && (
@@ -116,7 +118,7 @@ export function ForceControlPanel({
               <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              批量强制 ({selectedVariables.size})
+              {t("forceControl.batchForce")} ({selectedVariables.size})
             </button>
             <button
               onClick={handleBatchRelease}
@@ -125,7 +127,7 @@ export function ForceControlPanel({
               <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M6 18L18 6M6 6l12 12" />
               </svg>
-              批量释放 ({selectedVariables.size})
+              {t("forceControl.batchRelease")} ({selectedVariables.size})
             </button>
           </>
         )}
@@ -135,9 +137,9 @@ export function ForceControlPanel({
       <div className="flex-1 grid grid-cols-2 gap-4 overflow-hidden">
         {/* Available Variables */}
         <div className="flex flex-col overflow-hidden">
-          <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-ide-strong mb-2 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-green-400"></span>
-            可用变量 ({availableVariables.length})
+            {t("forceControl.availableVars")} ({availableVariables.length})
           </h3>
           <div className="flex-1 overflow-auto rounded-lg border border-ide-border">
             <table className="w-full">
@@ -157,9 +159,9 @@ export function ForceControlPanel({
                       className="w-4 h-4 rounded border-ide-border bg-ide-bg text-ide-accent focus:ring-ide-accent"
                     />
                   </th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">变量名</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">当前值</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">类型</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.varName")}</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.currentValue")}</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.type")}</th>
                 </tr>
               </thead>
               <tbody className="bg-ide-bg divide-y divide-ide-border">
@@ -178,7 +180,7 @@ export function ForceControlPanel({
                         className="w-4 h-4 rounded border-ide-border bg-ide-bg text-ide-accent focus:ring-ide-accent"
                       />
                     </td>
-                    <td className="px-3 py-2 text-sm text-white font-mono">{variable.name}</td>
+                    <td className="px-3 py-2 text-sm text-ide-strong font-mono">{variable.name}</td>
                     <td className="px-3 py-2 text-sm text-ide-text font-mono">
                       {variable.data_type === "BOOL"
                         ? variable.current_value
@@ -196,24 +198,24 @@ export function ForceControlPanel({
 
         {/* Forced Variables */}
         <div className="flex flex-col overflow-hidden">
-          <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-ide-strong mb-2 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-orange-400"></span>
-            已强制变量 ({forcedVariables.length})
+            {t("forceControl.forcedVars")} ({forcedVariables.length})
           </h3>
           <div className="flex-1 overflow-auto rounded-lg border border-ide-border">
             <table className="w-full">
               <thead className="bg-ide-sidebar sticky top-0">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">变量名</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">强制值</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">当前值</th>
-                  <th className="px-3 py-2 text-right text-xs font-semibold text-ide-textDim uppercase">操作</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.varName")}</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.forcedValue")}</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.currentValue")}</th>
+                  <th className="px-3 py-2 text-right text-xs font-semibold text-ide-textDim uppercase">{t("forceControl.operations")}</th>
                 </tr>
               </thead>
               <tbody className="bg-ide-bg divide-y divide-ide-border">
                 {forcedVariables.map((variable) => (
                   <tr key={variable.name} className="hover:bg-ide-hover/50 transition-colors">
-                    <td className="px-3 py-2 text-sm text-white font-mono">{variable.name}</td>
+                    <td className="px-3 py-2 text-sm text-ide-strong font-mono">{variable.name}</td>
                     <td className="px-3 py-2 text-sm text-orange-400 font-mono">
                       {variable.forced_value !== null ? String(variable.forced_value) : "-"}
                     </td>
@@ -229,7 +231,7 @@ export function ForceControlPanel({
                         onClick={() => onRelease(variable.name)}
                         className="px-2 py-1 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 rounded text-xs text-red-400 transition-colors"
                       >
-                        释放
+                        {t("forceControl.release")}
                       </button>
                     </td>
                   </tr>
@@ -237,7 +239,7 @@ export function ForceControlPanel({
                 {forcedVariables.length === 0 && (
                   <tr>
                     <td colSpan={4} className="px-3 py-8 text-center text-sm text-ide-textDim">
-                      暂无已强制的变量
+                      {t("forceControl.noForced")}
                     </td>
                   </tr>
                 )}
@@ -251,9 +253,9 @@ export function ForceControlPanel({
       {showBatchDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowBatchDialog(false)}>
           <div className="bg-ide-sidebar border border-ide-border rounded-lg p-6 w-[600px] max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">批量强制变量</h3>
+            <h3 className="text-lg font-semibold text-ide-strong mb-4">{t("forceControl.batchForceTitle")}</h3>
             <p className="text-sm text-ide-textDim mb-4">
-              将为以下 {selectedVariables.size} 个变量设置强制值：
+              {t("forceControl.batchForceDesc")} {selectedVariables.size} {t("forceControl.batchForceDesc2")}
             </p>
             
             <div className="space-y-3 mb-6">
@@ -263,14 +265,14 @@ export function ForceControlPanel({
                 
                 return (
                   <div key={name} className="flex items-center gap-3">
-                    <div className="w-32 text-sm text-white font-mono">{name}</div>
+                    <div className="w-32 text-sm text-ide-strong font-mono">{name}</div>
                     <div className="w-20 text-xs text-ide-textDim">{variable.data_type}</div>
                     <input
                       type="text"
                       value={batchForceValues[name] || String(variable.current_value)}
                       onChange={(e) => setBatchForceValues({ ...batchForceValues, [name]: e.target.value })}
-                      className="flex-1 px-3 py-1.5 bg-ide-bg border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent"
-                      placeholder="强制值"
+                      className="flex-1 px-3 py-1.5 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
+                      placeholder={t("forceControl.forceValuePlaceholder")}
                     />
                   </div>
                 );
@@ -282,7 +284,7 @@ export function ForceControlPanel({
                 onClick={() => setShowBatchDialog(false)}
                 className="flex-1 px-4 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 onClick={() => {
@@ -291,7 +293,7 @@ export function ForceControlPanel({
                 }}
                 className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm text-white transition-colors"
               >
-                确认强制
+                {t("forceControl.confirmForce")}
               </button>
             </div>
           </div>

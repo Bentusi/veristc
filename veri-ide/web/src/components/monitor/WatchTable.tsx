@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface Variable {
   name: string;
@@ -30,6 +31,7 @@ interface WatchTableProps {
 }
 
 export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTableProps) {
+  const { t } = useI18n();
   const [editingAlias, setEditingAlias] = useState<string | null>(null);
   const [newAlias, setNewAlias] = useState("");
 
@@ -67,8 +69,8 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
           <svg viewBox="0 0 24 24" className="w-16 h-16 text-ide-textDim mx-auto mb-4" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
           </svg>
-          <p className="text-ide-textDim mb-2">监视表为空</p>
-          <p className="text-sm text-ide-textDim">从变量浏览器中添加变量到监视表</p>
+          <p className="text-ide-textDim mb-2">{t("watchTable.empty")}</p>
+          <p className="text-sm text-ide-textDim">{t("watchTable.emptyHint")}</p>
         </div>
       </div>
     );
@@ -85,11 +87,11 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          刷新
+          {t("watchTable.refresh")}
         </button>
         <button
           onClick={() => {
-            if (confirm("确定要清空监视表吗？")) {
+            if (confirm(t("watchTable.confirmClear"))) {
               entries.forEach((e) => onRemove(e.id));
             }
           }}
@@ -98,10 +100,10 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
-          清空
+          {t("watchTable.clear")}
         </button>
         <div className="flex-1" />
-        <span className="text-sm text-ide-textDim">{entries.length} 个变量</span>
+        <span className="text-sm text-ide-textDim">{entries.length} {t("watchTable.variables")}</span>
       </div>
 
       {/* Table */}
@@ -109,14 +111,14 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
         <table className="w-full">
           <thead className="bg-ide-sidebar sticky top-0">
             <tr>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">变量名</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">别名</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">当前值</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">强制值</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">类型</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">状态</th>
-              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">更新时间</th>
-              <th className="px-4 py-2 text-right text-xs font-semibold text-ide-textDim uppercase tracking-wider">操作</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.varName")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.alias")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.currentValue")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.forcedValue")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.type")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.status")}</th>
+              <th className="px-4 py-2 text-left text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.updateTime")}</th>
+              <th className="px-4 py-2 text-right text-xs font-semibold text-ide-textDim uppercase tracking-wider">{t("watchTable.operations")}</th>
             </tr>
           </thead>
           <tbody className="bg-ide-bg divide-y divide-ide-border">
@@ -126,7 +128,7 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
 
               return (
                 <tr key={entry.id} className="hover:bg-ide-hover/50 transition-colors">
-                  <td className="px-4 py-3 text-sm text-white font-mono">{entry.variable_name}</td>
+                  <td className="px-4 py-3 text-sm text-ide-strong font-mono">{entry.variable_name}</td>
                   <td className="px-4 py-3 text-sm text-ide-text">
                     {editingAlias === entry.id ? (
                       <input
@@ -135,7 +137,7 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
                         onChange={(e) => setNewAlias(e.target.value)}
                         onBlur={handleAliasSave}
                         onKeyDown={(e) => e.key === "Enter" && handleAliasSave()}
-                        className="w-full px-2 py-1 bg-ide-sidebar border border-ide-accent rounded text-sm text-white focus:outline-none"
+                        className="w-full px-2 py-1 bg-ide-sidebar border border-ide-accent rounded text-sm text-ide-strong focus:outline-none"
                         autoFocus
                       />
                     ) : (
@@ -150,7 +152,7 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-white font-mono">
+                  <td className="px-4 py-3 text-sm text-ide-strong font-mono">
                     {formatValue(varData.current_value, entry.display_format, varData.data_type)}
                   </td>
                   <td className="px-4 py-3 text-sm font-mono">
@@ -171,7 +173,7 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
                         ? "bg-green-500/20 text-green-400"
                         : "bg-red-500/20 text-red-400"
                     }`}>
-                      {varData.force_status === "forced" ? "已强制" : varData.quality === "good" ? "正常" : "异常"}
+                      {varData.force_status === "forced" ? t("watchTable.forced") : varData.quality === "good" ? t("watchTable.normal") : t("watchTable.abnormal")}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-sm text-ide-textDim">
@@ -181,7 +183,7 @@ export function WatchTable({ entries, variables, onRemove, onRefresh }: WatchTab
                     <button
                       onClick={() => onRemove(entry.id)}
                       className="text-ide-textDim hover:text-red-400 transition-colors"
-                      title="移除"
+                      title={t("watchTable.remove")}
                     >
                       <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M6 18L18 6M6 6l12 12" />

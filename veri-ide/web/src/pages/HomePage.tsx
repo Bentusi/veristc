@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { open as pickDirectory } from "@tauri-apps/plugin-dialog";
 import { apiCall, inTauri, json } from "../lib/api";
+import { eventBus } from "../lib/eventBus";
+import { useI18n } from "../lib/i18n";
 import {
   formatWhen,
   useProject,
@@ -48,7 +50,15 @@ function pouInSt(value: string): string {
 export function HomePage() {
   const navigate = useNavigate();
   const { state, current, error, create, open, forget } = useProject();
+  const { t } = useI18n();
   const [panel, setPanel] = useState<Panel>(null);
+
+  useEffect(() => {
+    const off = eventBus.on("menu:openPanel", (panelName) => {
+      setPanel(panelName);
+    });
+    return off;
+  }, []);
 
   const recentProjects = state?.recent_projects ?? [];
   const recentBlocks = state?.recent_blocks ?? [];
@@ -65,9 +75,9 @@ export function HomePage() {
                 </svg>
               </div>
               <div>
-                <h1 className="text-2xl font-semibold text-white">VeriIDE 工程站</h1>
+                <h1 className="text-2xl font-semibold text-ide-strong">{t("home.title")}</h1>
                 <p className="text-sm text-ide-textDim">
-                  工程是磁盘上的一个文件夹：设备、图页、变量与算法块全部文本化存储
+                  {t("home.desc")}
                 </p>
               </div>
             </div>
@@ -77,36 +87,36 @@ export function HomePage() {
                 onClick={() => navigate("/device")}
                 className="px-4 py-2 rounded-lg bg-ide-accent text-white text-sm hover:opacity-90"
               >
-                继续 {current.name}
+                {t("home.continue")} {current.name}
               </button>
             )}
           </header>
 
           {error && (
             <div className="mb-6 px-4 py-3 rounded-lg border border-red-500/40 bg-red-500/10 text-sm text-red-300">
-              后端未就绪：{error}
+              {t("home.backendNotReady")}{error}
             </div>
           )}
 
           <div className="grid grid-cols-3 gap-4 mb-8">
             <ActionTile
               testid="action-new-project"
-              title="新建工程"
-              desc="在项目位置创建工程文件夹并初始化 Git"
+              title={t("home.newProject")}
+              desc={t("home.newProjectDesc")}
               icon="M12 4v16m8-8H4"
               onClick={() => setPanel("new-project")}
             />
             <ActionTile
               testid="action-open-project"
-              title="打开工程"
-              desc="选择已有工程文件夹，读入设备、图页与变量"
+              title={t("home.openProject")}
+              desc={t("home.openProjectDesc")}
               icon="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
               onClick={() => setPanel("open-project")}
             />
             <ActionTile
               testid="action-new-block"
-              title="新建算法块"
-              desc="写一个 FUNCTION_BLOCK 存进算法库"
+              title={t("home.newBlock")}
+              desc={t("home.newBlockDesc")}
               icon="M12 2l9 5v10l-9 5-9-5V7l9-5zm0 9l4-2M12 11L8 9m4 2v4"
               onClick={() => setPanel("new-block")}
             />
@@ -115,10 +125,10 @@ export function HomePage() {
           <div className="grid grid-cols-2 gap-6">
             <section>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-ide-textDim mb-3">
-                最近打开的工程
+                {t("home.recentProjects")}
               </h2>
               {recentProjects.length === 0 ? (
-                <Empty text="还没有打开过工程" />
+                <Empty text={t("home.noRecentProjects")} />
               ) : (
                 <ul className="space-y-2">
                   {recentProjects.map((row) => (
@@ -135,10 +145,10 @@ export function HomePage() {
 
             <section>
               <h2 className="text-sm font-semibold uppercase tracking-wider text-ide-textDim mb-3">
-                最近使用的算法块
+                {t("home.recentBlocks")}
               </h2>
               {recentBlocks.length === 0 ? (
-                <Empty text="还没有创建或编辑过算法块" />
+                <Empty text={t("home.noRecentBlocks")} />
               ) : (
                 <ul className="space-y-2">
                   {recentBlocks.map((row) => (
@@ -188,7 +198,7 @@ function ActionTile({
       <svg viewBox="0 0 24 24" className="w-6 h-6 text-ide-accent mb-3" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d={icon} />
       </svg>
-      <div className="text-base font-semibold text-white mb-1">{title}</div>
+      <div className="text-base font-semibold text-ide-strong mb-1">{title}</div>
       <div className="text-xs text-ide-textDim leading-relaxed">{desc}</div>
     </button>
   );
@@ -211,6 +221,7 @@ function RecentProjectRow({
   onOpen: () => void;
   onForget: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <li
       className={`group flex items-center gap-3 px-4 py-3 rounded-lg border transition-colors ${
@@ -223,13 +234,13 @@ function RecentProjectRow({
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">{row.name}</span>
+          <span className="text-sm font-medium text-ide-strong truncate">{row.name}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-ide-hover text-ide-textDim">
             {row.safety_level}
           </span>
           {!row.exists && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300">
-              路径不存在
+              {t("home.pathNotFound")}
             </span>
           )}
         </div>
@@ -239,7 +250,7 @@ function RecentProjectRow({
       </div>
       {row.exists && (
         <div className="text-[11px] text-ide-textDim text-right whitespace-nowrap">
-          {row.stations} 站 · {row.pages} 图页 · {row.blocks} 块
+          {row.stations} {t("home.stations")} · {row.pages} {t("home.pages")} · {row.blocks} {t("home.blocks")}
           <div>{formatWhen(row.opened_at)}</div>
         </div>
       )}
@@ -249,15 +260,16 @@ function RecentProjectRow({
           event.stopPropagation();
           onForget();
         }}
-        title="从最近列表移除（不删除磁盘文件）"
+        title={t("home.removeFromRecent")}
       >
-        移除
+        {t("home.remove")}
       </button>
     </li>
   );
 }
 
 function RecentBlockRow({ row, onOpen }: { row: RecentBlock; onOpen: () => void }) {
+  const { t } = useI18n();
   return (
     <li
       className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-ide-sidebar border-ide-border hover:border-ide-accent/60 cursor-pointer"
@@ -266,12 +278,12 @@ function RecentBlockRow({ row, onOpen }: { row: RecentBlock; onOpen: () => void 
     >
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">{row.name}</span>
+          <span className="text-sm font-medium text-ide-strong truncate">{row.name}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-ide-hover text-ide-textDim">
             v{row.version}
           </span>
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-ide-hover text-ide-textDim">
-            {row.scope !== "project" ? "用户库" : row.project ? `工程块 · ${row.project}` : "工程块"}
+            {row.scope !== "project" ? t("home.userLibrary") : row.project ? `${t("home.projectBlocks")} · ${row.project}` : t("home.projectBlocks")}
           </span>
         </div>
         <div className="text-[11px] text-ide-textDim mt-0.5">{row.category}</div>
@@ -290,12 +302,13 @@ function Panel({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60" data-testid="panel-backdrop">
       <div className="w-full max-w-lg bg-ide-panel border border-ide-border rounded-xl shadow-2xl">
         <div className="flex items-center justify-between px-5 py-3 border-b border-ide-border">
-          <h3 className="text-sm font-semibold text-white">{title}</h3>
-          <button onClick={onClose} className="text-ide-textDim hover:text-white text-lg leading-none" aria-label="关闭">
+          <h3 className="text-sm font-semibold text-ide-strong">{title}</h3>
+          <button onClick={onClose} className="text-ide-textDim hover:text-ide-strong text-lg leading-none" aria-label={t("home.close")}>
             ×
           </button>
         </div>
@@ -315,7 +328,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 const inputClass =
-  "w-full px-3 py-2 rounded-lg bg-ide-sidebar border border-ide-border text-sm text-white focus:outline-none focus:border-ide-accent";
+  "w-full px-3 py-2 rounded-lg bg-ide-sidebar border border-ide-border text-sm text-ide-strong focus:outline-none focus:border-ide-accent";
 
 function SubmitError({ message }: { message: string }) {
   if (!message) return null;
@@ -333,6 +346,7 @@ function NewProjectPanel({
   onCreate: (input: { name: string; parent_dir: string; safety_level: string }) => Promise<unknown>;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [parent, setParent] = useState(defaultParent);
   const [safetyLevel, setSafetyLevel] = useState("SIL2");
@@ -341,7 +355,7 @@ function NewProjectPanel({
 
   const submit = async () => {
     if (!PROJECT_NAME.test(name)) {
-      setMessage("工程名只能用字母、数字和下划线，且不能以数字开头");
+      setMessage(t("home.nameValidation"));
       return;
     }
     setBusy(true);
@@ -355,8 +369,8 @@ function NewProjectPanel({
   };
 
   return (
-    <Panel title="新建工程" onClose={onClose}>
-      <Field label="工程名称">
+    <Panel title={t("home.newProject")} onClose={onClose}>
+      <Field label={t("home.projectName")}>
         <input
           data-testid="new-project-name"
           className={inputClass}
@@ -366,7 +380,7 @@ function NewProjectPanel({
           autoFocus
         />
       </Field>
-      <Field label="项目位置">
+      <Field label={t("home.projectLocation")}>
         <div className="flex gap-2">
           <input
             data-testid="new-project-parent"
@@ -378,16 +392,16 @@ function NewProjectPanel({
             className="px-3 py-2 rounded-lg bg-ide-sidebar border border-ide-border text-sm text-ide-text hover:border-ide-accent"
             onClick={async () => {
               if (!inTauri()) return;
-              const picked = await pickDirectory({ title: "选择工程存放位置" });
+              const picked = await pickDirectory({ title: t("home.selectLocation") });
               if (picked) setParent(String(picked));
             }}
-            title={inTauri() ? "浏览…" : "桌面版可用目录选择器"}
+            title={inTauri() ? t("home.browse") : t("home.browseHint")}
           >
-            浏览…
+            {t("home.browse")}
           </button>
         </div>
       </Field>
-      <Field label="安全等级">
+      <Field label={t("home.safetyLevel")}>
         <select
           data-testid="new-project-sil"
           className={inputClass}
@@ -402,13 +416,13 @@ function NewProjectPanel({
         </select>
       </Field>
       <p className="text-[11px] text-ide-textDim leading-relaxed">
-        将在 <span className="text-ide-text">{parent || "…"}</span> 下创建 <span className="text-ide-text">{name || "…"}</span>：
-        project.yaml + logic/ iomap/ device/ blocks/ sim/ build/，并初始化 Git 仓库。
+        {t("home.willCreate")} <span className="text-ide-text">{parent || "…"}</span> {t("home.willCreateUnder")} <span className="text-ide-text">{name || "…"}</span>:
+        project.yaml + logic/ iomap/ device/ blocks/ sim/ build/, Git.
       </p>
       <SubmitError message={message} />
       <div className="flex justify-end gap-2 pt-1">
-        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-white" onClick={onClose}>
-          取消
+        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-ide-strong" onClick={onClose}>
+          {t("home.cancel")}
         </button>
         <button
           data-testid="new-project-submit"
@@ -416,7 +430,7 @@ function NewProjectPanel({
           onClick={submit}
           className="px-4 py-2 rounded-lg bg-ide-accent text-white text-sm hover:opacity-90 disabled:opacity-50"
         >
-          {busy ? "创建中…" : "创建并打开"}
+          {busy ? t("home.creating") : t("home.createAndOpen")}
         </button>
       </div>
     </Panel>
@@ -432,6 +446,7 @@ function OpenProjectPanel({
   onOpen: (path: string) => Promise<unknown>;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -448,8 +463,8 @@ function OpenProjectPanel({
   };
 
   return (
-    <Panel title="打开工程" onClose={onClose}>
-      <Field label="工程文件夹">
+    <Panel title={t("home.openProject")} onClose={onClose}>
+      <Field label={t("home.projectFolder")}>
         <div className="flex gap-2">
           <input
             data-testid="open-project-path"
@@ -463,21 +478,21 @@ function OpenProjectPanel({
             className="px-3 py-2 rounded-lg bg-ide-sidebar border border-ide-border text-sm text-ide-text hover:border-ide-accent"
             onClick={async () => {
               if (!inTauri()) return;
-              const picked = await pickDirectory({ title: "选择工程文件夹", canCreateDirectories: false });
+              const picked = await pickDirectory({ title: t("home.selectFolder"), canCreateDirectories: false });
               if (picked) setPath(String(picked));
             }}
           >
-            浏览…
+            {t("home.browse")}
           </button>
         </div>
       </Field>
       <p className="text-[11px] text-ide-textDim">
-        文件夹里必须有 project.yaml；打开后会读入 device/、iomap/、logic/ 与 blocks/。
+        {t("home.folderHint")}
       </p>
       <SubmitError message={message} />
       <div className="flex justify-end gap-2 pt-1">
-        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-white" onClick={onClose}>
-          取消
+        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-ide-strong" onClick={onClose}>
+          {t("home.cancel")}
         </button>
         <button
           data-testid="open-project-submit"
@@ -485,7 +500,7 @@ function OpenProjectPanel({
           onClick={submit}
           className="px-4 py-2 rounded-lg bg-ide-accent text-white text-sm hover:opacity-90 disabled:opacity-50"
         >
-          {busy ? "打开中…" : "打开"}
+          {busy ? t("home.opening") : t("home.open")}
         </button>
       </div>
     </Panel>
@@ -494,6 +509,7 @@ function OpenProjectPanel({
 
 function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { current, refresh } = useProject();
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [typeName, setTypeName] = useState("NEW_BLOCK");
   const [typeEdited, setTypeEdited] = useState(false);
@@ -518,19 +534,19 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
     setTypeEdited(true);
   };
 
-  const scopeHint = current ? `当前工程 blocks/：${current.name}` : "全局用户库 ~/.veride/library";
+  const scopeHint = current ? `${t("home.projectBlocks")} (blocks/) ${current.name}` : `${t("home.userLibrary")} ~/.veride/library`;
 
   const submit = async () => {
     if (!name.trim()) {
-      setMessage("请填写算法块显示名");
+      setMessage(t("home.blockNameRequired"));
       return;
     }
     if (!ST_TYPE_NAME.test(typeName.trim())) {
-      setMessage("类型名请写成 ST 标识符：字母或下划线开头，只含字母、数字、下划线");
+      setMessage(t("home.typeNameValidation"));
       return;
     }
     if (pouInSt(st) !== typeName.trim()) {
-      setMessage(`ST 里声明的是 ${pouInSt(st) || "（没有）"}，与类型名 ${typeName.trim()} 不一致：文件名取自 ST 声明`);
+      setMessage(t("home.stTypeMismatch", { declared: pouInSt(st) || "(none)", type: typeName.trim() }));
       return;
     }
     setBusy(true);
@@ -553,18 +569,18 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
   };
 
   return (
-    <Panel title="新建算法块" onClose={onClose}>
-      <Field label="显示名称">
+    <Panel title={t("home.newBlock")} onClose={onClose}>
+      <Field label={t("home.displayName")}>
         <input
           data-testid="new-block-name"
           className={inputClass}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="两速比较器"
+          placeholder={t("home.displayNamePlaceholder")}
           autoFocus
         />
       </Field>
-      <Field label="类型名（ST POU）">
+      <Field label={t("home.typeName")}>
         <input
           data-testid="new-block-type"
           className={inputClass}
@@ -573,7 +589,7 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
           placeholder="TWO_SPEED"
         />
       </Field>
-      <Field label="分类">
+      <Field label={t("home.category")}>
         <select className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)}>
           {["math", "control", "logic", "filter", "converter", "custom"].map((option) => (
             <option key={option} value={option}>
@@ -582,7 +598,7 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
           ))}
         </select>
       </Field>
-      <Field label="ST 实现">
+      <Field label={t("home.stImplementation")}>
         <textarea
           data-testid="new-block-st"
           className={`${inputClass} font-mono text-xs h-48 resize-y`}
@@ -591,14 +607,14 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
         />
       </Field>
       <p className="text-[11px] text-ide-textDim">
-        存储位置：{scopeHint}。块会写成{" "}
+        {t("home.storageLocation")} {scopeHint}. {t("home.twoTextFiles")}
         <span className="text-ide-text">{`${typeName.trim() || "<Type>"}.block.yaml`}</span> +{" "}
-        <span className="text-ide-text">{`${typeName.trim() || "<Type>"}.st`}</span> 两个文本文件。
+        <span className="text-ide-text">{`${typeName.trim() || "<Type>"}.st`}</span>.
       </p>
       <SubmitError message={message} />
       <div className="flex justify-end gap-2 pt-1">
-        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-white" onClick={onClose}>
-          取消
+        <button className="px-4 py-2 text-sm text-ide-textDim hover:text-ide-strong" onClick={onClose}>
+          {t("home.cancel")}
         </button>
         <button
           data-testid="new-block-submit"
@@ -606,7 +622,7 @@ function NewBlockPanel({ onClose, onDone }: { onClose: () => void; onDone: () =>
           onClick={submit}
           className="px-4 py-2 rounded-lg bg-ide-accent text-white text-sm hover:opacity-90 disabled:opacity-50"
         >
-          {busy ? "保存中…" : "保存算法块"}
+          {busy ? t("home.saving") : t("home.saveBlock")}
         </button>
       </div>
     </Panel>

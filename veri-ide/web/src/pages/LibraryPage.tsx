@@ -1,4 +1,6 @@
 import { useState, useEffect } from "react";
+import { toast } from "../components/ui";
+import { useI18n } from "../lib/i18n";
 import { BlockLibrary } from "../components/library/BlockLibrary";
 import { LibraryManager } from "../components/library/LibraryManager";
 
@@ -23,6 +25,7 @@ interface AlgorithmBlock {
 type LibraryTab = "blocks" | "libraries";
 
 export function LibraryPage() {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<LibraryTab>("blocks");
   const [blocks, setBlocks] = useState<AlgorithmBlock[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
@@ -54,15 +57,18 @@ export function LibraryPage() {
         if (selectedBlock === blockId) {
           setSelectedBlock(null);
         }
+        toast.success(t("library.blockDeleted"), blockId);
+      } else {
+        toast.error(t("library.deleteFailed"), `${t("library.deleteFailedMsg")} ${blockId}`);
       }
     } catch (error) {
-      console.error("Failed to delete block:", error);
+      toast.error(t("library.deleteFailed"), error instanceof Error ? error.message : String(error));
     }
   };
 
   const tabs = [
-    { id: "blocks" as LibraryTab, label: "算法块库", icon: "M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.022.547L3 17.5h2m14.428-2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 011.022-.547H21m-14.428-2.072a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L3 7.5h2m14.428 2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 001.022-.547H21" },
-    { id: "libraries" as LibraryTab, label: "库管理", icon: "M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" },
+    { id: "blocks" as LibraryTab, label: t("library.tabs.blocks"), icon: "M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.022.547L3 17.5h2m14.428-2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 011.022-.547H21m-14.428-2.072a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L3 7.5h2m14.428 2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 001.022-.547H21" },
+    { id: "libraries" as LibraryTab, label: t("library.tabs.manager"), icon: "M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" },
   ];
 
   return (
@@ -73,12 +79,12 @@ export function LibraryPage() {
           <svg viewBox="0 0 24 24" className="w-5 h-5 text-ide-accent" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.022.547L3 17.5h2m14.428-2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 011.022-.547H21" />
           </svg>
-          <h1 className="text-lg font-semibold text-white">算法块与算法库</h1>
+          <h1 className="text-lg font-semibold text-ide-strong">{t("library.title")}</h1>
         </div>
         
         <div className="flex-1" />
         
-        <span className="text-sm text-ide-textDim">{blocks.length} 个算法块</span>
+        <span className="text-sm text-ide-textDim">{blocks.length} {t("library.blockCount")}</span>
       </div>
 
       {/* Tab Navigation */}
@@ -89,7 +95,7 @@ export function LibraryPage() {
             onClick={() => setActiveTab(tab.id)}
             className={`flex items-center gap-2 px-4 py-1.5 rounded-t text-sm font-medium transition-colors ${
               activeTab === tab.id
-                ? "bg-ide-bg text-white border-b-2 border-ide-accent"
+                ? "bg-ide-bg text-ide-strong border-b-2 border-ide-accent"
                 : "text-ide-textDim hover:text-ide-text hover:bg-ide-hover"
             }`}
           >
@@ -122,7 +128,7 @@ export function LibraryPage() {
         {selectedBlock && activeTab === "blocks" && (
           <div className="w-96 bg-ide-sidebar border-l border-ide-border overflow-y-auto">
             <div className="p-4">
-              <h3 className="text-sm font-semibold text-white mb-3">算法块详情</h3>
+              <h3 className="text-sm font-semibold text-ide-strong mb-3">{t("library.blockDetails")}</h3>
               {(() => {
                 const block = blocks.find((b) => b.id === selectedBlock);
                 if (!block) return null;
@@ -131,38 +137,38 @@ export function LibraryPage() {
                   <div className="space-y-4">
                     {/* Basic Info */}
                     <div>
-                      <div className="text-xs text-ide-textDim mb-1">名称</div>
-                      <div className="text-sm text-white font-semibold">{block.name}</div>
+                      <div className="text-xs text-ide-textDim mb-1">{t("library.name")}</div>
+                      <div className="text-sm text-ide-strong font-semibold">{block.name}</div>
                     </div>
                     
                     <div>
                       <div className="text-xs text-ide-textDim mb-1">ID</div>
-                      <div className="text-sm text-white font-mono text-xs">{block.id}</div>
+                      <div className="text-sm text-ide-strong font-mono text-xs">{block.id}</div>
                     </div>
                     
                     <div>
-                      <div className="text-xs text-ide-textDim mb-1">分类</div>
-                      <div className="text-sm text-white capitalize">{block.category}</div>
+                      <div className="text-xs text-ide-textDim mb-1">{t("library.category")}</div>
+                      <div className="text-sm text-ide-strong capitalize">{block.category}</div>
                     </div>
                     
                     <div>
-                      <div className="text-xs text-ide-textDim mb-1">版本</div>
-                      <div className="text-sm text-white">{block.version}</div>
+                      <div className="text-xs text-ide-textDim mb-1">{t("library.version")}</div>
+                      <div className="text-sm text-ide-strong">{block.version}</div>
                     </div>
                     
                     <div>
-                      <div className="text-xs text-ide-textDim mb-1">描述</div>
+                      <div className="text-xs text-ide-textDim mb-1">{t("library.description")}</div>
                       <div className="text-sm text-ide-text">{block.description}</div>
                     </div>
                     
                     <div>
-                      <div className="text-xs text-ide-textDim mb-1">作者</div>
-                      <div className="text-sm text-white">{block.author || "-"}</div>
+                      <div className="text-xs text-ide-textDim mb-1">{t("library.author")}</div>
+                      <div className="text-sm text-ide-strong">{block.author || "-"}</div>
                     </div>
                     
                     {/* Inputs */}
                     <div>
-                      <div className="text-xs text-ide-textDim mb-2">输入端口 ({block.inputs.length})</div>
+                      <div className="text-xs text-ide-textDim mb-2">{t("library.inputs")} ({block.inputs.length})</div>
                       <div className="space-y-1">
                         {block.inputs.map((input) => (
                           <div key={input.name} className="px-2 py-1 bg-ide-bg rounded text-xs">
@@ -175,7 +181,7 @@ export function LibraryPage() {
                     
                     {/* Outputs */}
                     <div>
-                      <div className="text-xs text-ide-textDim mb-2">输出端口 ({block.outputs.length})</div>
+                      <div className="text-xs text-ide-textDim mb-2">{t("library.outputs")} ({block.outputs.length})</div>
                       <div className="space-y-1">
                         {block.outputs.map((output) => (
                           <div key={output.name} className="px-2 py-1 bg-ide-bg rounded text-xs">
@@ -189,7 +195,7 @@ export function LibraryPage() {
                     {/* Parameters */}
                     {block.parameters.length > 0 && (
                       <div>
-                        <div className="text-xs text-ide-textDim mb-2">参数 ({block.parameters.length})</div>
+                        <div className="text-xs text-ide-textDim mb-2">{t("library.parameters")} ({block.parameters.length})</div>
                         <div className="space-y-1">
                           {block.parameters.map((param) => (
                             <div key={param.name} className="px-2 py-1 bg-ide-bg rounded text-xs">
@@ -204,7 +210,7 @@ export function LibraryPage() {
                     {/* Tags */}
                     {block.tags.length > 0 && (
                       <div>
-                        <div className="text-xs text-ide-textDim mb-2">标签</div>
+                        <div className="text-xs text-ide-textDim mb-2">{t("library.tags")}</div>
                         <div className="flex flex-wrap gap-1">
                           {block.tags.map((tag) => (
                             <span key={tag} className="px-2 py-0.5 bg-ide-accent/20 text-ide-accent rounded text-xs">
@@ -218,7 +224,7 @@ export function LibraryPage() {
                     {/* ST Template Preview */}
                     {block.st_template && (
                       <div>
-                        <div className="text-xs text-ide-textDim mb-2">ST 代码模板</div>
+                        <div className="text-xs text-ide-textDim mb-2">{t("library.stTemplate")}</div>
                         <pre className="px-3 py-2 bg-ide-bg rounded text-xs text-ide-text overflow-auto max-h-48 font-mono">
                           {block.st_template}
                         </pre>

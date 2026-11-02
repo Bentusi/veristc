@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useProject } from "../project/ProjectProvider";
+import { useI18n } from "../lib/i18n";
 import { Sheet } from "../components/graph/Sheet";
 import { PageTabs } from "../components/graph/PageTabs";
 import { CheckerPanel, type PanelTab } from "../components/graph/CheckerPanel";
 import { SimTimeline } from "../components/graph/SimPanel";
 import { Inspector } from "../components/graph/Inspector";
+import { toast } from "../components/ui";
+import { eventBus } from "../lib/eventBus";
+import { useEditShortcuts } from "../lib/shortcuts";
 import {
   INTERFACE,
   SHEETS,
@@ -23,6 +27,8 @@ import {
   type ScriptRow,
   type Selection,
   type SimRun,
+  type SystemVarRow,
+  type Scope,
   deleteSelection,
   pinForced,
   pinValues,
@@ -69,6 +75,34 @@ function uniqueId(taken: string[], stem: string): string {
   }
 }
 
+/** Where a palette row puts its port, and how the port is declared. */
+interface PortSeed {
+  name?: string;
+  type?: string;
+  scope?: Scope;
+  bind?: { station: string; variable: string };
+  unit?: string;
+}
+
+/** One palette group: the variables of one kind and what a drop onto the sheet makes. */
+interface PaletteGroup {
+  title: string;
+  note?: string;
+  /** What the group says when it has no rows -- where the engineer has to go instead. */
+  empty: string;
+  create?: { label: string; seed: PortSeed; title: string };
+  rows: {
+    key: string;
+    name: string;
+    type: string;
+    title: string;
+    badge?: string;
+    seed: PortSeed;
+    /** The pins this variable can supply on a sheet; a station point has one. */
+    actions: { label: string; direction: PortDirection; title: string }[];
+  }[];
+}
+
 export function GraphEditorPage() {
   const [pages, setPages] = useState<PageRow[]>([]);
   const [pageId, setPageId] = useState("");
@@ -78,6 +112,7 @@ export function GraphEditorPage() {
   const [stations, setStations] = useState<string[]>([]);
   const [station, setStation] = useState("");
   const [external, setExternal] = useState<ExternalVarRow[]>([]);
+  const [systemVars, setSystemVars] = useState<SystemVarRow[]>([]);
   const [selected, setSelected] = useState<Selection>(null);
   const [report, setReport] = useState<CheckReport | null>(null);
   const [crossPage, setCrossPage] = useState<CrossPageRow[]>([]);
@@ -96,18 +131,33 @@ export function GraphEditorPage() {
   const [forces, setForces] = useState<ForceRow[]>([]);
   const [script, setScript] = useState<ScriptRow[]>([]);
   const [panel, setPanel] = useState<PanelTab>("check");
-  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(0.62);
   const [focus, setFocus] = useState<Position | null>(null);
   const [filter, setFilter] = useState("");
   const { current: project } = useProject();
+  const { t } = useI18n();
   const dirty = useRef(false);
   const rev = useRef(0);
 
+  useEditShortcuts({
+    onSave: async () => {
+      if (!project) {
+        toast.warning(t("common.noProject"), t("common.noProjectDesc"));
+        return;
+      }
+      try {
+        await call("/graph/save", json({}));
+        toast.success(t("graph.pageSaved"), `${t("graph.pageSavedMsg")} ${project.path}/logic`);
+      } catch (error) {
+        fail(error);
+      }
+    },
+  });
+
   const fail = useCallback((error: unknown) => {
-    setNotice({ text: error instanceof Error ? error.message : String(error), error: true });
-  }, []);
+    toast.error(t("common.error"), error instanceof Error ? error.message : String(error));
+  }, [t]);
 
   const refreshPages = useCallback(async () => {
     const rows = await call<PageRow[]>("/graph/pages");
@@ -128,10 +178,11 @@ export function GraphEditorPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [rows, blocks, stationRows] = await Promise.all([
+        const [rows, blocks, stationRows, systemRows] = await Promise.all([
           call<PageRow[]>("/graph/pages"),
           call<LibraryBlock[]>("/library/blocks"),
           call<{ station_id: string }[]>("/device/stations"),
+          call<SystemVarRow[]>("/graph/system-variables"),
         ]);
         const index: Record<string, LibraryBlock> = {};
         blocks.forEach((block) => {
@@ -142,6 +193,7 @@ export function GraphEditorPage() {
           index[typed.name] = typed;
         });
         setLibrary(index);
+        setSystemVars(systemRows);
         setPalette([...blocks].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)));
         const ids = stationRows.map((row) => row.station_id);
         setStations(ids);
@@ -166,6 +218,21 @@ export function GraphEditorPage() {
       .catch(() => setExternal([]));
   }, [station]);
 
+  // Listen for binding changes from DevicePage and refresh external variables
+  useEffect(() => {
+    const handler = () => {
+      if (!station) return;
+      call<ExternalVarRow[]>(`/device/stations/${station}/external-variables`)
+        .then((vars) => {
+          setExternal(vars);
+          toast.info(t("graph.varListRefreshed"), t("graph.varListRefreshedMsg"));
+        })
+        .catch(() => {});
+    };
+    eventBus.on("bindings:changed", handler);
+    return () => eventBus.off("bindings:changed", handler);
+  }, [station, t]);
+
   // Push the edited sheet to the sidecar; the schema decides whether it holds.
   // The local document stays authoritative: a slow response must not roll back
   // edits made while it was in flight.
@@ -178,7 +245,6 @@ export function GraphEditorPage() {
         await call<PageDoc>(`/graph/pages/${doc.page.id}`, json(doc, "PUT"));
         if (rev.current === target) dirty.current = false;
         setPages(await refreshPages());
-        setNotice(null);
       } catch (error) {
         fail(error);
       }
@@ -194,19 +260,6 @@ export function GraphEditorPage() {
     setSimStale(true);
     setPage((current) => (current ? mutate(current) : current));
   }, []);
-
-  const marks = useMemo(() => {
-    const table: Record<string, Finding[]> = {};
-    if (!report || !page) return table;
-    const sheet = page.page.id;
-    [...report.errors, ...report.warnings, ...report.infos].forEach((finding) => {
-      if (finding.page && finding.page !== sheet) return;
-      const key = `${finding.block}.${finding.port}`;
-      if (!finding.block) return;
-      (table[key] ??= []).push(finding);
-    });
-    return table;
-  }, [report, page]);
 
   const runAnalysis = useCallback(
     async (switchPanel = true) => {
@@ -225,6 +278,28 @@ export function GraphEditorPage() {
     },
     [station]
   );
+
+  // Auto-run analysis 500ms after edits for real-time feedback
+  useEffect(() => {
+    if (!analysisStale || !page) return;
+    const timer = window.setTimeout(() => {
+      runAnalysis(false);
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [analysisStale, page, runAnalysis]);
+
+  const marks = useMemo(() => {
+    const table: Record<string, Finding[]> = {};
+    if (!report || !page) return table;
+    const sheet = page.page.id;
+    [...report.errors, ...report.warnings, ...report.infos].forEach((finding) => {
+      if (finding.page && finding.page !== sheet) return;
+      const key = `${finding.block}.${finding.port}`;
+      if (!finding.block) return;
+      (table[key] ??= []).push(finding);
+    });
+    return table;
+  }, [report, page]);
 
   /** A pin's text comes from a frame, never from the chart; an edit retires the run. */
   const values = useMemo(
@@ -268,7 +343,9 @@ export function GraphEditorPage() {
       setPanel("check");
       setStError(null);
       try {
-        setStText(await call<string>("/graph/st"));
+        // The preview is taken for the station on the toolbar, so CYCLE_MS shows
+        // the cycle that run will actually use.
+        setStText(await call<string>(`/graph/st?station=${encodeURIComponent(station)}`));
       } catch (error) {
         // A chart with a loop has no execution order, so there is no text to show.
         setStError(error instanceof Error ? error.message : String(error));
@@ -335,9 +412,10 @@ export function GraphEditorPage() {
     setSelected({ kind: "constant", id: created });
   };
 
-  const addPort = (direction: PortDirection, row?: ExternalVarRow) => {
+  /** Where a palette row would put its port, and with what declaration. */
+  const addPort = (direction: PortDirection, seed: PortSeed = {}) => {
     if (!page) return;
-    let name = row?.name ?? "";
+    let name = seed.name ?? "";
     patch((current) => {
       const taken = (["input", "output", "in_out"] as PortDirection[]).flatMap((key) => current.interface[key].map((port) => port.name));
       if (!name) name = uniqueId(taken, "VAR");
@@ -349,14 +427,31 @@ export function GraphEditorPage() {
           : { x: 64, y: 120 + index * 40 };
       const port: PageDoc["interface"][PortDirection][number] = {
         name,
-        type: row?.st_type ?? "REAL",
-        scope: "external",
-        ...(row ? { bind: { station, variable: row.name }, unit: row.unit ?? "" } : {}),
+        type: seed.type ?? "REAL",
+        scope: seed.scope ?? "external",
+        ...(seed.bind ? { bind: seed.bind } : {}),
+        unit: seed.unit ?? "",
         position,
       };
       return { ...current, interface: { ...current.interface, [direction]: [...current.interface[direction], port] } };
     });
     setSelected({ kind: "port", direction, name });
+  };
+
+  /** The direction a name is already declared in on this sheet, if any. */
+  const portDirectionOnPage = (name: string): PortDirection | undefined => {
+    if (!page) return undefined;
+    return (["input", "in_out", "output"] as PortDirection[]).find((direction) =>
+      page.interface[direction].some((port) => port.name === name)
+    );
+  };
+
+  const focusPort = (name: string) => {
+    const direction = portDirectionOnPage(name);
+    if (!direction || !page) return;
+    const port = page.interface[direction].find((item) => item.name === name);
+    setSelected({ kind: "port", direction, name });
+    if (port?.position) setFocus({ ...port.position });
   };
 
   const jumpTo = async (target: { page: string; block: string; port: string }) => {
@@ -392,7 +487,7 @@ export function GraphEditorPage() {
 
   const newPage = async () => {
     try {
-      const label = window.prompt("图页名称", `PAGE${pages.length + 1}`) ?? `PAGE${pages.length + 1}`;
+      const label = window.prompt(t("graph.pageName"), `PAGE${pages.length + 1}`) ?? `PAGE${pages.length + 1}`;
       const created = await call<{ page: { id: string } }>("/graph/pages", json({ label, sheet: "A3" }));
       await refreshPages();
       dirty.current = false;
@@ -403,7 +498,7 @@ export function GraphEditorPage() {
   };
 
   const closePage = async (id: string) => {
-    if (!window.confirm(`删除图页 ${id}？`)) return;
+    if (!window.confirm(`${t("graph.confirmDeletePage")} ${id}？`)) return;
     try {
       await call(`/graph/pages/${id}`, { method: "DELETE" });
       const rows = await refreshPages();
@@ -426,58 +521,163 @@ export function GraphEditorPage() {
     }
   };
 
-  const noProject = { text: "尚未打开工程：先在首页新建或打开一个工程文件夹", error: true };
-
-  const save = async () => {
-    if (!project) {
-      setNotice(noProject);
-      return;
-    }
-    try {
-      await call("/graph/save", json({}));
-      setNotice({ text: `图页已写入 ${project.path}/logic`, error: false });
-    } catch (error) {
-      fail(error);
-    }
-  };
-
-  const load = async () => {
-    if (!project) {
-      setNotice(noProject);
-      return;
-    }
-    try {
-      const rows = await call<PageRow[]>("/graph/load", json({}));
-      setPages(rows);
-      dirty.current = false;
-      if (rows[0]) await loadPage(rows[0].id);
-      setNotice({ text: `已从 ${project.path}/logic 读入 ${rows.length} 页`, error: false });
-    } catch (error) {
-      fail(error);
-    }
-  };
-
   const filteredPalette = palette.filter(
     (block) =>
       !filter ||
       `${block.name} ${block.id} ${block.category} ${block.description}`.toLowerCase().includes(filter.toLowerCase())
   );
 
-  const button = "px-2.5 py-1 rounded text-xs bg-ide-hover hover:bg-ide-selected border border-ide-border";
+  /** Every port declared on the sheet being drawn, with the direction it sits in. */
+  const pagePorts = useMemo(
+    () =>
+      page
+        ? (["input", "in_out", "output"] as PortDirection[]).flatMap((direction) =>
+            page.interface[direction].map((port) => ({ ...port, direction }))
+          )
+        : [],
+    [page]
+  );
+
+  /**
+   * The variable palette, cut the way a sheet is read: what comes in, what goes
+   * out, what crosses over to another page, what belongs to this page alone, and
+   * what the runtime hands over every cycle.
+   *
+   * A station point offers one pin only, because the module kind decided its
+   * direction when the point was created -- offering the other one would ask the
+   * engineer to contradict the hardware. A page variable offers both, because the
+   * page it lands on decides that, and a name already on this sheet offers
+   * nothing: it is declared once and the wires go from there.
+   */
+  const groups = useMemo<PaletteGroup[]>(() => {
+    const onSheet = new Set(pagePorts.map((port) => port.name));
+    const pinsFor = (
+      name: string,
+      actions: { label: string; direction: PortDirection; title: string }[]
+    ) => (onSheet.has(name) ? [] : actions);
+
+    const read = { label: "IN", direction: "input" as PortDirection, title: t("graph.readHere") };
+    const write = { label: "OUT", direction: "output" as PortDirection, title: t("graph.writeHere") };
+
+    const points = (direction: "input" | "output") =>
+      external
+        .filter((row) => row.direction === direction && row.enabled !== false)
+        .map((row) => ({
+          key: row.name,
+          name: row.name,
+          type: row.st_type,
+          title: `${row.name} · ${row.description || t("graph.noPointName")}${row.mapped ? "" : ` · ${t("graph.noChannel")}`}`,
+          seed: {
+            name: row.name,
+            type: row.st_type,
+            scope: "external" as const,
+            bind: { station, variable: row.name },
+            unit: row.unit ?? "",
+          },
+          actions: pinsFor(row.name, direction === "input" ? [read] : [write]),
+        }));
+
+    const intermediate = new Map<string, { name: string; type: string; pages: string[] }>();
+    crossPage
+      .filter((row) => row.scope === "intermediate")
+      .forEach((row) => intermediate.set(row.name, { name: row.name, type: row.type, pages: row.pages }));
+    pagePorts
+      .filter((port) => port.scope === "intermediate")
+      .forEach((port) =>
+        intermediate.set(port.name, {
+          name: port.name,
+          type: port.type,
+          pages: intermediate.get(port.name)?.pages ?? [],
+        })
+      );
+
+    // Device points arrive in channel order and stay that way: re-sorting by
+    // name would read `1_CH1, 1_CH10, 1_CH2`. Only the page-local groups, which
+    // have no channel, are name-sorted.
+    const sort = <T extends { name: string }>(rows: T[]): T[] => rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    return [
+      {
+        title: t("graph.inputVars"),
+        note:
+          external.filter((row) => row.direction === "input" && row.enabled === false).length > 0
+            ? t("graph.inputVarsNote")
+            : undefined,
+        empty: t("graph.noInputVars"),
+        rows: points("input"),
+      },
+      {
+        title: t("graph.outputVars"),
+        empty: t("graph.noOutputVars"),
+        rows: points("output"),
+      },
+      {
+        title: t("graph.middleVars"),
+        create: { label: t("graph.newMiddle"), seed: { scope: "intermediate" as const }, title: t("graph.newMiddleHint") },
+        empty: t("graph.noMiddleVars"),
+        rows: sort(
+          [...intermediate.values()].map((row) => ({
+            key: row.name,
+            name: row.name,
+            type: row.type,
+            title: `${row.name} · ${t("graph.connectPage")} ${row.pages.join("、") || t("graph.thisPage")}`,
+            seed: { name: row.name, type: row.type, scope: "intermediate" as const },
+            actions: pinsFor(row.name, [read, write]),
+          }))
+        ),
+      },
+      {
+        title: t("graph.privateVars"),
+        create: { label: t("graph.newPrivate"), seed: { scope: "local" as const }, title: t("graph.newPrivateHint") },
+        empty: t("graph.noPrivateVars"),
+        rows: sort(
+          pagePorts
+            .filter((port) => port.scope === "local")
+            .map((port) => ({
+              key: `local${port.name}`,
+              name: port.name,
+              type: port.type,
+              title: `${port.name} · ${t("graph.privateHint")}`,
+              seed: { name: port.name, type: port.type, scope: "local" as const },
+              actions: [] as { label: string; direction: PortDirection; title: string }[],
+            }))
+        ),
+      },
+      {
+        title: t("graph.systemVars"),
+        note: t("graph.systemVarsNote"),
+        empty: t("graph.noSystemVars"),
+        rows: systemVars.map((row) => ({
+          key: row.name,
+          name: row.name,
+          type: row.st_type,
+          title: `${row.name} · ${row.description}`,
+          badge: t("graph.readonly"),
+          seed: { name: row.name, type: row.st_type, scope: "external" as const },
+          actions: pinsFor(row.name, [read]),
+        })),
+      },
+    ];
+  }, [external, pagePorts, crossPage, systemVars, station, t]);
+
+  // No neutral background here on purpose: a variant that adds `bg-ide-accent`
+  // would otherwise lose to this rule, since Tailwind orders background-color
+  // utilities by config key order (accent comes before hover).
+  const button = "px-2.5 py-1 rounded text-xs hover:bg-ide-hover border border-ide-border";
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "#1e1e1e" }}>
+    <div className="h-full flex flex-col bg-ide-bg">
       <div className="h-9 flex items-center gap-2 px-3 bg-ide-sidebar border-b border-ide-border text-xs">
-        <span className="text-ide-textDim">程序</span>
+        <span className="text-ide-textDim">{t("graph.program")}</span>
         <span className="font-mono text-ide-text">{page?.name ?? "MAIN"}</span>
         <span className="w-px h-4 bg-ide-border mx-1" />
-        <span className="text-ide-textDim">站点</span>
+        <span className="text-ide-textDim">{t("graph.station")}</span>
         <select
           value={station}
           onChange={(event) => setStation(event.target.value)}
           className="bg-ide-bg border border-ide-border rounded px-1.5 py-0.5"
         >
-          {stations.length === 0 && <option value="">无站</option>}
+          {stations.length === 0 && <option value="">{t("graph.noStation")}</option>}
           {stations.map((id) => (
             <option key={id} value={id}>
               {id}
@@ -486,9 +686,9 @@ export function GraphEditorPage() {
         </select>
         <div className="w-px h-4 bg-ide-border mx-1" />
         <button onClick={runCheck} disabled={busy} className={`${button} bg-ide-accent text-white hover:bg-blue-600 disabled:opacity-50`}>
-          检查器
+          {t("graph.checker")}
         </button>
-        <span className="text-ide-textDim">周期数</span>
+        <span className="text-ide-textDim">{t("graph.cycles")}</span>
         <input
           type="number"
           min={1}
@@ -501,15 +701,15 @@ export function GraphEditorPage() {
           onClick={() => void runSim()}
           disabled={busy || simBusy}
           className={`${button} bg-teal-700 text-white hover:bg-teal-600 disabled:opacity-50`}
-          title="按设备组态生成被控对象表并运行 sim"
+          title={t("graph.simHint")}
         >
-          {simBusy ? "仿真中…" : "仿真"}
+          {simBusy ? t("graph.simulating") : t("graph.sim")}
         </button>
-        <button onClick={removeSelection} disabled={!selected} className={`${button} disabled:opacity-40`} title="删除所选（Delete）">
-          删除
+        <button onClick={removeSelection} disabled={!selected} className={`${button} disabled:opacity-40`} title={t("graph.deleteSelected")}>
+          {t("graph.delete")}
         </button>
         <button onClick={addConstant} className={button}>
-          + 常量
+          {t("graph.addConstant")}
         </button>
         <div className="flex-1" />
         <button onClick={() => setZoom((value) => Math.max(0.3, Math.round((value - 0.1) * 100) / 100))} className={button}>
@@ -525,27 +725,9 @@ export function GraphEditorPage() {
           className="px-2 py-1 rounded bg-ide-bg border border-ide-border text-ide-textDim text-[11px] max-w-[34ch] truncate"
           title={project?.path ?? ""}
         >
-          {project ? `${project.name} · logic/` : "未打开工程"}
+          {project ? `${project.name} · logic/` : t("title.unnamed")}
         </span>
-        <button onClick={save} disabled={!project} className={`${button} disabled:opacity-40`}>
-          保存
-        </button>
-        <button onClick={load} disabled={!project} className={`${button} disabled:opacity-40`}>
-          载入
-        </button>
       </div>
-
-      {notice && (
-        <div
-          className={`px-3 py-1.5 border-b text-xs font-mono ${
-            notice.error
-              ? "bg-red-900/40 border-red-700 text-red-200"
-              : "bg-ide-sidebar border-ide-border text-ide-textDim"
-          }`}
-        >
-          {notice.text}
-        </div>
-      )}
 
       <PageTabs
         pages={pages}
@@ -568,12 +750,12 @@ export function GraphEditorPage() {
             <input
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
-              placeholder="搜索算法块"
+              placeholder={t("graph.searchPlaceholder")}
               className="w-full bg-ide-bg border border-ide-border rounded px-2 py-1 text-xs"
             />
           </div>
           <div className="flex-1 overflow-y-auto">
-            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-ide-textDim">算法库</div>
+            <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-ide-textDim">{t("graph.library")}</div>
             {filteredPalette.map((block) => (
               <div
                 key={block.id}
@@ -585,7 +767,7 @@ export function GraphEditorPage() {
                   )
                 }
                 onDoubleClick={() => dropBlock({ library_id: block.id, type: stTypeOf(block) }, { x: 300, y: 200 })}
-                title={`${block.description}\n输入 ${block.inputs.length} / 输出 ${block.outputs.length}`}
+                title={`${block.description}\n${t("graph.input")} ${block.inputs.length} / ${t("graph.output")} ${block.outputs.length}`}
                 className="mx-2 mb-1 px-2 py-1.5 rounded hover:bg-ide-hover cursor-grab flex items-center gap-2"
               >
                 <span
@@ -604,27 +786,74 @@ export function GraphEditorPage() {
               </div>
             ))}
 
-            <div className="px-2 py-1 mt-2 text-[10px] uppercase tracking-wide text-ide-textDim border-t border-ide-border">
-              外部变量表 · {external.length}
-            </div>
-            {external.map((row) => (
-              <div key={row.name} className="mx-2 mb-0.5 px-2 py-1 rounded hover:bg-ide-hover text-[11px] flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: typeColor(row.st_type) }} />
-                <span className="flex-1 truncate font-mono" title={`${row.name} · ${row.description ?? ""}`}>
-                  {row.name}
-                </span>
-                <span className="text-ide-textDim">{row.st_type}</span>
-                <button onClick={() => addPort("input", row)} className="text-ide-status hover:underline" title="添加为输入引脚">
-                  IN
-                </button>
-                <button onClick={() => addPort("output", row)} className="text-ide-status hover:underline" title="添加为输出引脚">
-                  OUT
-                </button>
-              </div>
-            ))}
-            {external.length === 0 && (
-              <p className="px-3 py-2 text-[10px] text-ide-textDim">该站暂无外部变量，请先在设备组态配置通道并生成变量表。</p>
-            )}
+            {groups.map((group) => {
+              const rows = group.rows.filter(
+                (row) => !filter || `${row.name} ${row.title}`.toLowerCase().includes(filter.toLowerCase())
+              );
+              const create = group.create;
+              return (
+                <div key={group.title}>
+                  <div className="px-2 py-1 mt-2 text-[10px] uppercase tracking-wide text-ide-textDim border-t border-ide-border flex items-center gap-1.5">
+                    <span className="flex-1">
+                      {group.title} · {rows.length}
+                    </span>
+                    {create && (
+                      <button
+                        onClick={() => addPort("input", create.seed)}
+                        className="text-ide-status hover:underline"
+                        title={create.title}
+                        data-testid={`palette-create-${group.title}`}
+                      >
+                        {create.label}
+                      </button>
+                    )}
+                  </div>
+                  {rows.map((row) => (
+                    <div
+                      key={row.key}
+                      data-testid={`palette-${row.name}`}
+                      className="mx-2 mb-0.5 px-2 py-1 rounded hover:bg-ide-hover text-[11px] flex items-center gap-1.5"
+                    >
+                      <span
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{ background: typeColor(row.type) }}
+                      />
+                      <button
+                        onClick={() => focusPort(row.name)}
+                        className="flex-1 truncate font-mono text-left"
+                        title={row.title}
+                      >
+                        {row.name}
+                      </button>
+                      {row.badge && <span className="text-orange-400 text-[9px]">{row.badge}</span>}
+                      <span className="text-ide-textDim">{row.type}</span>
+                      {row.actions.length === 0 ? (
+                        <button
+                          onClick={() => focusPort(row.name)}
+                          className="text-ide-textDim hover:underline"
+                          title={t("graph.onPageHint")}
+                        >
+                          {t("graph.onPage")}
+                        </button>
+                      ) : (
+                        row.actions.map((action) => (
+                          <button
+                            key={action.label}
+                            onClick={() => addPort(action.direction, row.seed)}
+                            className="text-ide-status hover:underline"
+                            title={action.title}
+                          >
+                            {action.label}
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ))}
+                  {!rows.length && <p className="px-3 py-1 text-[10px] text-ide-textDim">{group.empty}</p>}
+                  {group.note && <p className="px-3 pb-1 text-[10px] text-ide-textDim">{group.note}</p>}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -646,7 +875,7 @@ export function GraphEditorPage() {
               />
             ) : (
               <div className="h-full flex items-center justify-center text-ide-textDim text-sm">
-                正在载入图页…（若长时间无响应，请确认后端已启动）
+                {t("graph.loading")}
               </div>
             )}
           </div>
@@ -655,7 +884,7 @@ export function GraphEditorPage() {
           ) : null}
           {Object.keys(forcedPins).length > 0 && (
             <div className="shrink-0 px-3 py-1 bg-orange-700/30 border-t border-orange-600 text-[11px] text-orange-300 font-mono">
-              本周期有 {Object.keys(forcedPins).length} 个引脚显示的是强制值（F 标记），不是程序算出来的结果
+              {t("graph.forcedPins")} {Object.keys(forcedPins).length} {t("graph.forcedPinsMsg")}
             </div>
           )}
           <div className="h-56 shrink-0">
@@ -689,7 +918,7 @@ export function GraphEditorPage() {
 
         <div className="w-72 shrink-0 bg-ide-sidebar border-l border-ide-border overflow-y-auto">
           <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-ide-textDim border-b border-ide-border">
-            属性
+            {t("graph.tabs.properties")}
           </div>
           {page && (
             <Inspector
@@ -697,21 +926,22 @@ export function GraphEditorPage() {
               library={library}
               selected={selected}
               external={external}
+              system={systemVars}
               station={station}
               onPage={patch}
               onDelete={removeSelection}
             />
           )}
           <div className="px-3 py-2 border-t border-ide-border text-[10px] uppercase tracking-wide text-ide-textDim">
-            图页变量
+            {t("graph.tabs.variables")}
           </div>
           {page && (
             <div className="px-2 pb-2 space-y-1">
               {(["input", "in_out", "output"] as PortDirection[]).map((direction) => (
                 <div key={direction}>
                   <div className="flex items-center justify-between text-[10px] text-ide-textDim px-1">
-                    <span>{direction === "input" ? "输入" : direction === "output" ? "输出" : "读写"}</span>
-                    <button onClick={() => addPort(direction)} className="hover:text-ide-text" title="新建变量引脚">
+                    <span>{direction === "input" ? t("graph.direction.input") : direction === "output" ? t("graph.direction.output") : t("graph.direction.inout")}</span>
+                    <button onClick={() => addPort(direction)} className="hover:text-ide-text" title={t("graph.newVarPin")}>
                       +
                     </button>
                   </div>
@@ -728,7 +958,7 @@ export function GraphEditorPage() {
                       <span className="w-1.5 h-1.5 rounded-full" style={{ background: typeColor(port.type) }} />
                       <span className="flex-1 truncate font-mono">{port.name}</span>
                       {port.bind?.variable && <span className="text-green-500">⚙</span>}
-                      {port.scope === "intermediate" && <span className="text-yellow-500">跨</span>}
+                      {port.scope === "intermediate" && <span className="text-yellow-500">{t("graph.cross")}</span>}
                       <span className="text-ide-textDim">{port.type}</span>
                     </button>
                   ))}

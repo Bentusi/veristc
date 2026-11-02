@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface LibraryInfo {
   id: string;
@@ -12,6 +13,7 @@ interface LibraryInfo {
 }
 
 export function LibraryManager() {
+  const { t } = useI18n();
   const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newLibraryName, setNewLibraryName] = useState("");
@@ -98,7 +100,7 @@ export function LibraryManager() {
         URL.revokeObjectURL(url);
       }
     } catch (error) {
-      console.error("导出失败:", error);
+      console.error(t("libraryManager.exportFailed"), error);
     }
   };
 
@@ -113,7 +115,7 @@ export function LibraryManager() {
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 4v16m8-8H4" />
           </svg>
-          新建库
+          {t("libraryManager.newLibrary")}
         </button>
         <button
           onClick={handleExportLibrary}
@@ -122,10 +124,10 @@ export function LibraryManager() {
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
-          导出库
+          {t("libraryManager.exportLibrary")}
         </button>
         <div className="flex-1" />
-        <span className="text-sm text-ide-textDim">{libraries.length} 个库</span>
+        <span className="text-sm text-ide-textDim">{libraries.length} {t("libraryManager.libraries")}</span>
       </div>
 
       {/* Libraries List */}
@@ -136,8 +138,8 @@ export function LibraryManager() {
               <svg viewBox="0 0 24 24" className="w-16 h-16 text-ide-textDim mx-auto mb-4" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z" />
               </svg>
-              <p className="text-ide-textDim mb-2">暂无算法库</p>
-              <p className="text-sm text-ide-textDim">点击"新建库"创建算法库</p>
+              <p className="text-ide-textDim mb-2">{t("libraryManager.noLibraries")}</p>
+              <p className="text-sm text-ide-textDim">{t("libraryManager.noLibrariesHint")}</p>
             </div>
           </div>
         ) : (
@@ -149,7 +151,7 @@ export function LibraryManager() {
               >
                 <div className="flex items-start justify-between mb-3">
                   <div>
-                    <h3 className="text-sm font-semibold text-white">{library.name}</h3>
+                    <h3 className="text-sm font-semibold text-ide-strong">{library.name}</h3>
                     <p className="text-xs text-ide-textDim mt-1 line-clamp-2">{library.description}</p>
                   </div>
                   <div className="flex gap-1">
@@ -160,7 +162,7 @@ export function LibraryManager() {
                           ? "text-green-400 hover:text-green-300"
                           : "text-ide-textDim hover:text-ide-text"
                       }`}
-                      title={library.is_shared ? "取消共享" : "设为共享"}
+                      title={library.is_shared ? t("libraryManager.unshare") : t("libraryManager.share")}
                     >
                       <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                         {library.is_shared ? (
@@ -172,12 +174,12 @@ export function LibraryManager() {
                     </button>
                     <button
                       onClick={() => {
-                        if (confirm(`确定要删除库 "${library.name}" 吗？`)) {
+                        if (confirm(`${t("libraryManager.confirmDelete")} "${library.name}" ${t("libraryManager.confirmDelete2")}`)) {
                           handleDeleteLibrary(library.id);
                         }
                       }}
                       className="p-1 text-ide-textDim hover:text-red-400 transition-colors"
-                      title="删除"
+                      title={t("common.delete")}
                     >
                       <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -187,9 +189,9 @@ export function LibraryManager() {
                 </div>
                 
                 <div className="flex items-center gap-4 text-xs text-ide-textDim">
-                  <span>{library.blocks_count} 个算法块</span>
+                  <span>{library.blocks_count} {t("libraryManager.blocks")}</span>
                   <span>•</span>
-                  <span>{library.owner || "未指定"}</span>
+                  <span>{library.owner || t("libraryManager.unspecified")}</span>
                   <span>•</span>
                   <span>{new Date(library.created_at).toLocaleDateString()}</span>
                 </div>
@@ -197,7 +199,7 @@ export function LibraryManager() {
                 {library.is_shared && (
                   <div className="mt-2">
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-500/20 text-green-400">
-                      共享库
+                      {t("libraryManager.shared")}
                     </span>
                   </div>
                 )}
@@ -211,27 +213,27 @@ export function LibraryManager() {
       {showCreateDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowCreateDialog(false)}>
           <div className="bg-ide-sidebar border border-ide-border rounded-lg p-6 w-96" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">新建算法库</h3>
+            <h3 className="text-lg font-semibold text-ide-strong mb-4">{t("libraryManager.newLibraryTitle")}</h3>
             
             <div className="mb-4">
-              <label className="block text-sm text-ide-textDim mb-2">库名称</label>
+              <label className="block text-sm text-ide-textDim mb-2">{t("libraryManager.libraryName")}</label>
               <input
                 type="text"
                 value={newLibraryName}
                 onChange={(e) => setNewLibraryName(e.target.value)}
-                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent"
-                placeholder="例如：我的算法库"
+                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
+                placeholder={t("libraryManager.libraryNamePlaceholder")}
               />
             </div>
             
             <div className="mb-6">
-              <label className="block text-sm text-ide-textDim mb-2">描述</label>
+              <label className="block text-sm text-ide-textDim mb-2">{t("libraryManager.libraryDesc")}</label>
               <textarea
                 value={newLibraryDesc}
                 onChange={(e) => setNewLibraryDesc(e.target.value)}
-                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent resize-none"
+                className="w-full px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent resize-none"
                 rows={3}
-                placeholder="可选的库描述"
+                placeholder={t("libraryManager.libraryDescPlaceholder")}
               />
             </div>
             
@@ -240,14 +242,14 @@ export function LibraryManager() {
                 onClick={() => setShowCreateDialog(false)}
                 className="flex-1 px-4 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleCreateLibrary}
                 disabled={!newLibraryName.trim()}
                 className="flex-1 px-4 py-2 bg-ide-accent hover:bg-blue-600 rounded text-sm text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                创建
+                {t("libraryManager.create")}
               </button>
             </div>
           </div>

@@ -1,3 +1,4 @@
+import { useI18n } from "../../lib/i18n";
 import type { AnalysisReport } from "./types";
 
 interface CardProps {
@@ -51,6 +52,7 @@ export function AnalysisPanel({
   blocked: boolean;
   onRun: () => void;
 }) {
+  const { t } = useI18n();
   const refused = report && !report.ok;
 
   return (
@@ -59,24 +61,24 @@ export function AnalysisPanel({
         <button
           onClick={onRun}
           disabled={busy || blocked}
-          title={blocked ? "检查器仍有错误" : "用编译器度量 WCET、内存与同步区"}
+          title={blocked ? t("analysis.checkerErrors") : t("analysis.checkerErrorsHint")}
           className="px-2.5 py-1 bg-ide-accent text-white rounded text-xs disabled:opacity-40"
         >
-          {busy ? "分析中…" : "重新分析"}
+          {busy ? t("analysis.analyzing") : t("analysis.reanalyze")}
         </button>
         {blocked && !report && (
-          <span className="text-ide-textDim">先让检查器通过，编译器才会被调用。</span>
+          <span className="text-ide-textDim">{t("analysis.checkerFirst")}</span>
         )}
         {report?.station && (
           <span className="ml-auto text-[10px] text-ide-textDim">
-            站 {report.station.station_id} · 周期 {report.station.cycle_ms} ms
+            {t("sim.station")} {report.station.station_id} · {t("sim.cycle")} {report.station.cycle_ms} ms
           </span>
         )}
       </div>
 
       {stale && report?.ok && (
         <div className="px-3 py-1.5 text-[11px] text-yellow-400 border-b border-ide-border bg-yellow-500/10">
-          组态已改动，下面的数值来自改动前的那一次分析。
+          {t("analysis.configChanged")}
         </div>
       )}
 
@@ -86,8 +88,8 @@ export function AnalysisPanel({
         <div className="p-3">
           <div className="text-red-400 mb-2">
             {report?.stage === "checker"
-              ? "检查器仍有错误，编译器未调用。"
-              : `编译器拒绝该组态文本${report?.exit_code !== undefined ? `（退出码 ${report.exit_code}）` : ""}。`}
+              ? t("analysis.checkerStillErrors")
+              : `${t("analysis.compilerRejected")}${report?.exit_code !== undefined ? `（${t("analysis.exitCode")} ${report.exit_code}）` : ""}。`}
           </div>
           {(report?.errors ?? []).map((finding, index) => (
             <div key={`c${index}`} className="text-xs py-0.5">
@@ -115,70 +117,70 @@ export function AnalysisPanel({
       {report?.ok && (
         <div className="p-3">
           <Card
-            title="最坏执行时间"
-            hint={`制品 ${report.image_bytes} 字节`}
+            title={t("analysis.wcet")}
+            hint={`${t("analysis.artifact")} ${report.image_bytes} ${t("analysis.bytes")}`}
             rows={[
-              ["指令周期数（段 6 WCET）", `${report.wcet?.total_cycles ?? "—"}`],
+              [t("analysis.instructionCycles"), `${report.wcet?.total_cycles ?? "—"}`],
               [
-                "时间（编译器折算）",
+                t("analysis.time"),
                 `${report.wcet?.total_ns ?? "—"} ns（${((report.wcet?.total_ns ?? 0) / 1e6).toFixed(6)} ms）`,
               ],
               [
-                `占 ${report.wcet?.station_cycle_ms ?? "—"} ms 周期`,
+                `${t("analysis.cycleBudget")} ${report.wcet?.station_cycle_ms ?? "—"} ${t("analysis.cycleBudget2")}`,
                 `${report.wcet?.used_percent ?? 0} %`,
                 report.wcet?.fits_cycle === false,
               ],
               [
-                "每周期指令上限（段 5）",
+                t("analysis.cycleLimit"),
                 `${report.wcet?.cycle_limit_instructions ?? "—"}${
-                  report.wcet?.within_instruction_limit === false ? " 超限" : ""
+                  report.wcet?.within_instruction_limit === false ? ` ${t("analysis.exceeded")}` : ""
                 }`,
                 report.wcet?.within_instruction_limit === false,
               ],
-              ["静态栈深度", `${report.analysis?.stack_depth ?? "—"}`],
-              ["递归调用", report.analysis?.recursive_calls ? "有" : "无", report.analysis?.recursive_calls],
-              ["循环有界", report.analysis?.loops_bounded ? "是" : "否", !report.analysis?.loops_bounded],
+              [t("analysis.stackDepth"), `${report.analysis?.stack_depth ?? "—"}`],
+              [t("analysis.recursive"), report.analysis?.recursive_calls ? t("analysis.yes") : t("analysis.no"), report.analysis?.recursive_calls],
+              [t("analysis.boundedLoop"), report.analysis?.loops_bounded ? t("common.yes") : t("common.no"), !report.analysis?.loops_bounded],
             ]}
           />
 
           <Card
-            title="内存与变量占用"
-            hint={`代码 ${report.memory?.code_bytes} 字节`}
+            title={t("analysis.memoryUsage")}
+            hint={`${t("analysis.code")} ${report.memory?.code_bytes} ${t("analysis.bytes")}`}
             rows={[
-              ["线性内存（段 2 声明）", bytes(report.memory?.linear_memory_bytes)],
+              [t("analysis.linearMemory"), bytes(report.memory?.linear_memory_bytes)],
               ...Object.entries(report.memory?.by_kind ?? {}).map(
                 ([kind, row]): CardRow => [
-                  `　${kind} 区`,
-                  `${bytes(row.bytes)}，${row.count} 段，基址 0x${row.start.toString(16)}`,
+                  ` ${kind} ${t("analysis.section")}`,
+                  `${bytes(row.bytes)}，${row.count} ${t("analysis.section2")}，${t("analysis.baseAddr")} 0x${row.start.toString(16)}`,
                 ]
               ),
-              ["符号条数（段 7）", `${report.memory?.symbols ?? "—"}`],
-              ["全局变量 / 实例字段", `${report.memory?.global_slots} / ${report.memory?.fb_fields}`],
-              ["I/O 通道映射（段 3）", `${report.memory?.io_channels ?? "—"}`],
+              [t("analysis.symbolCount"), `${report.memory?.symbols ?? "—"}`],
+              [t("analysis.globalVars"), `${report.memory?.global_slots} / ${report.memory?.fb_fields}`],
+              [t("analysis.ioMapping"), `${report.memory?.io_channels ?? "—"}`],
             ]}
           />
 
           <Card
-            title="热备同步区"
-            hint={`页 ${report.sync_region?.page_size} B`}
+            title={t("analysis.hotstandby")}
+            hint={`${t("analysis.page")} ${report.sync_region?.page_size} B`}
             rows={[
-              ["每周期强制同步页", `${report.sync_region?.mandatory_page_count ?? "—"} 页`],
-              ["每周期同步数据量", bytes(report.sync_region?.bytes_per_cycle)],
-              ["快照包头", bytes(report.sync_region?.snapshot_header_bytes)],
+              [t("analysis.syncPages"), `${report.sync_region?.mandatory_page_count ?? "—"} ${t("analysis.page")}`],
+              [t("analysis.syncDataSize"), bytes(report.sync_region?.bytes_per_cycle)],
+              [t("analysis.snapshotHeader"), bytes(report.sync_region?.snapshot_header_bytes)],
               [
-                "最坏单帧快照",
+                t("analysis.worstSnapshot"),
                 bytes(report.sync_region?.worst_case_bytes),
                 report.sync_region?.within_page_limit === false,
               ],
               [
-                `跟踪页上限 ${report.sync_region?.page_limit}`,
-                `${report.sync_region?.tracked_pages} 已用`,
+                `${t("analysis.tracePageLimit")} ${report.sync_region?.page_limit}`,
+                `${report.sync_region?.tracked_pages} ${t("analysis.used")}`,
               ],
             ]}
           />
           {report.sync_region?.note && (
             <div className="text-[10px] text-ide-textDim mt-2">
-              数值栈与帧栈由运行站快照模型（hotstandby/snapshot.c）另行计入。
+              {t("analysis.stackNote")}
             </div>
           )}
 
@@ -192,8 +194,7 @@ export function AnalysisPanel({
 
       {!report && !busy && !error && (
         <div className="p-4 text-ide-textDim">
-          尚未分析。分析把设备组态的 VAR_GLOBAL/IOMAP 段与图页生成的 PROGRAM 文本一并交给
-          veristc，读回制品里的 WCET、内存与符号段，并按热备快照规则算出同步区大小。
+          {t("analysis.notAnalyzed")}
         </div>
       )}
     </div>

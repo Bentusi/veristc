@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from .models import ChannelBinding, HardwareModule, IoVariable, Station
+from .models import ChannelBinding, HardwareModule, IoVariable, Station, channel_variable_name
 from .service import get_device_project
 from ..project.workspace import resolve_project_path
 from ..sim.plant import PlantValidationError, plant_from_external_variables
@@ -45,11 +45,21 @@ class ModuleRequest(BaseModel):
     label: str = ""
 
 
+class ChannelConfigRequest(BaseModel):
+    channel: int
+    name: str = ""
+    signal_type: str = ""
+
+
 class VariableRequest(BaseModel):
     name: str
     direction: str
     st_type: str
     description: str = ""
+
+
+class VariableEnabledRequest(BaseModel):
+    enabled: bool
 
 
 class ReplaceVariablesRequest(BaseModel):
@@ -68,6 +78,7 @@ class BindingRequest(BaseModel):
     has_quality: bool = False
     fault_hold: str = ""
     preset_value: Optional[float] = None
+    signal_type: str = ""
 
 
 class ProjectRequest(BaseModel):
@@ -147,12 +158,74 @@ def remove_module(station_id: str, module_id: str) -> dict:
     return {"removed": module_id}
 
 
+@router.put("/stations/{station_id}/modules/{module_id}/channels/{channel}")
+def update_channel_config(
+    station_id: str, module_id: str, channel: int, request: ChannelConfigRequest
+) -> dict:
+    """Update a channel's name and signal type."""
+    service = _service(station_id)
+    module = next((m for m in service.modules() if m.module_id == module_id), None)
+    if not module:
+        raise HTTPException(status_code=404, detail=f"模块不存在：{module_id}")
+    if channel not in module.channels:
+        raise HTTPException(
+            status_code=400,
+            detail=f"通道 {channel} 不属于模块 {module_id}（区间 {module.first_channel}-{module.last_channel}）",
+        )
+    module.set_channel_config(
+        channel=channel,
+        name=request.name,
+        signal_type=request.signal_type,
+    )
+    return {"channel": channel, "name": request.name, "signal_type": request.signal_type}
+
+
+@router.post("/stations/{station_id}/modules/{module_id}/channels/{channel}/point")
+def create_channel_point(station_id: str, module_id: str, channel: int) -> dict:
+    """Re-create the point of a channel whose point was deleted.
+
+    A module channel *is* its point: direction and data type come from the
+    module kind alone, so the only way to lose one is deleting it and the only
+    way back is this call -- no variable has to be declared first.
+    """
+    service = _service(station_id)
+    module = next((m for m in service.modules() if m.module_id == module_id), None)
+    if module is None:
+        raise HTTPException(status_code=404, detail=f"模块不存在：{module_id}")
+    if channel not in module.channels:
+        raise HTTPException(
+            status_code=400,
+            detail=f"通道 {channel} 不属于模块 {module_id} "
+                   f"（区间 {module.first_channel}-{module.last_channel}）",
+        )
+    variable = service.create_channel_point(module, channel)
+    if variable is None:
+        occupant = service.point_on_channel(channel) or channel_variable_name(module_id, channel)
+        raise HTTPException(
+            status_code=400,
+            detail=f"通道 {channel} 已有点位 {occupant}",
+        )
+    return variable.to_dict()
+
+
 # ---------- configuration variables ----------
 
 
 @router.get("/stations/{station_id}/variables")
 def list_variables(station_id: str) -> list[dict]:
     return [variable.to_dict() for variable in _service(station_id).variables()]
+
+
+@router.post("/stations/{station_id}/variables", response_model=VariableRequest)
+def add_variable(station_id: str, request: VariableRequest) -> dict:
+    """Declare one configuration I/O variable from the device stage."""
+    try:
+        _service(station_id).add_variable(
+            IoVariable(request.name, request.direction, request.st_type, request.description)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return request.model_dump()
 
 
 @router.put("/stations/{station_id}/variables")
@@ -166,6 +239,32 @@ def replace_variables(station_id: str, request: ReplaceVariablesRequest) -> list
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return [variable.to_dict() for variable in service.variables()]
+
+
+@router.put("/stations/{station_id}/variables/{name}/enabled")
+def set_variable_enabled(
+    station_id: str, name: str, request: VariableEnabledRequest
+) -> dict:
+    """Enable or disable one variable; a disabled one leaves the artifact."""
+    try:
+        variable = _service(station_id).set_variable_enabled(name, request.enabled)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    return variable.to_dict()
+
+
+@router.delete("/stations/{station_id}/variables/{name}")
+def remove_variable(station_id: str, name: str) -> dict:
+    """Delete one variable and its binding.
+
+    The device page first asks `GET /graph/bound-variables`: a name the chart
+    still associates a pin with must be unbound there before it can leave.
+    """
+    try:
+        _service(station_id).remove_variable(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    return {"removed": name}
 
 
 # ---------- bindings and point configuration ----------
@@ -262,7 +361,7 @@ def load(request: ProjectRequest) -> list[dict]:
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     if not project.is_dir():
-        raise HTTPException(status_code=404, detail=f"Project directory not found: {project}")
+        raise HTTPException(status_code=404, detail=f"工程目录不存在：{project}")
     try:
         get_device_project().load_project(project)
     except (OSError, ValueError, KeyError, TypeError) as exc:

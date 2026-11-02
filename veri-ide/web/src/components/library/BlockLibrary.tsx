@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../lib/i18n";
 
 interface AlgorithmBlock {
   id: string;
@@ -28,19 +29,20 @@ const CATEGORY_COLORS: Record<string, string> = {
   logic: "bg-purple-500/20 text-purple-400 border-purple-500/30",
   filter: "bg-orange-500/20 text-orange-400 border-orange-500/30",
   converter: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-  custom: "bg-gray-500/20 text-gray-400 border-gray-500/30",
+  custom: "bg-gray-500/20 text-ide-textDim border-gray-500/30",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
-  math: "数学运算",
-  control: "控制算法",
-  logic: "逻辑运算",
-  filter: "滤波算法",
-  converter: "转换算法",
-  custom: "自定义",
+  math: "blockLibrary.math",
+  control: "blockLibrary.control",
+  logic: "blockLibrary.logic",
+  filter: "blockLibrary.filter",
+  converter: "blockLibrary.convert",
+  custom: "blockLibrary.custom",
 };
 
 export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: BlockLibraryProps) {
+  const { t } = useI18n();
   const [filterCategory, setFilterCategory] = useState<string>("all");
   const [searchText, setSearchText] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -80,7 +82,7 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
         window.location.reload();
       }
     } catch (error) {
-      alert("导入失败: 无效的 JSON 格式");
+      alert(t("blockLibrary.importFailed"));
     }
   };
 
@@ -98,7 +100,7 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
         URL.revokeObjectURL(url);
       }
     } catch (error) {
-      console.error("导出失败:", error);
+      console.error(t("libraryManager.exportFailed"), error);
     }
   };
 
@@ -108,23 +110,23 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
       <div className="flex items-center gap-3 mb-4">
         <input
           type="text"
-          placeholder="搜索算法块..."
+          placeholder={t("blockLibrary.searchPlaceholder")}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          className="flex-1 px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-white placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
+          className="flex-1 px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
         />
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
-          className="px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-white focus:outline-none focus:border-ide-accent"
+          className="px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
         >
-          <option value="all">所有分类</option>
-          <option value="math">数学运算</option>
-          <option value="control">控制算法</option>
-          <option value="logic">逻辑运算</option>
-          <option value="filter">滤波算法</option>
-          <option value="converter">转换算法</option>
-          <option value="custom">自定义</option>
+          <option value="all">{t("blockLibrary.allCategories")}</option>
+          <option value="math">{t("blockLibrary.math")}</option>
+          <option value="control">{t("blockLibrary.control")}</option>
+          <option value="logic">{t("blockLibrary.logic")}</option>
+          <option value="filter">{t("blockLibrary.filter")}</option>
+          <option value="converter">{t("blockLibrary.convert")}</option>
+          <option value="custom">{t("blockLibrary.custom")}</option>
         </select>
         <button
           onClick={() => setShowImportDialog(true)}
@@ -133,7 +135,7 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 4v16m8-8H4" />
           </svg>
-          导入
+          {t("blockLibrary.import")}
         </button>
       </div>
 
@@ -145,17 +147,17 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
               <svg viewBox="0 0 24 24" className="w-16 h-16 text-ide-textDim mx-auto mb-4" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.022.547L3 17.5h2m14.428-2.072a2 2 0 011.022.547l2.387.477a6 6 0 003.86-.517l.318-.158a6 6 0 013.86-.517l1.95-1.592a2 2 0 011.022-.547H21" />
               </svg>
-              <p className="text-ide-textDim mb-2">暂无算法块</p>
-              <p className="text-sm text-ide-textDim">点击"导入"按钮添加算法块</p>
+              <p className="text-ide-textDim mb-2">{t("blockLibrary.noBlocks")}</p>
+              <p className="text-sm text-ide-textDim">{t("blockLibrary.noBlocksHint")}</p>
             </div>
           </div>
         ) : (
           <div className="space-y-6">
             {Object.entries(groupedBlocks).map(([category, categoryBlocks]) => (
               <div key={category}>
-                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-ide-strong mb-3 flex items-center gap-2">
                   <span className={`px-2 py-0.5 rounded text-xs ${CATEGORY_COLORS[category] || CATEGORY_COLORS.custom}`}>
-                    {CATEGORY_LABELS[category] || category}
+                    {CATEGORY_LABELS[category] ? t(`blockLibrary.${category === "converter" ? "convert" : category}` as any) : category}
                   </span>
                   <span className="text-xs text-ide-textDim">({categoryBlocks.length})</span>
                 </h3>
@@ -172,7 +174,7 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                       }`}
                     >
                       <div className="flex items-start justify-between mb-2">
-                        <h4 className="text-sm font-semibold text-white">{block.name}</h4>
+                        <h4 className="text-sm font-semibold text-ide-strong">{block.name}</h4>
                         <div className="flex gap-1">
                           <button
                             onClick={(e) => {
@@ -180,7 +182,7 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                               handleExport(block.id);
                             }}
                             className="p-1 text-ide-textDim hover:text-ide-accent transition-colors"
-                            title="导出"
+                            title={t("blockLibrary.export")}
                           >
                             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -189,12 +191,12 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (confirm(`确定要删除 "${block.name}" 吗？`)) {
+                              if (confirm(`${t("blockLibrary.confirmDelete")} "${block.name}" ${t("blockLibrary.confirmDelete2")}`)) {
                                 onDelete(block.id);
                               }
                             }}
                             className="p-1 text-ide-textDim hover:text-red-400 transition-colors"
-                            title="删除"
+                            title={t("common.delete")}
                           >
                             <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -208,9 +210,9 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                       <div className="flex items-center gap-2 text-xs">
                         <span className="text-ide-textDim">v{block.version}</span>
                         <span className="text-ide-textDim">•</span>
-                        <span className="text-ide-textDim">{block.inputs.length} 输入</span>
+                        <span className="text-ide-textDim">{block.inputs.length} {t("blockLibrary.inputs")}</span>
                         <span className="text-ide-textDim">•</span>
-                        <span className="text-ide-textDim">{block.outputs.length} 输出</span>
+                        <span className="text-ide-textDim">{block.outputs.length} {t("blockLibrary.outputs")}</span>
                       </div>
                       
                       {block.tags.length > 0 && (
@@ -235,16 +237,16 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
       {showImportDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowImportDialog(false)}>
           <div className="bg-ide-sidebar border border-ide-border rounded-lg p-6 w-[600px]" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-4">导入算法块</h3>
+            <h3 className="text-lg font-semibold text-ide-strong mb-4">{t("blockLibrary.importTitle")}</h3>
             <p className="text-sm text-ide-textDim mb-4">
-              粘贴算法块 JSON 定义，或上传 .json 文件。
+              {t("blockLibrary.importDesc")}
             </p>
             
             <textarea
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
               placeholder='{"name": "MyBlock", "category": "custom", ...}'
-              className="w-full h-64 px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-white font-mono focus:outline-none focus:border-ide-accent resize-none"
+              className="w-full h-64 px-3 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-strong font-mono focus:outline-none focus:border-ide-accent resize-none"
             />
             
             <div className="flex gap-2 mt-4">
@@ -252,13 +254,13 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                 onClick={() => setShowImportDialog(false)}
                 className="flex-1 px-4 py-2 bg-ide-bg border border-ide-border rounded text-sm text-ide-text hover:bg-ide-hover transition-colors"
               >
-                取消
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleImport}
                 className="flex-1 px-4 py-2 bg-ide-accent hover:bg-blue-600 rounded text-sm text-white transition-colors"
               >
-                导入
+                {t("blockLibrary.import")}
               </button>
             </div>
           </div>

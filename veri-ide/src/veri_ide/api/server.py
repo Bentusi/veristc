@@ -33,6 +33,16 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+@app.exception_handler(RuntimeError)
+async def runtime_error_handler(request, exc: RuntimeError):
+    """Convert 'no project open' errors to 412 Precondition Failed."""
+    if "尚未打开工程" in str(exc):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=412, content={"detail": str(exc)})
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
