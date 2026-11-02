@@ -1,4 +1,4 @@
-"""Algorithm blocks live as text: `<Type>.block.yaml` + `<Type>.st`."""
+"""Algorithm blocks live as text: `<Type>.block.yaml` + `<Type>.st` inside library directories."""
 
 import pytest
 import yaml
@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from veri_ide.api.server import app
 from veri_ide.backend.library.service import LibraryService, get_library_service
-from veri_ide.backend.library.store import BlockStore, st_type_name
+from veri_ide.backend.library.store import BlockStore, LibraryStore, st_type_name, global_libraries_dir
 from veri_ide.backend.project import workspace
 
 HALVER_ST = """FUNCTION_BLOCK HALVER
@@ -34,22 +34,22 @@ END_FUNCTION_BLOCK"""
 
 
 @pytest.fixture
-def library_dir(tmp_path, monkeypatch):
-    """A sidecar whose global block library is a fresh temporary directory."""
+def libraries_root(tmp_path, monkeypatch):
+    """A sidecar whose global block libraries root is a fresh temporary directory."""
     from veri_ide.backend.library import service as library_service
     from veri_ide.backend.project import recent
 
-    directory = tmp_path / "library"
-    monkeypatch.setattr(library_service, "_service", LibraryService(library_dir=directory))
+    root = tmp_path / "libraries"
+    monkeypatch.setattr(library_service, "_service", LibraryService(libraries_root=root))
     monkeypatch.setattr(recent, "_STORE", None)
     if workspace.current_workspace():
         workspace.close_workspace()
-    yield directory
+    yield root
     monkeypatch.setattr(recent, "_STORE", None)
 
 
 @pytest.fixture
-def client(library_dir):
+def client(libraries_root):
     return TestClient(app)
 
 
@@ -66,23 +66,25 @@ def _create_block(client, name="二分器", st=HALVER_ST, category="math"):
 
 
 def test_first_use_seeds_the_builtin_blocks_as_text(tmp_path):
-    service = LibraryService(library_dir=tmp_path / "library")
-    assert sorted(p.name for p in (tmp_path / "library").glob("*.block.yaml")) == [
+    root = tmp_path / "libraries"
+    service = LibraryService(libraries_root=root)
+    builtin_dir = root / "builtin" / "blocks"
+    assert sorted(p.name for p in builtin_dir.glob("*.block.yaml")) == [
         "FBY.block.yaml",
         "LIMITER.block.yaml",
         "PID.block.yaml",
         "RS.block.yaml",
     ]
-    assert (tmp_path / "library" / "PID.st").read_text(encoding="utf-8").startswith(
+    assert (builtin_dir / "PID.st").read_text(encoding="utf-8").startswith(
         "FUNCTION_BLOCK PID"
     )
     assert len(service.list_blocks()) == 4
 
 
 def test_reopening_the_directory_reads_the_same_blocks_back(tmp_path):
-    directory = tmp_path / "library"
-    first = {b.id: b for b in LibraryService(library_dir=directory).list_blocks()}
-    second = {b.id: b for b in LibraryService(library_dir=directory).list_blocks()}
+    root = tmp_path / "libraries"
+    first = {b.id: b for b in LibraryService(libraries_root=root).list_blocks()}
+    second = {b.id: b for b in LibraryService(libraries_root=root).list_blocks()}
 
     assert set(first) == set(second)
     assert first["PID_v1"].st_template == second["PID_v1"].st_template
@@ -90,24 +92,26 @@ def test_reopening_the_directory_reads_the_same_blocks_back(tmp_path):
     assert second["PID_v1"].sha256
 
 
-def test_created_block_is_written_and_survives_restart(client, library_dir):
+def test_created_block_is_written_and_survives_restart(client, libraries_root):
     created = _create_block(client)
 
     blocks = {b.id: b for b in get_library_service().list_blocks()}
     assert blocks[created["id"]].st_template.startswith("FUNCTION_BLOCK HALVER")
-    assert (library_dir / "HALVER.block.yaml").is_file()
-    assert (library_dir / "HALVER.st").read_text(encoding="utf-8") == HALVER_ST + "\n"
 
-    manifest = yaml.safe_load((library_dir / "HALVER.block.yaml").read_text(encoding="utf-8"))
+    user_blocks_dir = libraries_root / "user-default" / "blocks"
+    assert (user_blocks_dir / "HALVER.block.yaml").is_file()
+    assert (user_blocks_dir / "HALVER.st").read_text(encoding="utf-8") == HALVER_ST + "\n"
+
+    manifest = yaml.safe_load((user_blocks_dir / "HALVER.block.yaml").read_text(encoding="utf-8"))
     assert manifest["name"] == "二分器"
     assert manifest["inputs"][0]["data_type"] == "REAL"
     assert "st_template" not in manifest
 
-    reloaded = {b.id: b for b in LibraryService(library_dir=library_dir).list_blocks()}
+    reloaded = {b.id: b for b in LibraryService(libraries_root=libraries_root).list_blocks()}
     assert reloaded[created["id"]].st_template == HALVER_ST
 
 
-def test_updating_a_block_rewrites_its_pair(client, library_dir):
+def test_updating_a_block_rewrites_its_pair(client, libraries_root):
     created = _create_block(client)
 
     response = client.put(
@@ -115,19 +119,21 @@ def test_updating_a_block_rewrites_its_pair(client, library_dir):
     )
     assert response.status_code == 200
 
-    assert not (library_dir / "HALVER.block.yaml").exists()
-    assert (library_dir / "PID.block.yaml").is_file()
-    assert (library_dir / "PID.st").read_text(encoding="utf-8").startswith("FUNCTION_BLOCK PID")
+    user_blocks_dir = libraries_root / "user-default" / "blocks"
+    assert not (user_blocks_dir / "HALVER.block.yaml").exists()
+    assert (user_blocks_dir / "PID.block.yaml").is_file()
+    assert (user_blocks_dir / "PID.st").read_text(encoding="utf-8").startswith("FUNCTION_BLOCK PID")
 
 
-def test_deleting_a_block_removes_its_files(client, library_dir):
+def test_deleting_a_block_removes_its_files(client, libraries_root):
     created = _create_block(client)
 
     assert client.delete(f"/library/blocks/{created['id']}").status_code == 200
-    assert not list(library_dir.glob("HALVER*"))
+    user_blocks_dir = libraries_root / "user-default" / "blocks"
+    assert not list(user_blocks_dir.glob("HALVER*"))
 
 
-def test_project_scope_blocks_shadow_the_global_library(client, library_dir, tmp_path):
+def test_project_scope_blocks_shadow_the_global_library(client, libraries_root, tmp_path):
     from veri_ide.backend.project.service import create_project
 
     root = create_project("shadowing", tmp_path / "proj").path
@@ -164,3 +170,53 @@ def test_store_reuses_pou_name_and_falls_back_on_collision(tmp_path):
 
     assert first.name == "HALVER.block.yaml"
     assert second.name == "B.block.yaml"
+
+
+def test_library_crud(tmp_path):
+    root = tmp_path / "libraries"
+    service = LibraryService(libraries_root=root)
+
+    lib = service.create_library("test-lib", "Test Library", "tester")
+    assert lib.id == "test-lib"
+    assert (root / "test-lib" / "library.yaml").is_file()
+
+    libs = service.list_libraries()
+    assert any(l.id == "test-lib" for l in libs)
+
+    service.update_library("test-lib", description="Updated")
+    updated = service.get_library("test-lib")
+    assert updated.description == "Updated"
+
+    service.delete_library("test-lib")
+    assert not (root / "test-lib").exists()
+
+
+def test_library_zip_roundtrip(tmp_path):
+    import zipfile
+    root = tmp_path / "libraries"
+    service = LibraryService(libraries_root=root)
+
+    lib = service.create_library("zip-test", "ZIP Test")
+    from veri_ide.backend.library.models import (
+        AlgorithmBlock, BlockCategory, BlockPort, PortDirection,
+    )
+    block = AlgorithmBlock(
+        id="ZBLOCK", name="ZipBlock", category=BlockCategory.MATH,
+        version="1.0.0", description="",
+        inputs=[BlockPort(name="X", direction=PortDirection.INPUT, data_type="REAL")],
+        st_template="FUNCTION_BLOCK ZBLOCK\nEND_FUNCTION_BLOCK",
+    )
+    service.add_block(block, library_id="zip-test")
+
+    zip_path = tmp_path / "export.zip"
+    service.export_library_zip("zip-test", zip_path)
+    assert zip_path.is_file()
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        assert "library.yaml" in names
+
+    service.delete_library("zip-test")
+    imported = service.import_library_zip(zip_path, library_id="zip-reimport")
+    assert imported.id == "zip-reimport"
+    blocks = service.list_blocks()
+    assert any(b.id == "ZBLOCK" for b in blocks)

@@ -1,26 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useI18n } from "../../lib/i18n";
-
-interface AlgorithmBlock {
-  id: string;
-  name: string;
-  category: string;
-  version: string;
-  description: string;
-  author: string;
-  inputs: Array<{ name: string; direction: string; data_type: string }>;
-  outputs: Array<{ name: string; direction: string; data_type: string }>;
-  parameters: Array<{ name: string; data_type: string; default_value: any }>;
-  st_template: string;
-  icon_svg: string;
-  tags: string[];
-}
+import { BlockEditor, type AlgorithmBlock } from "./BlockEditor";
 
 interface BlockLibraryProps {
   blocks: AlgorithmBlock[];
   selectedBlock: string | null;
   onSelect: (blockId: string) => void;
   onDelete: (blockId: string) => void;
+  onBlockSaved?: (updatedBlock: AlgorithmBlock) => void;
+  libraryId?: string | null;
+  onRefresh?: () => void;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -41,19 +30,77 @@ const CATEGORY_LABELS: Record<string, string> = {
   custom: "blockLibrary.custom",
 };
 
-export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: BlockLibraryProps) {
+export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete, onBlockSaved, libraryId, onRefresh }: BlockLibraryProps) {
   const { t } = useI18n();
   const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [filterTimeBased, setFilterTimeBased] = useState<string>("all");
+  const [filterSignalType, setFilterSignalType] = useState<string>("all");
   const [searchText, setSearchText] = useState("");
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [importJson, setImportJson] = useState("");
+  const [editingBlock, setEditingBlock] = useState<AlgorithmBlock | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; blockId: string } | null>(null);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => closeContextMenu();
+    window.addEventListener("click", handler);
+    return () => window.removeEventListener("click", handler);
+  }, [contextMenu, closeContextMenu]);
+
+  const handleOpenEditor = async (blockId: string) => {
+    try {
+      const response = await fetch(`http://localhost:8000/library/blocks/${blockId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setEditingBlock(data);
+      }
+    } catch (error) {
+      console.error("Failed to load block:", error);
+    }
+  };
+
+  const handleSaveBlock = async (updated: AlgorithmBlock) => {
+    const isNew = !updated.id || updated.id === "";
+    const url = isNew
+      ? (libraryId ? `http://localhost:8000/library/libraries/${libraryId}/blocks` : "http://localhost:8000/library/blocks")
+      : `http://localhost:8000/library/blocks/${updated.id}`;
+    const method = isNew ? "POST" : "PUT";
+
+    const response = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const savedBlock = await response.json();
+    setEditingBlock(savedBlock);
+    onBlockSaved?.(savedBlock);
+    onRefresh?.();
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, blockId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, blockId });
+  };
 
   const filteredBlocks = blocks.filter((block) => {
     const matchesCategory = filterCategory === "all" || block.category === filterCategory;
+    const matchesTimeBased = filterTimeBased === "all" || 
+      (filterTimeBased === "yes" && block.time_based) ||
+      (filterTimeBased === "no" && !block.time_based);
+    const matchesSignalType = filterSignalType === "all" || 
+      (block as any).signal_type === filterSignalType;
+    const matchesLibrary = !libraryId || (block as any).library_id === libraryId;
     const matchesSearch = searchText === "" || 
       block.name.toLowerCase().includes(searchText.toLowerCase()) ||
       block.description.toLowerCase().includes(searchText.toLowerCase());
-    return matchesCategory && matchesSearch;
+    return matchesCategory && matchesTimeBased && matchesSignalType && matchesLibrary && matchesSearch;
   });
 
   const groupedBlocks = filteredBlocks.reduce((acc, block) => {
@@ -104,21 +151,41 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
     }
   };
 
+  const handleCreateBlock = () => {
+    const newBlock: AlgorithmBlock = {
+      id: "",
+      name: "NewBlock",
+      category: "custom",
+      version: "1.0.0",
+      description: "",
+      author: "",
+      block_kind: "FB",
+      time_based: false,
+      inputs: [],
+      outputs: [],
+      parameters: [],
+      st_template: "",
+      icon_svg: "",
+      tags: [],
+    };
+    setEditingBlock(newBlock);
+  };
+
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-2 mb-4">
         <input
           type="text"
           placeholder={t("blockLibrary.searchPlaceholder")}
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          className="flex-1 px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
+          className="flex-1 px-3 py-1.5 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong placeholder-ide-textDim focus:outline-none focus:border-ide-accent"
         />
         <select
           value={filterCategory}
           onChange={(e) => setFilterCategory(e.target.value)}
-          className="px-3 py-2 bg-ide-sidebar border border-ide-border rounded text-sm text-ide-strong focus:outline-none focus:border-ide-accent"
+          className="px-2 py-1.5 bg-ide-sidebar border border-ide-border rounded text-xs text-ide-strong focus:outline-none focus:border-ide-accent"
         >
           <option value="all">{t("blockLibrary.allCategories")}</option>
           <option value="math">{t("blockLibrary.math")}</option>
@@ -128,12 +195,40 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
           <option value="converter">{t("blockLibrary.convert")}</option>
           <option value="custom">{t("blockLibrary.custom")}</option>
         </select>
+        <select
+          value={filterTimeBased}
+          onChange={(e) => setFilterTimeBased(e.target.value)}
+          className="px-2 py-1.5 bg-ide-sidebar border border-ide-border rounded text-xs text-ide-strong focus:outline-none focus:border-ide-accent"
+        >
+          <option value="all">{t("blockLibrary.allTimeBased")}</option>
+          <option value="yes">{t("blockLibrary.timeBased")}</option>
+          <option value="no">{t("blockLibrary.notTimeBased")}</option>
+        </select>
+        <select
+          value={filterSignalType}
+          onChange={(e) => setFilterSignalType(e.target.value)}
+          className="px-2 py-1.5 bg-ide-sidebar border border-ide-border rounded text-xs text-ide-strong focus:outline-none focus:border-ide-accent"
+        >
+          <option value="all">{t("blockLibrary.allSignalTypes")}</option>
+          <option value="analog">{t("blockLibrary.analog")}</option>
+          <option value="digital">{t("blockLibrary.digital")}</option>
+          <option value="mixed">{t("blockLibrary.mixed")}</option>
+        </select>
+        <button
+          onClick={handleCreateBlock}
+          className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-xs text-white transition-colors"
+        >
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 4v16m8-8H4" />
+          </svg>
+          {t("blockLibrary.create")}
+        </button>
         <button
           onClick={() => setShowImportDialog(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-ide-accent hover:bg-blue-600 rounded text-sm text-white transition-colors"
+          className="flex items-center gap-1 px-3 py-1.5 bg-ide-accent hover:bg-blue-600 rounded text-xs text-white transition-colors"
         >
-          <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 4v16m8-8H4" />
+          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
           </svg>
           {t("blockLibrary.import")}
         </button>
@@ -167,6 +262,8 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
                     <div
                       key={block.id}
                       onClick={() => onSelect(block.id)}
+                      onDoubleClick={() => handleOpenEditor(block.id)}
+                      onContextMenu={(e) => handleContextMenu(e, block.id)}
                       className={`p-4 rounded-lg border cursor-pointer transition-all ${
                         selectedBlock === block.id
                           ? "bg-ide-accent/10 border-ide-accent"
@@ -264,6 +361,66 @@ export function BlockLibrary({ blocks, selectedBlock, onSelect, onDelete }: Bloc
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Block Editor */}
+      {editingBlock && (
+        <BlockEditor
+          block={editingBlock}
+          onSave={handleSaveBlock}
+          onClose={() => setEditingBlock(null)}
+        />
+      )}
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-ide-sidebar border border-ide-border rounded-lg shadow-lg py-1 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              handleOpenEditor(contextMenu.blockId);
+              closeContextMenu();
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-ide-text hover:bg-ide-hover transition-colors flex items-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            {t("blockLibrary.edit")}
+          </button>
+          <button
+            onClick={() => {
+              handleExport(contextMenu.blockId);
+              closeContextMenu();
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-ide-text hover:bg-ide-hover transition-colors flex items-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            {t("blockLibrary.export")}
+          </button>
+          <div className="border-t border-ide-border my-1" />
+          <button
+            onClick={() => {
+              const block = blocks.find((b) => b.id === contextMenu.blockId);
+              if (block && confirm(`${t("blockLibrary.confirmDelete")} "${block.name}" ${t("blockLibrary.confirmDelete2")}`)) {
+                onDelete(contextMenu.blockId);
+              }
+              closeContextMenu();
+            }}
+            className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-ide-hover transition-colors flex items-center gap-2"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            {t("common.delete")}
+          </button>
         </div>
       )}
     </div>

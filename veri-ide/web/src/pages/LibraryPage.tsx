@@ -3,24 +3,8 @@ import { toast } from "../components/ui";
 import { useI18n } from "../lib/i18n";
 import { BlockLibrary } from "../components/library/BlockLibrary";
 import { LibraryManager } from "../components/library/LibraryManager";
-
-interface AlgorithmBlock {
-  id: string;
-  name: string;
-  category: string;
-  version: string;
-  description: string;
-  author: string;
-  created_at: string;
-  updated_at: string;
-  inputs: Array<{ name: string; direction: string; data_type: string; description: string }>;
-  outputs: Array<{ name: string; direction: string; data_type: string; description: string }>;
-  parameters: Array<{ name: string; data_type: string; default_value: any; description: string }>;
-  st_template: string;
-  icon_svg: string;
-  tags: string[];
-  sha256: string;
-}
+import { LibraryListPanel } from "../components/library/LibraryListPanel";
+import type { AlgorithmBlock } from "../components/library/BlockEditor";
 
 type LibraryTab = "blocks" | "libraries";
 
@@ -29,23 +13,30 @@ export function LibraryPage() {
   const [activeTab, setActiveTab] = useState<LibraryTab>("blocks");
   const [blocks, setBlocks] = useState<AlgorithmBlock[]>([]);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
+  const [selectedLibrary, setSelectedLibrary] = useState<string | null>("user-default");
 
   // Fetch blocks from backend
-  useEffect(() => {
-    const fetchBlocks = async () => {
-      try {
-        const response = await fetch("http://localhost:8000/library/blocks");
-        if (response.ok) {
-          const data = await response.json();
-          setBlocks(data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch blocks:", error);
+  const fetchBlocks = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (selectedLibrary) params.set("library_id", selectedLibrary);
+      const response = await fetch(`http://localhost:8000/library/blocks?${params}`);
+      if (response.ok) {
+        const data = await response.json();
+        setBlocks(data);
       }
-    };
+    } catch (error) {
+      console.error("Failed to fetch blocks:", error);
+    }
+  };
 
+  useEffect(() => {
     fetchBlocks();
-  }, []);
+  }, [selectedLibrary]);
+
+  const handleBlockSaved = (updatedBlock: AlgorithmBlock) => {
+    setBlocks((prev) => prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b)));
+  };
 
   const handleDeleteBlock = async (blockId: string) => {
     try {
@@ -109,6 +100,15 @@ export function LibraryPage() {
 
       {/* Content */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Left Panel - Library List (only in blocks tab) */}
+        {activeTab === "blocks" && (
+          <LibraryListPanel
+            selectedLibrary={selectedLibrary}
+            onSelect={setSelectedLibrary}
+            onRefresh={fetchBlocks}
+          />
+        )}
+
         {/* Main Content Area */}
         <div className="flex-1 overflow-auto bg-ide-bg p-4">
           {activeTab === "blocks" && (
@@ -117,6 +117,9 @@ export function LibraryPage() {
               selectedBlock={selectedBlock}
               onSelect={setSelectedBlock}
               onDelete={handleDeleteBlock}
+              onBlockSaved={handleBlockSaved}
+              libraryId={selectedLibrary}
+              onRefresh={fetchBlocks}
             />
           )}
           {activeTab === "libraries" && (

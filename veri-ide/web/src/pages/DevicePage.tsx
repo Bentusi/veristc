@@ -72,6 +72,7 @@ export function DevicePage() {
   const [selectedVar, setSelectedVar] = useState<string | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<number | null>(null);
   const [view, setView] = useState<PointView>(initialView);
+  const [hideDisabled, setHideDisabled] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [selectionMode, setSelectionMode] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -162,6 +163,16 @@ export function DevicePage() {
   const pointsByName = useMemo(
     () => Object.fromEntries(points.map((row) => [row.name, row])) as Record<string, ExternalVarRow>,
     [points],
+  );
+
+  const visiblePoints = useMemo(
+    () => (hideDisabled ? points.filter((r) => r.enabled) : points),
+    [points, hideDisabled],
+  );
+
+  const visiblePointsByName = useMemo(
+    () => Object.fromEntries(visiblePoints.map((row) => [row.name, row])),
+    [visiblePoints],
   );
 
   /** A point that stops existing must not stay in a batch selection. */
@@ -573,6 +584,15 @@ export function DevicePage() {
                 </button>
               ))}
             </div>
+            <label className="flex items-center gap-1.5 text-[10px] text-ide-textDim cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hideDisabled}
+                onChange={(e) => setHideDisabled(e.target.checked)}
+                className="w-3 h-3 accent-ide-accent"
+              />
+              {t("device.hideDisabled")}
+            </label>
             <span className="flex-1" />
             <span className="text-[10px] text-ide-textDim">
               {t("device.totalPoints")} {points.length} {t("device.points")} · {t("device.disabled")} {disabledCount} ·{" "}
@@ -594,7 +614,7 @@ export function DevicePage() {
           {view === "board" ? (
             <PointBoard
               modules={modules}
-              byName={pointsByName}
+              byName={visiblePointsByName}
               errorByVar={errorByVar}
               selectedVar={selectedVar}
               onSelectChannel={onSelectChannel}
@@ -611,7 +631,7 @@ export function DevicePage() {
             />
           ) : (
             <ExternalVarTable
-              rows={points}
+              rows={visiblePoints}
               errorByVar={errorByVar}
               onSelectVar={setSelectedVar}
               selectedVar={selectedVar}

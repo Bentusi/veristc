@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 from ..device.service import DeviceService
 from ..graph.compose import block_defs, compile_unit, station_of
 from ..graph.service import GraphProject, get_graph_project
+from ..library.service import get_library_service
+from .block_sim import BlockSimError, build_block_program, humanize_run_errors
 from .plant import PlantValidationError, plant_from_external_variables
 from .session import SimError, run_simulation
 
@@ -51,6 +53,20 @@ class RunRequest(BaseModel):
     station: Optional[str] = None
     cycles: int = 20
     cycle_ms: Optional[int] = None
+    forces: list[ForceItem] = Field(default_factory=list)
+    script: list[ScriptRecord] = Field(default_factory=list)
+
+
+class RunBlockRequest(BaseModel):
+    """Simulate one library block: the stimulus is addressed by port symbol.
+
+    ``forces`` hold a symbol from cycle 1 and ``script`` sets it on a given cycle
+    -- the same two shapes ``/sim/run`` takes, so a force the engineer typed on
+    the graph page means the same thing on the block page.
+    """
+
+    block_id: str
+    cycles: int = 20
     forces: list[ForceItem] = Field(default_factory=list)
     script: list[ScriptRecord] = Field(default_factory=list)
 
@@ -114,6 +130,48 @@ def run(request: RunRequest) -> dict:
     #: Which symbol each pin reads: the editor draws the frame value of the slot
     #: the generated statement writes, never a name it worked out itself.
     payload["pins"] = project.pin_symbols(defs)
+    return payload
+
+
+@router.post("/run-block")
+def run_block(request: RunBlockRequest) -> dict:
+    """Simulate one library block and return the same watch frames the chart gets.
+
+    The block is driven by a single-cycle program the composer builds -- one
+    input point per port, one call -- and handed to the very runner the graph
+    page uses, so ``forced`` marks which value came from the panel and the block
+    page never shows a number the run did not report.
+    """
+    if request.cycles < 1 or request.cycles > CYCLES_MAX:
+        raise HTTPException(status_code=400, detail=f"cycles must be in 1..{CYCLES_MAX}")
+
+    block = get_library_service().get_block(request.block_id)
+    if block is None:
+        raise HTTPException(status_code=404, detail=f"算法块不存在：{request.block_id}")
+
+    try:
+        program = build_block_program(block)
+    except (BlockSimError, PlantValidationError) as exc:
+        return {"ok": False, "stage": "compose", "errors": [str(exc)]}
+
+    try:
+        result = program.run(
+            cycles=request.cycles,
+            forces=[row.model_dump() for row in request.forces],
+            script=[row.model_dump() for row in request.script],
+        )
+    except SimError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+    payload = result.payload
+    payload["block"] = {"id": block.id, "name": block.name, "kind": block.block_kind}
+    #: Which symbol each port reads, so the panel draws the frame value of the
+    #: slot the driver actually writes -- never a name it worked out itself.
+    payload["ports"] = program.ports_payload()
+    payload["program"] = program.st_text
+    payload["plant"] = {"name": "BLK_config", "text": program.plant_text}
+    if not payload.get("ok"):
+        payload["errors"] = humanize_run_errors(payload.get("errors", []))
     return payload
 
 

@@ -32,6 +32,13 @@ class PortDirection(str, Enum):
     IN_OUT = "in_out"
 
 
+class SignalType(str, Enum):
+    """信号类型"""
+    ANALOG = "analog"        # 模拟量
+    DIGITAL = "digital"      # 开关量
+    MIXED = "mixed"          # 混合
+
+
 @dataclass
 class BlockPort:
     """算法块端口定义"""
@@ -87,6 +94,10 @@ class AlgorithmBlock:
     # 执行语义
     block_kind: str = "FB"       # FB = FUNCTION_BLOCK（有实例状态）/ FUN = FUNCTION（纯函数）
     time_based: bool = False     # 输出是否取决于上周期的值（如图形回环里的延迟块）
+    signal_type: SignalType = SignalType.MIXED  # 信号类型：模拟/数字/混合
+
+    # 所属库
+    library_id: str = ""         # 所属算法库 ID
 
     # 块定义
     inputs: list[BlockPort] = field(default_factory=list)
@@ -119,6 +130,8 @@ class AlgorithmBlock:
             "updated_at": self.updated_at.isoformat(),
             "block_kind": self.block_kind,
             "time_based": self.time_based,
+            "signal_type": self.signal_type.value,
+            "library_id": self.library_id,
             "inputs": [p.to_dict() for p in self.inputs],
             "outputs": [p.to_dict() for p in self.outputs],
             "parameters": [p.to_dict() for p in self.parameters],
@@ -138,22 +151,47 @@ class LibraryInfo:
     name: str                    # 库名称
     description: str             # 描述
     owner: str = ""              # 所有者
+    version: str = "1.0.0"       # 库版本
     is_shared: bool = False      # 是否共享
     blocks_count: int = 0        # 算法块数量
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    
+
+    # 分类维度
+    schema_version: str = "2.0"  # 清单格式版本
+    classification_dims: dict = field(default_factory=dict)  # {time_based: bool, signal_type: str}
+
+    # 校验信息
+    validation: dict = field(default_factory=dict)  # {block_count, integrity_hash, ...}
+
+    # 磁盘路径
+    directory: str = ""          # 库目录的绝对路径
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
             "name": self.name,
             "description": self.description,
             "owner": self.owner,
+            "version": self.version,
             "is_shared": self.is_shared,
             "blocks_count": self.blocks_count,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "schema_version": self.schema_version,
+            "classification_dims": self.classification_dims,
+            "validation": self.validation,
+            "directory": self.directory,
         }
+
+
+@dataclass
+class ClassificationFilter:
+    """多维度分类筛选条件"""
+    time_based: Optional[bool] = None      # True=时序相关, False=时序无关, None=不限
+    signal_type: Optional[SignalType] = None  # analog/digital/mixed, None=不限
+    categories: Optional[list[BlockCategory]] = None  # 限定分类列表, None=不限
+    library_id: Optional[str] = None       # 限定库, None=全部
 
 
 @dataclass

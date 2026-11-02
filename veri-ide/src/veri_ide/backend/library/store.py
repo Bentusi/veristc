@@ -6,21 +6,30 @@ Splitting them keeps the ST body readable in a diff instead of escaped inside a
 JSON string, and it means a block can be edited, reviewed or copied without the
 IDE running.
 
-The same store backs two scopes: the per-user global library under
-`~/.veride/library/`, which is what the palette always has, and the `blocks/`
-directory of an open project, which shadows a global block of the same type name.
+Libraries are directories containing a `library.yaml` manifest and a `blocks/`
+subdirectory of block file pairs.  Multiple libraries live side by side under
+`~/.veride/libraries/`.
 """
 
+import hashlib
 import re
+import shutil
+import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
-from .models import AlgorithmBlock, BlockCategory, BlockParameter, BlockPort, PortDirection
+from .models import (
+    AlgorithmBlock, BlockCategory, BlockParameter, BlockPort,
+    LibraryInfo, PortDirection, SignalType,
+)
 
 MANIFEST_SUFFIX = ".block.yaml"
 SOURCE_SUFFIX = ".st"
+LIBRARY_MANIFEST = "library.yaml"
+BLOCKS_DIR = "blocks"
 
 
 def st_type_name(block: AlgorithmBlock) -> str:
@@ -48,6 +57,8 @@ def _manifest(block: AlgorithmBlock) -> dict:
         "author": block.author,
         "block_kind": block.block_kind,
         "time_based": block.time_based,
+        "signal_type": block.signal_type.value,
+        "library_id": block.library_id,
         "inputs": [p.to_dict() for p in block.inputs],
         "outputs": [p.to_dict() for p in block.outputs],
         "parameters": [p.to_dict() for p in block.parameters],
@@ -58,6 +69,11 @@ def _manifest(block: AlgorithmBlock) -> dict:
 
 
 def _from_manifest(data: dict, st_template: str) -> AlgorithmBlock:
+    sig = data.get("signal_type", "mixed")
+    try:
+        signal_type = SignalType(sig)
+    except ValueError:
+        signal_type = SignalType.MIXED
     return AlgorithmBlock(
         id=data.get("id") or safe_stem(data.get("name", "")),
         name=data.get("name", ""),
@@ -67,6 +83,8 @@ def _from_manifest(data: dict, st_template: str) -> AlgorithmBlock:
         author=data.get("author", ""),
         block_kind=data.get("block_kind", "FB"),
         time_based=bool(data.get("time_based", False)),
+        signal_type=signal_type,
+        library_id=data.get("library_id", ""),
         inputs=[
             BlockPort(
                 name=p["name"],
@@ -169,11 +187,201 @@ class BlockStore:
 
 
 def global_library_dir() -> Path:
-    """The per-user block library, beside the HMAC keys."""
+    """Legacy flat layout -- used only for migration."""
     from ..project.recent import veride_home
 
     return veride_home() / "library"
 
 
+def global_libraries_dir() -> Path:
+    """The per-user multi-library root: ``~/.veride/libraries/``."""
+    from ..project.recent import veride_home
+
+    return veride_home() / "libraries"
+
+
 def project_blocks_dir(project_path: Optional[Path]) -> Optional[Path]:
     return None if project_path is None else Path(project_path) / "blocks"
+
+
+# ---------------------------------------------------------------------------
+# LibraryStore -- manages one library directory on disk
+# ---------------------------------------------------------------------------
+
+def _library_manifest_dict(info: LibraryInfo) -> dict:
+    return {
+        "id": info.id,
+        "name": info.name,
+        "description": info.description,
+        "owner": info.owner,
+        "version": info.version,
+        "is_shared": info.is_shared,
+        "schema_version": info.schema_version,
+        "classification_dims": info.classification_dims,
+        "created_at": info.created_at.isoformat(),
+        "updated_at": info.updated_at.isoformat(),
+    }
+
+
+def _library_info_from_dict(data: dict, directory: str = "") -> LibraryInfo:
+    created = data.get("created_at", "")
+    updated = data.get("updated_at", "")
+    return LibraryInfo(
+        id=data.get("id", ""),
+        name=data.get("name", ""),
+        description=data.get("description", ""),
+        owner=data.get("owner", ""),
+        version=data.get("version", "1.0.0"),
+        is_shared=bool(data.get("is_shared", False)),
+        schema_version=data.get("schema_version", "2.0"),
+        classification_dims=dict(data.get("classification_dims", {})),
+        created_at=datetime.fromisoformat(created) if created else datetime.now(),
+        updated_at=datetime.fromisoformat(updated) if updated else datetime.now(),
+        directory=directory,
+    )
+
+
+class LibraryStore:
+    """Manage a single library directory: ``library.yaml`` + ``blocks/``."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = Path(directory)
+        self.blocks_dir = self.directory / BLOCKS_DIR
+        self.manifest_path = self.directory / LIBRARY_MANIFEST
+        self._block_store = BlockStore(self.blocks_dir)
+
+    # -- manifest -----------------------------------------------------------
+
+    def load_manifest(self) -> Optional[LibraryInfo]:
+        if not self.manifest_path.is_file():
+            return None
+        data = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8")) or {}
+        info = _library_info_from_dict(data, str(self.directory))
+        info.blocks_count = len(self._block_store.load())
+        info.validation = self._compute_validation()
+        return info
+
+    def save_manifest(self, info: LibraryInfo) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        info.directory = str(self.directory)
+        info.updated_at = datetime.now()
+        self.manifest_path.write_text(
+            yaml.dump(
+                _library_manifest_dict(info),
+                allow_unicode=True, sort_keys=True, default_flow_style=False,
+            ),
+            encoding="utf-8",
+        )
+
+    # -- block operations (delegate to BlockStore) --------------------------
+
+    def load_blocks(self) -> list[AlgorithmBlock]:
+        blocks = self._block_store.load()
+        info = self.load_manifest()
+        lib_id = info.id if info else self.directory.name
+        for b in blocks:
+            b.library_id = lib_id
+        return blocks
+
+    def save_block(self, block: AlgorithmBlock) -> Path:
+        return self._block_store.save(block)
+
+    def delete_block(self, block: AlgorithmBlock) -> bool:
+        return self._block_store.delete(block)
+
+    def clear_blocks(self) -> int:
+        removed = 0
+        for block in self._block_store.load():
+            if self._block_store.delete(block):
+                removed += 1
+        return removed
+
+    # -- validation ---------------------------------------------------------
+
+    def _compute_validation(self) -> dict:
+        blocks = self._block_store.load()
+        h = hashlib.sha256()
+        for b in sorted(blocks, key=lambda x: x.id):
+            h.update(b.id.encode())
+            h.update(b.sha256.encode())
+        return {
+            "block_count": len(blocks),
+            "integrity_hash": f"sha256:{h.hexdigest()}",
+        }
+
+    def validate(self) -> tuple[bool, list[str]]:
+        errors: list[str] = []
+        if not self.manifest_path.is_file():
+            errors.append("library.yaml missing")
+        if not self.blocks_dir.is_dir():
+            errors.append("blocks/ directory missing")
+        info = self.load_manifest()
+        if info is None:
+            errors.append("library.yaml is not valid YAML")
+            return False, errors
+        blocks = self._block_store.load()
+        if info.blocks_count and info.blocks_count != len(blocks):
+            errors.append(
+                f"manifest says {info.blocks_count} blocks but found {len(blocks)}"
+            )
+        for b in blocks:
+            if not b.st_template and not b.inputs and not b.outputs:
+                errors.append(f"block {b.id} appears empty")
+        return len(errors) == 0, errors
+
+    # -- zip import / export ------------------------------------------------
+
+    def export_zip(self, zip_path: Path) -> Path:
+        zip_path = Path(zip_path)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if self.manifest_path.is_file():
+                zf.write(self.manifest_path, LIBRARY_MANIFEST)
+            for f in sorted(self.blocks_dir.glob(f"*{MANIFEST_SUFFIX}")):
+                zf.write(f, f"{BLOCKS_DIR}/{f.name}")
+            for f in sorted(self.blocks_dir.glob(f"*{SOURCE_SUFFIX}")):
+                zf.write(f, f"{BLOCKS_DIR}/{f.name}")
+        return zip_path
+
+    @classmethod
+    def import_zip(cls, zip_path: Path, target_dir: Path) -> "LibraryStore":
+        zip_path = Path(zip_path)
+        target_dir = Path(target_dir)
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(target_dir)
+        store = cls(target_dir)
+        if not store.manifest_path.is_file():
+            raise ValueError("ZIP does not contain library.yaml")
+        return store
+
+    # -- migration ----------------------------------------------------------
+
+    @classmethod
+    def migrate_legacy(cls, legacy_dir: Path, new_dir: Path) -> Optional["LibraryStore"]:
+        """Move a flat ``~/.veride/library/`` into ``~/.veride/libraries/user-default/``."""
+        legacy_dir = Path(legacy_dir)
+        if not legacy_dir.is_dir():
+            return None
+        new_dir = Path(new_dir)
+        if new_dir.exists() and any(new_dir.iterdir()):
+            return None  # target already has content, don't overwrite
+        new_dir.mkdir(parents=True, exist_ok=True)
+        blocks_target = new_dir / BLOCKS_DIR
+        blocks_target.mkdir(exist_ok=True)
+        for f in legacy_dir.iterdir():
+            if f.suffix in (".yaml", ".st", ".yml"):
+                shutil.copy2(f, blocks_target / f.name)
+        info = LibraryInfo(
+            id="user-default",
+            name="User Library",
+            description="Migrated from legacy flat layout",
+            version="1.0.0",
+        )
+        store = cls(new_dir)
+        store.save_manifest(info)
+        for b in store.load_blocks():
+            b.library_id = "user-default"
+            store.save_block(b)
+        return store
